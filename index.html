@@ -131,6 +131,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 .bar i{display:block;height:100%;background:var(--accent)}
 .expo{display:grid;grid-template-columns:70px minmax(0,1fr) auto;gap:8px;align-items:center;font-size:.86rem}
 .thumb{max-width:100%;max-height:260px;border-radius:6px;border:1px solid var(--line)}
+.shots{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0}.shots figure{margin:0;max-width:100%}.shots figcaption{font-size:12px;color:var(--muted);margin-top:4px}
 .filters{display:flex;gap:6px;flex-wrap:wrap}
 .filters button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent);border-color:transparent}
 /* Courbe */
@@ -183,7 +184,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.0.0 · licence MIT */
+/* Carnet de positions v1.1.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -515,6 +516,8 @@ function normalize(st) {
   for (const l of out.lots) l.events = Array.isArray(l.events) ? l.events : [];
   return out;
 }
+// Captures d'une position : celle de l'achat puis celles des ventes.
+const lotImgIds = l => [l.imgId, ...(l.events || []).map(e => e.imgId)].filter(Boolean);
 let S = defaultState();
 let tab = 'dash';
 const openLots = new Set();
@@ -669,7 +672,7 @@ async function connectGist(token) {
       const g = await gh('/gists', { method: 'POST', body: JSON.stringify({ description: 'Carnet de positions : données (gist secret, ne pas rendre public)', public: false, files: { [STATE_FILE]: { content: JSON.stringify(S) } } }) });
       id = g.id; Store.files = g.files || {};
       Store.cfg.gistId = id; Store.cfg.syncedRev = S.updatedAt; writeJSON(SYNC_KEY, Store.cfg);
-      const p = {}; for (const l of S.lots) if (l.imgId) p[l.imgId] = 'put'; writeJSON(PENDING_KEY, p);
+      const p = {}; for (const l of S.lots) for (const i of lotImgIds(l)) p[i] = 'put'; writeJSON(PENDING_KEY, p);
       if (Object.keys(p).length) await pushRemote();
       Store.lastOk = Date.now(); setSync('synced'); render();
       return 'created';
@@ -815,6 +818,7 @@ function viewDash() {
       ${kv('Drawdown maximal observé', P.dd ? `<span class="${cls(P.dd.dd)}">${pct(P.dd.dd)}</span>` : 'Non calculable', P.dd && P.dd.dd < 0 ? `${fmtDate(P.dd.peak)} → ${fmtDate(P.dd.trough)}` : 'courbe corrigée des apports')}
     </dl>
     ${P.broken ? `<div class="banner err">Courbe interrompue au ${fmtDate(P.brokenAt)} : valeur de départ nulle ou négative.</div>` : ''}
+    ${perfWhy(P)}
     ${chartSVG(P.pts)}
     <p class="hint">${P.freq ? `${P.freq.count} observations, écart médian ${fmtNum(P.freq.medianGap, 1)} jour(s), écart maximal ${P.freq.maxGap} jours. Les baisses survenues entre deux observations (intrajournalières notamment) ne sont pas mesurées.` : 'Pas encore assez d’observations.'}
     Une observation existe quand toutes les positions ouvertes ont un cours saisi le même jour, quand aucune position n’est ouverte, ou quand vous saisissez la valeur du courtier. ● calcul exact, ○ sous-période estimée, ● orange : valeur courtier.</p>
@@ -831,6 +835,18 @@ function viewDash() {
       ${kv('Respect du plan', T.planRate == null ? 'Non calculable' : pct(T.planRate), T.planCount ? `${T.planCount} position(s) évaluée(s)` : 'aucune évaluation')}
     </dl>
   </section>`;
+}
+// Explique ce qui manque quand la performance n'est pas calculable.
+function perfWhy(P) {
+  const s = S.settings, msgs = [];
+  const early = S.lots.filter(l => l.date < s.startDate).sort((a, b) => a.date < b.date ? -1 : 1);
+  if (early.length) msgs.push(`${early.length} position(s) sont antérieures à la date de départ (${fmtDate(s.startDate)}), la première le ${fmtDate(early[0].date)}. Dans Réglages, mettez comme date de départ le jour de votre premier dépôt et comme capital initial le montant déposé ce jour-là.`);
+  const open = S.lots.filter(l => !Core.lotState(l).closed);
+  const day = todayISO();
+  const miss = [...new Set(open.filter(l => !(S.prices[l.ticker] || []).some(x => x.date === day)).map(l => l.ticker))].sort();
+  if (open.length && miss.length && miss.length < open.length) msgs.push(`Pour une observation aujourd’hui, il manque le cours du jour de : <strong>${miss.map(esc).join(', ')}</strong>. Ou saisissez les fonds propres MT5 dans Réglages › Valeurs courtier.`);
+  if (!msgs.length || (P.itd && !early.length)) return '';
+  return `<div class="banner warn"><span>${msgs.join('<br>')}</span></div>`;
 }
 function chartSVG(pts) {
   if (pts.length < 2) return '<p class="hint">La courbe apparaîtra après deux observations.</p>';
@@ -1005,7 +1021,8 @@ function lotDetails(v, inJournal) {
     else if (e.type === 'funding') { detail = esc(e.note || ''); amt = usd(-e.amount, true); }
     else if (e.type === 'stop') { detail = `${e.from == null ? 'aucun' : usd(e.from)} → ${e.to == null ? 'aucun' : usd(e.to)}`; }
     else { detail = esc(e.note || ''); amt = usd(e.amount, true); }
-    return `<tr><td>${fmtDate(e.date)}</td><td>${lab}</td><td>${detail}</td><td class="n">${amt}</td><td><button class="btn sm" data-act="del-event" data-lot="${lot.id}" data-ev="${e.id}" aria-label="Supprimer ce mouvement">Suppr.</button></td></tr>`;
+    const photo = e.type === 'sell' ? `<button class="btn sm" data-act="sell-img" data-lot="${lot.id}" data-ev="${e.id}">${e.imgId ? 'Photo ✓' : '+ Photo'}</button> ` : '';
+    return `<tr><td>${fmtDate(e.date)}</td><td>${lab}</td><td>${detail}</td><td class="n">${amt}</td><td>${photo}<button class="btn sm" data-act="del-event" data-lot="${lot.id}" data-ev="${e.id}" aria-label="Supprimer ce mouvement">Suppr.</button></td></tr>`;
   }).join('');
   const sumRight = ls.closed
     ? `<span class="num ${cls(ls.netRealized)}">${usd(ls.netRealized, true)}${R != null ? ' · ' + (R > 0 ? '+' : '') + fmtNum(R, 2) + ' R' : ''}</span>`
@@ -1032,7 +1049,7 @@ function lotDetails(v, inJournal) {
       </dl>
       ${!ls.closed && sa && sa.missing ? '<div class="banner err">Stop manquant : risque non borné.</div>' : ''}
       ${lot.note ? `<p class="lead">${esc(lot.note)}</p>` : ''}
-      ${lot.imgId ? `<img class="thumb" data-img="${lot.imgId}" alt="Capture du graphique ${esc(lot.ticker)}">` : ''}
+      ${lotImgIds(lot).length ? `<div class="shots">${lot.imgId ? `<figure><img class="thumb" data-img="${lot.imgId}" alt="Capture à l’achat ${esc(lot.ticker)}"><figcaption>Achat du ${fmtDate(lot.date)}</figcaption></figure>` : ''}${lot.events.filter(e => e.imgId).sort((a, b) => a.date < b.date ? -1 : 1).map(e => `<figure><img class="thumb" data-img="${e.imgId}" alt="Capture à la vente ${esc(lot.ticker)}"><figcaption>Vente du ${fmtDate(e.date)}</figcaption></figure>`).join('')}</div>` : ''}
       ${evRows ? `<div class="tbl"><table><thead><tr><th>Date</th><th>Mouvement</th><th>Détail</th><th class="n">Montant</th><th></th></tr></thead><tbody>${evRows}</tbody></table></div>` : ''}
       <div class="row">
         ${ls.closed ? '' : `<button class="btn sm primary" data-act="sell" data-lot="${lot.id}">Vendre</button><button class="btn sm" data-act="stop" data-lot="${lot.id}">Modifier le stop</button><button class="btn sm" data-act="funding" data-lot="${lot.id}">Financement</button>`}
@@ -1239,6 +1256,7 @@ function sheetSell(lot) {
       ${dec('fee', 'Frais réels de sortie ($)', '')}
       ${planSel(lot.planOk)}
       <div class="fld wide"><label for="f-planComment">Commentaire</label><input id="f-planComment" name="planComment" value="${esc(lot.planComment || '')}" placeholder="facultatif"></div>
+      <div class="fld wide"><label for="f-img">Capture du graphique à la vente</label><input type="file" id="f-img" name="img" accept="image/*"><p class="hint">facultatif</p></div>
     </div><div id="sellCheck" class="banner info"></div>`,
     onInput: form => {
       const q = num(F(form, 'qty')), p = num(F(form, 'price'));
@@ -1248,12 +1266,14 @@ function sheetSell(lot) {
       if (!(q > 0 && p > 0)) { box.textContent = 'Saisissez quantité et prix.'; return; }
       box.innerHTML = `Résultat de cette vente : <strong class="num ${cls(q * (p - lot.price) - fe)}">${usd(q * (p - lot.price) - fe, true)}</strong> (frais de sortie déduits)${q >= ls.rem - 1e-9 ? ' · clôture la position' : ''}`;
     },
-    onSubmit: form => {
+    onSubmit: async form => {
       const q = num(F(form, 'qty')), p = num(F(form, 'price')), fe = numOr(F(form, 'fee'), 0), date = F(form, 'date');
       need(date, 'Date requise.'); need(date >= lot.date, 'La vente ne peut pas précéder l’achat.');
       need(q > 0 && q <= ls.rem + 1e-9, `Quantité entre 0 et ${qty(ls.rem)}.`);
       need(p > 0, 'Prix invalide.'); need(isNum(fe) && fe >= 0, 'Frais invalides.');
-      lot.events.push({ id: uid(), type: 'sell', date, qty: Math.min(q, ls.rem), price: p, fee: fe });
+      const id = uid(), file = form.elements.img.files[0]; let imgId = null;
+      if (file) { imgId = 'i' + id; await putImage(imgId, await readImageFile(file)); }
+      lot.events.push({ id, type: 'sell', date, qty: Math.min(q, ls.rem), price: p, fee: fe, imgId });
       lot.planOk = planVal(F(form, 'planOk')); lot.planComment = F(form, 'planComment').trim();
       const lp = Core.lastPrice(S.prices, lot.ticker);
       if (!lp || lp.date <= date) addPrice(lot.ticker, date, p);
@@ -1297,6 +1317,22 @@ function sheetPlan(lot) {
     title: 'Plan respecté ? ' + lot.ticker, ok: 'Enregistrer',
     body: `<div class="fields">${planSel(lot.planOk)}<div class="fld wide"><label for="f-planComment">Commentaire</label><textarea id="f-planComment" name="planComment">${esc(lot.planComment || '')}</textarea></div></div>`,
     onSubmit: form => { lot.planOk = planVal(F(form, 'planOk')); lot.planComment = F(form, 'planComment').trim(); save('Évaluation enregistrée'); }
+  });
+}
+function sheetSellImg(lot, ev) {
+  openSheet({
+    title: 'Capture de la vente ' + lot.ticker, ok: 'Enregistrer',
+    body: `<p class="lead">Vente du ${fmtDate(ev.date)} : ${qty(ev.qty)} × ${usd(ev.price)}.</p><div class="fields">
+      <div class="fld wide"><label for="f-img">${ev.imgId ? 'Remplacer la capture' : 'Ajouter une capture'}</label><input type="file" id="f-img" name="img" accept="image/*">
+      ${ev.imgId ? '<label class="check"><input type="checkbox" name="rmImg"> supprimer la capture actuelle</label>' : ''}</div></div>`,
+    onSubmit: async form => {
+      const file = form.elements.img.files[0], rm = form.elements.rmImg && form.elements.rmImg.checked;
+      need(file || rm, 'Choisissez une image.');
+      if (ev.imgId) await delImage(ev.imgId);
+      ev.imgId = file ? 'i' + uid() : null;
+      if (file) await putImage(ev.imgId, await readImageFile(file));
+      save(file ? 'Capture enregistrée' : 'Capture supprimée');
+    }
   });
 }
 function sheetEdit(lot) {
@@ -1400,7 +1436,7 @@ function buildCSV() {
 }
 async function buildJSON() {
   const images = {};
-  for (const l of S.lots) if (l.imgId) { const d = await getImage(l.imgId); if (d) images[l.imgId] = d; }
+  for (const l of S.lots) for (const id of lotImgIds(l)) { const d = await getImage(id); if (d) images[id] = d; }
   return JSON.stringify({ app: 'carnet-positions', format: 1, exportedAt: new Date().toISOString(), state: S, images }, null, 1);
 }
 async function offerFile(filename, text) {
@@ -1507,16 +1543,18 @@ document.addEventListener('click', e => {
     case 'prices': sheetPrices(); break;
     case 'jfilter': journalFilter = b.dataset.f; render(); break;
     case 'sell': sheetSell(lot); break;
+    case 'sell-img': sheetSellImg(lot, lot.events.find(x => x.id === b.dataset.ev)); break;
     case 'stop': sheetStop(lot); break;
     case 'funding': sheetAmount(lot, 'funding'); break;
     case 'dividend': sheetAmount(lot, 'dividend'); break;
     case 'plan': sheetPlan(lot); break;
     case 'edit-lot': sheetEdit(lot); break;
     case 'del-lot': confirmSheet('Supprimer cette position ?', `${esc(lot.ticker)} du ${fmtDate(lot.date)}, avec ses ${lot.events.length} mouvement(s). Cette suppression est définitive.`, 'Supprimer', async () => {
-      if (lot.imgId) await delImage(lot.imgId); S.lots = S.lots.filter(l => l !== lot); save('Position supprimée'); }); break;
+      for (const id of lotImgIds(lot)) await delImage(id); S.lots = S.lots.filter(l => l !== lot); save('Position supprimée'); }); break;
     case 'del-event': {
       const ev = lot.events.find(x => x.id === b.dataset.ev);
       confirmSheet('Supprimer ce mouvement ?', `Mouvement du ${fmtDate(ev.date)} sur ${esc(lot.ticker)}.`, 'Supprimer', () => {
+        if (ev.imgId) delImage(ev.imgId);
         lot.events = lot.events.filter(x => x !== ev);
         if (ev.type === 'stop') { const prev = lot.events.filter(x => x.type === 'stop').sort((p, q) => p.date < q.date ? -1 : 1).pop(); lot.stopCurrent = prev ? prev.to : lot.stopInitial; }
         save('Mouvement supprimé');
@@ -1563,7 +1601,7 @@ document.addEventListener('click', e => {
     case 'load-demo': loadDemo(); save('Données de démonstration chargées'); break;
     case 'clear-demo': confirmSheet('Effacer la démonstration ?', 'Seules les données marquées « Démo » sont supprimées. Vos propres saisies restent.', 'Effacer la démo', () => { clearDemo(); save('Démonstration effacée'); }); break;
     case 'wipe': confirmSheet('Effacer toutes les données ?', 'Positions, flux, valeurs courtier, cours, réglages et captures seront supprimés. Exportez d’abord en JSON si besoin.', 'Tout effacer', async () => {
-      for (const l of S.lots) if (l.imgId) await delImage(l.imgId); S = defaultState(); calcDraft = null; save('Toutes les données ont été effacées'); }); break;
+      for (const l of S.lots) for (const id of lotImgIds(l)) await delImage(id); S = defaultState(); calcDraft = null; save('Toutes les données ont été effacées'); }); break;
     case 'copy-ta': {
       const ta = $('#exportTa'), text = window.__exportText || ta.value;
       if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => toast('Contenu copié'), () => { ta.select(); toast('Sélectionné : copiez avec ⌘C / Ctrl+C'); });
