@@ -1,5 +1,5 @@
 // Mode hors ligne : l'app est servie depuis le cache, puis mise à jour en arrière-plan.
-const CACHE = 'carnet-v1.1.0';
+const CACHE = 'carnet-v1.2.0';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './apple-touch-icon.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {

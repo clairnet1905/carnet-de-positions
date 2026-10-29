@@ -19,154 +19,235 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;600;700&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-/* Layout : registre sobre, une colonne sur iPhone, deux colonnes au-delà de 820 px ; onglets en bas sur mobile, en haut sur ordinateur. */
+/* Layout : une colonne sur iPhone, grilles au-delà de 820 px ; onglets à icônes en bas sur mobile, en haut sur ordinateur. */
 :root{
-  --bg:#F2F4F7; --surface:#FFFFFF; --surface-2:#E8ECF1; --ink:#16202B; --muted:#5B6877; --line:#D3DAE2;
-  --accent:#1E4F8F; --accent-ink:#FFFFFF; --accent-soft:#DCE6F3;
-  --gain:#16704A; --loss:#B0392D; --warn:#8F5B00; --warn-bg:#FFF2D6; --loss-bg:#FBE7E4; --gain-bg:#E1F2E8;
+  --bg:#EEF1F5; --surface:#FFFFFF; --surface-2:#F3F5F8; --ink:#121A24; --muted:#5E6B7A; --line:#E0E5EB;
+  --accent:#2457C5; --accent-ink:#FFFFFF; --accent-soft:#E4ECFB; --hero-a:#16264A; --hero-b:#24468C; --hero-ink:#FFFFFF; --hero-muted:#B9C7E4;
+  --gain:#12805A; --loss:#C2372B; --warn:#9A5B00; --warn-bg:#FFF3DC; --loss-bg:#FDE9E6; --gain-bg:#E2F4EC;
+  --shadow:0 1px 2px rgba(16,24,40,.05),0 4px 14px rgba(16,24,40,.06);
   --f-display:"Familjen Grotesk","Helvetica Neue",Arial,sans-serif;
   --f-body:"Public Sans",-apple-system,"Segoe UI",Roboto,sans-serif;
   --f-num:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
-  --r:10px;
+  --r:16px;
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
-  --bg:#0E141A; --surface:#151D25; --surface-2:#1C2630; --ink:#E5EBF1; --muted:#95A3B2; --line:#2A3644;
-  --accent:#86B4EE; --accent-ink:#0E141A; --accent-soft:#1D2E44;
-  --gain:#5DC892; --loss:#F28C80; --warn:#E6B75A; --warn-bg:#2E2512; --loss-bg:#341B1B; --gain-bg:#14291F; color-scheme:dark}}
+  --bg:#0B1016; --surface:#141B24; --surface-2:#1A232E; --ink:#E7EDF3; --muted:#93A1B1; --line:#253140;
+  --accent:#7FA8F5; --accent-ink:#0B1016; --accent-soft:#1A2943; --hero-a:#13213F; --hero-b:#1E3A75; --hero-ink:#FFFFFF; --hero-muted:#A8B8DA;
+  --gain:#4FD195; --loss:#FF8A7D; --warn:#F0BD5E; --warn-bg:#2D2412; --loss-bg:#341A19; --gain-bg:#11291E;
+  --shadow:0 1px 2px rgba(0,0,0,.3); color-scheme:dark}}
 :root[data-theme="dark"]{
-  --bg:#0E141A; --surface:#151D25; --surface-2:#1C2630; --ink:#E5EBF1; --muted:#95A3B2; --line:#2A3644;
-  --accent:#86B4EE; --accent-ink:#0E141A; --accent-soft:#1D2E44;
-  --gain:#5DC892; --loss:#F28C80; --warn:#E6B75A; --warn-bg:#2E2512; --loss-bg:#341B1B; --gain-bg:#14291F; color-scheme:dark}
+  --bg:#0B1016; --surface:#141B24; --surface-2:#1A232E; --ink:#E7EDF3; --muted:#93A1B1; --line:#253140;
+  --accent:#7FA8F5; --accent-ink:#0B1016; --accent-soft:#1A2943; --hero-a:#13213F; --hero-b:#1E3A75; --hero-ink:#FFFFFF; --hero-muted:#A8B8DA;
+  --gain:#4FD195; --loss:#FF8A7D; --warn:#F0BD5E; --warn-bg:#2D2412; --loss-bg:#341A19; --gain-bg:#11291E;
+  --shadow:0 1px 2px rgba(0,0,0,.3); color-scheme:dark}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 html,body{background:var(--bg)}
-body{color:var(--ink);font:15px/1.5 var(--f-body);padding-bottom:calc(76px + env(safe-area-inset-bottom,0px))}
+body{color:var(--ink);font:15px/1.5 var(--f-body);padding-bottom:calc(84px + env(safe-area-inset-bottom,0px));-webkit-font-smoothing:antialiased}
 body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:30;background:var(--surface)}
-.wrap{max-width:1060px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1100px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;letter-spacing:-.01em}
-h2{font-size:1.25rem}
-h3{font-size:1.02rem}
+h2{font-size:1.18rem}
+h3{font-size:1rem}
 .num,td.n,.kv dd{font-family:var(--f-num);font-variant-numeric:tabular-nums}
 small,.muted{color:var(--muted)}
 a{color:var(--accent)}
 /* En-tête */
 .top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--surface);border-bottom:1px solid var(--line)}
 .top .wrap{display:flex;align-items:center;gap:12px;padding-block:10px;flex-wrap:wrap}
-.brand{font-family:var(--f-display);font-weight:700;font-size:1.1rem;display:flex;align-items:baseline;gap:8px}
-.brand span{font:500 .72rem var(--f-num);color:var(--muted);letter-spacing:.04em}
-.sync{margin-left:auto;font-size:.78rem;color:var(--muted);display:flex;align-items:center;gap:6px;max-width:100%}
+.brand{font-family:var(--f-display);font-weight:700;font-size:1.08rem;display:flex;align-items:center;gap:10px;white-space:nowrap}
+.brand svg{width:30px;height:30px;border-radius:8px;flex:none}
+.brand span{font:500 .68rem var(--f-num);color:var(--muted);letter-spacing:.05em;display:block}
+.sync{margin-left:auto;font-size:.76rem;color:var(--muted);display:flex;align-items:center;gap:6px;max-width:100%;background:var(--surface-2);padding:4px 10px;border-radius:99px}
 .sync i{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
-.sync[data-s="synced"] i{background:var(--gain)} .sync[data-s="local"] i{background:var(--warn)} .sync[data-s="error"] i{background:var(--loss)}
+.sync[data-s="synced"] i{background:var(--gain);box-shadow:0 0 0 3px var(--gain-bg)} .sync[data-s="local"] i{background:var(--warn)} .sync[data-s="error"] i{background:var(--loss)}
 nav.tabs{display:flex;gap:4px}
-nav.tabs button{font:600 .9rem var(--f-body);border:0;background:none;color:var(--muted);padding:8px 12px;border-radius:8px;cursor:pointer}
+nav.tabs button{font:600 .88rem var(--f-body);border:0;background:none;color:var(--muted);padding:8px 12px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:7px}
+nav.tabs svg{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 nav.tabs button[aria-selected="true"]{background:var(--accent-soft);color:var(--accent)}
 nav.tabs .s{display:none}
 @media (max-width:819px){
-  nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:25;background:var(--surface);border-top:1px solid var(--line);
+  .brand span{display:none}
+  nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:25;background:color-mix(in srgb,var(--surface) 92%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-top:1px solid var(--line);
     padding:6px max(8px,env(safe-area-inset-right,0px)) calc(6px + env(safe-area-inset-bottom,0px)) max(8px,env(safe-area-inset-left,0px));justify-content:space-around}
-  nav.tabs button{flex:1;padding:8px 4px;font-size:.8rem}
+  nav.tabs button{flex:1;flex-direction:column;gap:2px;padding:6px 2px;font-size:.7rem}
+  nav.tabs button[aria-selected="true"]{background:none}
   nav.tabs .l{display:none} nav.tabs .s{display:inline}
 }
 @media (min-width:820px){ body{padding-bottom:40px} .top .wrap{flex-wrap:nowrap} .sync{order:3;margin-left:0} nav.tabs{margin-left:auto} }
-main{padding-block:18px 24px;display:grid;gap:18px}
-section.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;display:grid;gap:12px;min-width:0}
-.sec-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
-.lead{font-size:.86rem;color:var(--muted);margin:0;max-width:68ch}
-.grid2{display:grid;gap:18px}
+main{padding-block:18px 28px;display:grid;gap:16px}
+section.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:18px;display:grid;gap:14px;min-width:0;box-shadow:var(--shadow)}
+.sec-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.lead{font-size:.86rem;color:var(--muted);margin:0;max-width:70ch}
+.grid2{display:grid;gap:16px}
 @media (min-width:820px){.grid2{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
 /* Bannières */
-.banner{border-radius:8px;padding:10px 12px;font-size:.88rem;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.banner{border-radius:12px;padding:10px 12px;font-size:.88rem;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .banner.warn{background:var(--warn-bg);color:var(--warn)} .banner.err{background:var(--loss-bg);color:var(--loss)} .banner.info{background:var(--accent-soft);color:var(--ink)}
 .banner .btn{margin-left:auto}
+/* Alertes */
+.alerts{display:grid;gap:8px}
+.alert{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;font-size:.88rem;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow)}
+.alert::before{content:"";width:8px;height:8px;border-radius:50%;flex:none;background:var(--muted)}
+.alert.err{background:var(--loss-bg);border-color:transparent;color:var(--loss)} .alert.err::before{background:var(--loss)}
+.alert.warn{background:var(--warn-bg);border-color:transparent;color:var(--warn)} .alert.warn::before{background:var(--warn)}
+.alert.ok{color:var(--muted)} .alert.ok::before{background:var(--gain)}
+.alert span{flex:1;min-width:0} .alert .btn{flex:none}
+.alerts details summary{cursor:pointer;font-size:.82rem;color:var(--muted);padding:2px 4px}
+.alerts details[open]{display:grid;gap:8px}
+/* Carte principale */
+.hero-card{background:linear-gradient(135deg,var(--hero-a),var(--hero-b));color:var(--hero-ink);border-radius:var(--r);padding:20px;display:grid;gap:14px;box-shadow:var(--shadow)}
+.hero-card .lbl{color:var(--hero-muted);font-size:.76rem;text-transform:uppercase;letter-spacing:.07em;font-weight:600}
+.hero-card .big{font:600 2.5rem/1.05 var(--f-num);letter-spacing:-.03em}
+.hero-card small,.hero-card .muted{color:var(--hero-muted)}
+.hero-card .chg{display:inline-flex;gap:6px;align-items:center;font:600 .9rem var(--f-num);padding:3px 10px;border-radius:99px;background:rgba(255,255,255,.12)}
+.hero-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.hero-stats div{background:rgba(255,255,255,.08);border-radius:12px;padding:10px 12px}
+.hero-stats dt{color:var(--hero-muted);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em}
+.hero-stats dd{margin:2px 0 0;font:600 1.02rem var(--f-num)}
+.hero-card .up{color:#7BE3AE} .hero-card .down{color:#FFA89E}
+.gauge{display:grid;gap:6px}
+.gauge .track{height:8px;border-radius:99px;background:rgba(255,255,255,.16);overflow:hidden}
+.gauge .track i{display:block;height:100%;border-radius:99px;background:#7BE3AE}
+.gauge .track i.mid{background:#F5C76A} .gauge .track i.hi{background:#FF8F82}
+.gauge .row{justify-content:space-between;font-size:.8rem;color:var(--hero-muted)}
 /* Valeurs */
 .hero{display:grid;gap:4px}
 .hero .big{font:600 2.1rem/1.1 var(--f-num);letter-spacing:-.02em}
-.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:8px;margin:0}
-.kv div{background:var(--surface-2);border-radius:8px;padding:9px 11px;min-width:0}
-.kv dt{font-size:.74rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
-.kv dd{margin:2px 0 0;font-size:1rem;overflow-wrap:anywhere}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin:0}
+.kv div{background:var(--surface-2);border-radius:12px;padding:10px 12px;min-width:0}
+.kv dt{font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+.kv dd{margin:3px 0 0;font-size:1rem;overflow-wrap:anywhere}
 .kv dd small{display:block;font-family:var(--f-body);font-size:.74rem}
 .pos{color:var(--gain)} .neg{color:var(--loss)} .wrn{color:var(--warn)}
-.pill{display:inline-block;font:600 .7rem var(--f-body);padding:2px 8px;border-radius:99px;letter-spacing:.03em;text-transform:uppercase;background:var(--surface-2);color:var(--muted)}
+.pill{display:inline-block;font:600 .68rem var(--f-body);padding:3px 8px;border-radius:99px;letter-spacing:.04em;text-transform:uppercase;background:var(--surface-2);color:var(--muted);vertical-align:middle}
 .pill.open{background:var(--accent-soft);color:var(--accent)} .pill.win{background:var(--gain-bg);color:var(--gain)} .pill.loss{background:var(--loss-bg);color:var(--loss)} .pill.warn{background:var(--warn-bg);color:var(--warn)} .pill.demo{background:var(--warn-bg);color:var(--warn)}
+details.more>summary{cursor:pointer;font-size:.84rem;font-weight:600;color:var(--accent);list-style:none}
+details.more>summary::-webkit-details-marker{display:none}
+details.more>summary::after{content:" ▾"} details.more[open]>summary::after{content:" ▴"}
+details.more[open]>summary{margin-bottom:10px}
 /* Formulaires */
 form .fields,.fields{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
 .fld{display:grid;gap:4px;min-width:0}
 .fld.wide{grid-column:1/-1}
 label,.lbl{font-size:.8rem;font-weight:600;color:var(--muted)}
-input,select,textarea{font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 10px;width:100%;min-width:0}
+input,select,textarea{font:inherit;font-size:16px;color:var(--ink);background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 11px;width:100%;min-width:0}
 input[type=checkbox]{width:auto;accent-color:var(--accent)}
 input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 textarea{min-height:70px;resize:vertical}
 .check{display:flex;align-items:center;gap:8px;font-size:.9rem;color:var(--ink);font-weight:500}
 .hint{font-size:.76rem;color:var(--muted);margin:0}
-.btn{font:600 .9rem var(--f-body);border-radius:8px;padding:9px 14px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;white-space:nowrap}
+.btn{font:600 .88rem var(--f-body);border-radius:10px;padding:9px 14px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;white-space:nowrap;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{border-color:var(--muted)}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
-.btn.danger{color:var(--loss);border-color:var(--loss)}
-.btn.sm{padding:5px 10px;font-size:.8rem}
+.btn.danger{color:var(--loss);border-color:color-mix(in srgb,var(--loss) 45%,transparent)}
+.btn.sm{padding:6px 11px;font-size:.8rem}
 .btn:disabled{opacity:.45;cursor:not-allowed}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 /* Résultats du calculateur */
 .result{display:grid;gap:12px}
-.qty-big{font:600 2rem/1.1 var(--f-num)}
-.reason{font-size:.88rem;background:var(--warn-bg);color:var(--warn);border-radius:8px;padding:8px 10px;margin:0}
+.qty-big{font:600 2.2rem/1.1 var(--f-num);color:var(--accent)}
+.reason{font-size:.88rem;background:var(--warn-bg);color:var(--warn);border-radius:10px;padding:8px 10px;margin:0}
 .fine{font-size:.76rem;color:var(--muted);border-top:1px dashed var(--line);padding-top:10px;margin:0}
-.errs{margin:0;padding:10px 12px 10px 28px;background:var(--loss-bg);color:var(--loss);border-radius:8px;font-size:.9rem}
+.errs{margin:0;padding:10px 12px 10px 28px;background:var(--loss-bg);color:var(--loss);border-radius:10px;font-size:.9rem}
 /* Tableaux */
-.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:8px}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:12px}
 table{border-collapse:collapse;width:100%;font-size:.86rem}
-th,td{padding:7px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
-th{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600;background:var(--surface-2)}
+th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;background:var(--surface-2)}
 td.n,th.n{text-align:right}
 tr:last-child td{border-bottom:0}
 /* Positions */
-details.lot{border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+.pgrid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(310px,1fr))}
+.pcard{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px;display:grid;gap:12px;align-content:start;box-shadow:var(--shadow);position:relative;overflow:hidden;min-width:0}
+.pcard::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:var(--line)}
+.pcard.up::before{background:var(--gain)} .pcard.down::before{background:var(--loss)}
+.pcard.danger{border-color:var(--loss)} .pcard.danger::before{background:var(--loss)}
+.pcard header{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.pcard .tk{font-size:1.15rem}
+.pcard header small{display:block;font-size:.76rem}
+.pl{text-align:right;font:600 1.02rem var(--f-num);white-space:nowrap}
+.pl small{display:block;font-size:.76rem;font-weight:500}
+.mini{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.mini div{background:var(--surface-2);border-radius:10px;padding:7px 9px;min-width:0}
+.mini span{display:block;font-size:.66rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+.mini b{font:600 .9rem var(--f-num);overflow-wrap:anywhere}
+.rail{position:relative;height:26px;margin:2px 6px 0}
+.rail::before{content:"";position:absolute;left:0;right:0;top:11px;height:4px;border-radius:99px;background:var(--surface-2)}
+.rail .zone{position:absolute;top:11px;height:4px;border-radius:99px;background:color-mix(in srgb,var(--gain) 55%,transparent)}
+.rail .zone.bad{background:var(--loss)}
+.rail .mk{position:absolute;top:4px;width:2px;height:18px;margin-left:-1px;border-radius:2px;background:var(--muted)}
+.rail .mk.stop{background:var(--loss)}
+.rail .mk.entry{background:var(--ink);opacity:.55}
+.rail .mk.px{top:5px;width:16px;height:16px;margin-left:-8px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+.rail-leg{display:flex;justify-content:space-between;gap:6px;font:500 .72rem var(--f-num);color:var(--muted);flex-wrap:wrap}
+.rail-leg .s{color:var(--loss)} .rail-leg .p{color:var(--accent)}
+details.lot{border:1px solid var(--line);border-radius:12px;background:var(--surface)}
 details.lot>summary{list-style:none;cursor:pointer;padding:10px 12px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center}
 details.lot>summary::-webkit-details-marker{display:none}
 details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
+.pcard details.lot{border:0;background:var(--surface-2)}
+.pcard details.lot>summary{padding:8px 10px;font-size:.84rem;font-weight:600;color:var(--accent)}
+.pcard details.lot .body{padding:0 10px 10px}
+.pcard details.lot .kv div{background:var(--surface)}
+.chev{transition:transform .15s} details[open]>summary .chev{transform:rotate(90deg)}
 .tk{font:700 1rem var(--f-display)}
-.ticker-card{display:grid;gap:10px;border:1px solid var(--line);border-radius:var(--r);padding:12px;background:var(--surface)}
-.ticker-card header{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline}
-.bar{height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden}
-.bar i{display:block;height:100%;background:var(--accent)}
-.expo{display:grid;grid-template-columns:70px minmax(0,1fr) auto;gap:8px;align-items:center;font-size:.86rem}
-.thumb{max-width:100%;max-height:260px;border-radius:6px;border:1px solid var(--line)}
-.shots{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0}.shots figure{margin:0;max-width:100%}.shots figcaption{font-size:12px;color:var(--muted);margin-top:4px}
+.bar{height:8px;background:var(--surface-2);border-radius:99px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent);border-radius:99px}
+.bar i.over{background:var(--warn)}
+.expo{display:grid;grid-template-columns:64px minmax(0,1fr) auto;gap:10px;align-items:center;font-size:.84rem;padding:3px 0}
+.expo-list{display:grid;gap:2px;max-height:none}
+.thumb{max-width:100%;max-height:260px;border-radius:10px;border:1px solid var(--line)}
+.shots{display:flex;flex-wrap:wrap;gap:10px;margin:4px 0}.shots figure{margin:0;max-width:100%}.shots figcaption{font-size:12px;color:var(--muted);margin-top:4px}
 .filters{display:flex;gap:6px;flex-wrap:wrap}
 .filters button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent);border-color:transparent}
+/* Discipline */
+.disc{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
+.disc div{border-radius:12px;padding:12px;background:var(--surface-2);display:grid;gap:2px}
+.disc b{font:600 1.35rem var(--f-num)}
+.disc span{font-size:.8rem;font-weight:600}
+.disc small{font-size:.74rem;overflow-wrap:anywhere}
+.disc .good b{color:var(--gain)} .disc .bad b{color:var(--loss)} .disc .meh b{color:var(--warn)}
 /* Courbe */
 .chart{width:100%;height:auto;display:block}
 .chart text{fill:var(--muted);font:11px var(--f-num)}
 .chart .grid{stroke:var(--line);stroke-width:1}
 .chart .zero{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
-.chart .line{fill:none;stroke:var(--accent);stroke-width:2}
-.chart .area{fill:var(--accent);opacity:.1}
+.chart .line{fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linejoin:round}
+.chart .area{fill:url(#gArea)}
+.chart .dd{fill:var(--loss);opacity:.22} .chart .ddl{fill:none;stroke:var(--loss);stroke-width:1.5}
 .chart .dot{fill:var(--accent)} .chart .dot.est{fill:var(--surface);stroke:var(--accent);stroke-width:1.5} .chart .dot.br{fill:var(--warn)}
+.chart-t{font-size:.76rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin:4px 0 -6px}
+/* Liste des cours */
+.plist{display:grid;gap:6px}
+.plist .pr{display:grid;grid-template-columns:70px minmax(0,1fr) minmax(0,130px);gap:10px;align-items:center;padding:6px 10px;border-radius:10px;background:var(--surface-2)}
+.plist .pr small{font-size:.74rem}
+.plist .pr input{background:var(--surface);padding:8px 10px;text-align:right;font-family:var(--f-num)}
 /* Feuille modale */
-.sheet{position:fixed;inset:0;z-index:50;background:rgba(10,16,24,.45);display:flex;align-items:flex-end;justify-content:center}
-.sheet-card{background:var(--surface);width:100%;max-width:620px;max-height:92vh;overflow:auto;border-radius:14px 14px 0 0;
-  padding:16px max(16px,env(safe-area-inset-right,0px)) calc(16px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
-@media (min-width:820px){.sheet{align-items:center}.sheet-card{border-radius:14px}}
+.sheet{position:fixed;inset:0;z-index:50;background:rgba(8,12,20,.5);display:flex;align-items:flex-end;justify-content:center}
+.sheet-card{background:var(--surface);width:100%;max-width:620px;max-height:92vh;overflow:auto;border-radius:20px 20px 0 0;
+  padding:18px max(16px,env(safe-area-inset-right,0px)) calc(16px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+@media (min-width:820px){.sheet{align-items:center}.sheet-card{border-radius:20px}}
 .sheet-card form{display:grid;gap:12px}
 .sheet-card header{display:flex;justify-content:space-between;align-items:center;gap:10px}
-.sheet-card footer{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.sheet-card footer{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;position:sticky;bottom:-16px;background:var(--surface);padding-block:8px}
 .form-err{color:var(--loss);font-size:.88rem;margin:0}
-.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom,0px));z-index:60;background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;font-size:.88rem;max-width:calc(100% - 32px)}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(92px + env(safe-area-inset-bottom,0px));z-index:60;background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:99px;font-size:.88rem;max-width:calc(100% - 32px);box-shadow:var(--shadow)}
 @media (min-width:820px){.toast{bottom:24px}}
-@media (prefers-reduced-motion:no-preference){ .sheet-card{animation:up .18s ease-out} @keyframes up{from{transform:translateY(16px);opacity:.6}} }
+@media (prefers-reduced-motion:no-preference){ .sheet-card{animation:up .2s ease-out} @keyframes up{from{transform:translateY(20px);opacity:.6}} }
 </style>
 
 </head>
 <body>
 <header class="top">
   <div class="wrap">
-    <div class="brand">Carnet de positions <span>USD · ACTIONS US</span></div>
+    <div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#1E3A5F"/><path d="M6 22l6-6 4 3 9-10" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 26h20" stroke="#F28C80" stroke-width="2" stroke-dasharray="3 2.4"/></svg><div>Carnet de positions<span>USD · ACTIONS US</span></div></div>
     <div class="sync" id="sync" data-s="local"><i></i><span id="syncText">Chargement…</span></div>
     <nav class="tabs" role="tablist" aria-label="Sections">
-      <button role="tab" id="tab-dash" data-tab="dash"><span class="l">Tableau de bord</span><span class="s">Bord</span></button>
-      <button role="tab" id="tab-calc" data-tab="calc"><span class="l">Nouvelle position</span><span class="s">Nouvelle</span></button>
-      <button role="tab" id="tab-pos" data-tab="pos"><span class="l">Positions et journal</span><span class="s">Positions</span></button>
-      <button role="tab" id="tab-set" data-tab="set"><span class="l">Réglages</span><span class="s">Réglages</span></button>
+      <button role="tab" id="tab-dash" data-tab="dash"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V10M10 19V5M16 19v-7M22 19H2"/></svg><span class="l">Tableau de bord</span><span class="s">Bord</span></button>
+      <button role="tab" id="tab-calc" data-tab="calc"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg><span class="l">Nouvelle position</span><span class="s">Nouvelle</span></button>
+      <button role="tab" id="tab-pos" data-tab="pos"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 15l3-3 3 2 4-5"/></svg><span class="l">Positions et journal</span><span class="s">Positions</span></button>
+      <button role="tab" id="tab-set" data-tab="set"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><span class="l">Réglages</span><span class="s">Réglages</span></button>
     </nav>
   </div>
 </header>
@@ -184,7 +265,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.1.0 · licence MIT */
+/* Carnet de positions v1.2.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -771,10 +852,59 @@ function demoBanner() {
   return remind + (hasDemo() ? `<div class="banner warn"><span><strong>Données de démonstration affichées.</strong> Elles se mélangent aux calculs : effacez-les avant de saisir vos vraies positions.</span><button class="btn sm" data-act="clear-demo">Effacer la démo</button></div>` : '');
 }
 
+// ----- Alertes : ce qui demande une action, affiché en haut du tableau de bord et des positions -----
+function alertsList() {
+  const today = todayISO(), out = [];
+  const open = S.lots.map(lotView).filter(v => !v.ls.closed);
+  for (const v of open) {
+    const t = esc(v.lot.ticker), st = v.lot.stopCurrent, p = v.last ? v.last.price : null;
+    if (v.sa.missing) out.push({ lvl: 'err', txt: `<strong>${t}</strong> : aucun stop, risque non borné.`, lot: v.lot.id });
+    else if (p != null && p <= st) out.push({ lvl: 'err', txt: `<strong>${t}</strong> : cours ${usd(p)} sur ou sous le stop ${usd(st)}. Vérifiez dans MT5 si la position a été stoppée.`, lot: v.lot.id });
+    else if (p != null && (p - st) / p < 0.01) out.push({ lvl: 'warn', txt: `<strong>${t}</strong> : à ${pct((p - st) / p * 100)} du stop.`, lot: v.lot.id });
+  }
+  const stale = [...new Set(open.filter(v => !v.last || Core.days(v.last.date, today) > S.settings.staleDays).map(v => v.lot.ticker))].sort();
+  if (stale.length) out.push({ lvl: 'warn', txt: `Cours anciens ou manquants : <strong>${stale.map(esc).join(', ')}</strong>.`, act: 'prices', btn: 'Mettre à jour' });
+  const acc = Core.accountState(S, null, 'last');
+  if (acc.margin > 0 && acc.equity > 0) {
+    const lvl = acc.equity / acc.margin * 100;
+    if (lvl < 150) out.push({ lvl: lvl < 120 ? 'err' : 'warn', txt: `Niveau de marge estimé <strong>${fmtNum(lvl, 0)} %</strong> (valeur nette ÷ marge). Le courtier ferme des positions vers 50 % : comparez avec MT5.` });
+  }
+  return out;
+}
+function alertsStrip() {
+  const a = alertsList();
+  if (!a.length) return S.lots.some(l => !Core.lotState(l).closed) ? '<div class="alerts"><div class="alert ok"><span>Aucune alerte : stops en place, cours à jour, marge correcte.</span></div></div>' : '';
+  const row = x => `<div class="alert ${x.lvl}"><span>${x.txt}</span>${x.act ? `<button class="btn sm" data-act="${x.act}">${x.btn}</button>` : x.lot ? `<button class="btn sm" data-act="open-lot" data-lot="${x.lot}">Voir</button>` : ''}</div>`;
+  a.sort((p, q) => (p.lvl === 'err' ? 0 : 1) - (q.lvl === 'err' ? 0 : 1));
+  return `<div class="alerts" role="status">${a.slice(0, 4).map(row).join('')}${a.length > 4 ? `<details><summary>${a.length - 4} autre(s) alerte(s)</summary>${a.slice(4).map(row).join('')}</details>` : ''}</div>`;
+}
+
+// ----- Discipline : écarts aux règles de taille et de stop -----
+function disciplineCard(T) {
+  const s = S.settings, lots = S.lots;
+  if (!lots.length) return '';
+  const open = lots.filter(l => !Core.lotState(l).closed);
+  const overCap = lots.filter(l => l.qty * l.price > s.cap + 0.005);
+  const overRisk = lots.filter(l => isNum(l.riskInitialPct) && l.riskInitialPct > s.riskPct + 0.005);
+  const lowered = open.filter(l => isNum(l.stopCurrent) && isNum(l.stopInitial) && l.stopCurrent < l.stopInitial - 1e-9);
+  const safe = open.filter(l => isNum(l.stopCurrent) && l.stopCurrent >= l.price);
+  const names = a => a.length ? [...new Set(a.map(l => esc(l.ticker)))].join(', ') : 'aucune';
+  const box = (c, n, label, sub) => `<div class="${c}"><b>${n}</b><span>${label}</span><small class="muted">${sub}</small></div>`;
+  return `<section class="card">
+    <div class="sec-head"><h2>Discipline</h2><small>vos règles : ${fmtNum(s.riskPct)} % de risque, ${usd(s.cap)} d’exposition par position</small></div>
+    <div class="disc">
+      ${box(T.planRate == null ? '' : T.planRate >= 80 ? 'good' : T.planRate >= 50 ? 'meh' : 'bad', T.planRate == null ? '—' : pct(T.planRate), 'Plan respecté', T.planCount ? T.planCount + ' position(s) évaluée(s)' : 'évaluez vos positions clôturées')}
+      ${box(overCap.length ? 'bad' : 'good', overCap.length + ' / ' + lots.length, 'Au-dessus du plafond à l’achat', names(overCap))}
+      ${box(overRisk.length ? 'bad' : 'good', overRisk.length + ' / ' + lots.length, 'Risque initial au-dessus de ' + fmtNum(s.riskPct) + ' %', names(overRisk))}
+      ${box(lowered.length ? 'meh' : 'good', lowered.length + ' / ' + open.length, 'Stops descendus', lowered.length ? names(lowered) + ' : stop actuel sous le stop initial' : 'aucun stop abaissé')}
+      ${box('good', safe.length + ' / ' + open.length, 'Positions sans risque', safe.length ? names(safe) + ' : stop au niveau de l’entrée ou au-dessus' : 'aucun stop au-dessus de l’entrée')}
+    </div>
+  </section>`;
+}
+
 // ----- Tableau de bord -----
 function viewDash() {
   const ref = referenceCapital(), acc = ref.acc, lb = latestBroker(), P = perf(), T = Core.tradeStats(S);
-  const accNow = acc;
   let gap = '';
   if (lb) {
     const atDate = Core.accountState(S, lb.date, 'exact');
@@ -783,45 +913,45 @@ function viewDash() {
       ? `Écart non calculable : cours manquants au ${fmtDate(lb.date)}.`
       : `Écart avec le calcul à cette date : <span class="${cls(lb.netValue - appV)}">${usd(lb.netValue - appV, true)}</span> (courtier − application).`;
   }
-  const lev = accNow.equity > 0 ? accNow.exposure / accNow.equity : null;
+  const lev = acc.equity > 0 ? acc.exposure / acc.equity : null;
+  const invested = S.settings.initialCapital + acc.deposits - acc.withdrawals;
+  const gain = acc.equity - invested, gainPct = invested > 0 ? gain / invested * 100 : null;
+  const mUse = acc.equity > 0 ? acc.margin / acc.equity * 100 : null;
+  const mCls = mUse == null ? '' : mUse >= 80 ? 'hi' : mUse >= 50 ? 'mid' : '';
+  const hc = x => !isNum(x) || Math.abs(x) < 0.005 ? '' : x > 0 ? 'up' : 'down';
   const perfCell = (label, p) => kv(label, p ? `<span class="${cls(p.r)}">${pct(p.r, true)}</span>` : 'Non calculable',
     p ? `${fmtDate(p.from)} → ${fmtDate(p.to)}${p.est ? ' · estimation Modified Dietz' : ''}` : 'Pas assez d’observations');
   const method = P.estCount ? `Rendement pondéré dans le temps, ${P.estCount} sous-période(s) estimée(s) par Modified Dietz faute de valorisation à la date d’un flux.` : 'Rendement pondéré dans le temps (valorisations disponibles autour de chaque flux).';
   return `${demoBanner()}
-  <section class="card">
-    <div class="sec-head"><h2>Valeur nette du compte</h2><small>${ref.label}</small></div>
-    <div class="hero"><div class="big num">${usd(accNow.equity)}</div>
-      <small>Capital initial ${usd(S.settings.initialCapital)} + flux externes + résultat réalisé net + latent. Cours valorisés au ${fmtDate(accNow.openCount ? accNow.minPriceDate : todayISO())}.</small></div>
-    ${ref.stale ? `<div class="banner warn">Valorisation datée de ${ref.age} jours (${fmtDate(ref.date)}). Mettez à jour les cours ou saisissez la valeur du courtier.</div>` : ''}
-    ${lb ? `<div class="banner info"><span>Courtier au ${fmtDate(lb.date)} : <strong class="num">${usd(lb.netValue)}</strong>${isNum(lb.marginAvail) ? `, marge disponible <span class="num">${usd(lb.marginAvail)}</span>` : ''}. ${gap}</span></div>` : ''}
-    <dl class="kv">
-      ${kv('Versements cumulés', usd(accNow.deposits))}
-      ${kv('Retraits cumulés', usd(accNow.withdrawals))}
-      ${kv('Résultat réalisé net', usd(accNow.realized, true), 'après tous les frais payés', cls(accNow.realized))}
-      ${kv('Résultat latent', usd(accNow.unreal, true), 'avant frais de sortie', cls(accNow.unreal))}
-      ${kv('Frais de transaction', usd(accNow.txFees))}
-      ${kv('Frais de financement', usd(accNow.funding))}
-      ${kv('Dividendes et ajustements', usd(accNow.divs, true))}
-      ${kv('Exposition totale', usd(accNow.exposure))}
-      ${kv('Levier effectif', lev == null ? 'Non calculable' : '×' + fmtNum(lev, 2), 'exposition ÷ valeur nette')}
-      ${kv('Marge estimée utilisée', usd(accNow.margin), 'exposition ÷ levier, indicatif')}
-      ${kv('Marge disponible saisie', lb && isNum(lb.marginAvail) ? usd(lb.marginAvail) : 'Non saisie', lb && isNum(lb.marginAvail) ? fmtDate(lb.date) : 'Réglages › Valeurs courtier')}
+  ${alertsStrip()}
+  <div class="hero-card">
+    <div class="row" style="justify-content:space-between"><span class="lbl">Valeur nette du compte</span><small>${ref.label} · cours au ${fmtDate(acc.openCount ? acc.minPriceDate : todayISO())}</small></div>
+    <div><div class="big">${usd(acc.equity)}</div>
+      <div class="row" style="margin-top:8px"><span class="chg ${hc(gain)}">${usd(gain, true)}${gainPct == null ? '' : ' · ' + pct(gainPct, true)}</span><small>par rapport à ${usd(invested)} apportés</small></div></div>
+    <dl class="hero-stats" style="margin:0">
+      <div><dt>Latent</dt><dd class="${hc(acc.unreal)}">${usd(acc.unreal, true)}</dd></div>
+      <div><dt>Réalisé net</dt><dd class="${hc(acc.realized)}">${usd(acc.realized, true)}</dd></div>
+      <div><dt>Exposition</dt><dd>${usd(acc.exposure)}</dd></div>
+      <div><dt>Levier effectif</dt><dd>${lev == null ? '—' : '×' + fmtNum(lev, 2)}</dd></div>
     </dl>
-  </section>
+    ${mUse != null && acc.margin > 0 ? `<div class="gauge"><div class="row"><span>Marge estimée utilisée : <strong style="color:var(--hero-ink)">${usd(acc.margin)}</strong></span><span>${fmtNum(mUse, 0)} % de la valeur nette</span></div><div class="track"><i class="${mCls}" style="width:${Math.min(100, mUse).toFixed(1)}%"></i></div></div>` : ''}
+  </div>
+  ${ref.stale ? `<div class="banner warn"><span>Valorisation datée de ${ref.age} jours (${fmtDate(ref.date)}). Mettez à jour les cours ou saisissez la valeur du courtier.</span><button class="btn sm" data-act="prices">Mettre à jour</button></div>` : ''}
+  ${lb ? `<div class="banner info"><span>Courtier au ${fmtDate(lb.date)} : <strong class="num">${usd(lb.netValue)}</strong>${isNum(lb.marginAvail) ? `, marge disponible <span class="num">${usd(lb.marginAvail)}</span>` : ''}. ${gap}</span></div>` : ''}
   <section class="card">
-    <div class="sec-head"><h2>Performance</h2></div>
-    <p class="lead">${method} Un dépôt n’est jamais compté comme un gain, un retrait jamais comme une perte.</p>
+    <div class="sec-head"><h2>Performance</h2>${P.itd ? `<strong class="num ${cls(P.itd.r)}" style="font-size:1.2rem">${pct(P.itd.r, true)}</strong>` : ''}</div>
     <dl class="kv">
       ${perfCell('Mois en cours', P.month)}
       ${perfCell('Année en cours', P.year)}
       ${perfCell('Depuis le début', P.itd)}
-      ${kv('Drawdown maximal observé', P.dd ? `<span class="${cls(P.dd.dd)}">${pct(P.dd.dd)}</span>` : 'Non calculable', P.dd && P.dd.dd < 0 ? `${fmtDate(P.dd.peak)} → ${fmtDate(P.dd.trough)}` : 'courbe corrigée des apports')}
+      ${kv('Drawdown maximal', P.dd ? `<span class="${cls(P.dd.dd)}">${pct(P.dd.dd)}</span>` : 'Non calculable', P.dd && P.dd.dd < 0 ? `${fmtDate(P.dd.peak)} → ${fmtDate(P.dd.trough)}` : 'courbe corrigée des apports')}
     </dl>
     ${P.broken ? `<div class="banner err">Courbe interrompue au ${fmtDate(P.brokenAt)} : valeur de départ nulle ou négative.</div>` : ''}
     ${perfWhy(P)}
     ${chartSVG(P.pts)}
-    <p class="hint">${P.freq ? `${P.freq.count} observations, écart médian ${fmtNum(P.freq.medianGap, 1)} jour(s), écart maximal ${P.freq.maxGap} jours. Les baisses survenues entre deux observations (intrajournalières notamment) ne sont pas mesurées.` : 'Pas encore assez d’observations.'}
-    Une observation existe quand toutes les positions ouvertes ont un cours saisi le même jour, quand aucune position n’est ouverte, ou quand vous saisissez la valeur du courtier. ● calcul exact, ○ sous-période estimée, ● orange : valeur courtier.</p>
+    <details class="more"><summary>Comment c’est calculé</summary>
+    <p class="hint">${method} Un dépôt n’est jamais compté comme un gain, un retrait jamais comme une perte. ${P.freq ? `${P.freq.count} observations, écart médian ${fmtNum(P.freq.medianGap, 1)} jour(s), écart maximal ${P.freq.maxGap} jours. Les baisses survenues entre deux observations (intrajournalières notamment) ne sont pas mesurées.` : ''}
+    Une observation existe quand toutes les positions ouvertes ont un cours saisi le même jour, quand aucune position n’est ouverte, ou quand vous saisissez la valeur du courtier. ● calcul exact, ○ sous-période estimée, ● orange : valeur courtier.</p></details>
   </section>
   <section class="card">
     <div class="sec-head"><h2>Positions clôturées</h2><small>sorties partielles regroupées avec leur achat</small></div>
@@ -832,8 +962,23 @@ function viewDash() {
       ${kv('Perte moyenne', T.avgLoss == null ? 'Non calculable' : usd(T.avgLoss, true), '', 'neg')}
       ${kv('Profit factor', T.profitFactor == null ? 'Non calculable' : fmtNum(T.profitFactor, 2), 'gains bruts ÷ pertes brutes')}
       ${kv('Résultat moyen en R', T.avgR == null ? 'Non calculable' : (T.avgR > 0 ? '+' : '') + fmtNum(T.avgR, 2) + ' R', T.rCount < T.count ? `${T.rCount} sur ${T.count} ont un risque initial` : 'R = résultat net ÷ risque initial')}
-      ${kv('Respect du plan', T.planRate == null ? 'Non calculable' : pct(T.planRate), T.planCount ? `${T.planCount} position(s) évaluée(s)` : 'aucune évaluation')}
     </dl>
+  </section>
+  ${disciplineCard(T)}
+  <section class="card">
+    <details class="more"><summary>Détail du calcul de la valeur nette</summary>
+    <dl class="kv">
+      ${kv('Capital initial', usd(S.settings.initialCapital), fmtDate(S.settings.startDate))}
+      ${kv('Versements cumulés', usd(acc.deposits))}
+      ${kv('Retraits cumulés', usd(acc.withdrawals))}
+      ${kv('Résultat réalisé net', usd(acc.realized, true), 'après tous les frais payés', cls(acc.realized))}
+      ${kv('Résultat latent', usd(acc.unreal, true), 'avant frais de sortie', cls(acc.unreal))}
+      ${kv('Frais de transaction', usd(acc.txFees))}
+      ${kv('Frais de financement', usd(acc.funding))}
+      ${kv('Dividendes et ajustements', usd(acc.divs, true))}
+      ${kv('Marge estimée utilisée', usd(acc.margin), 'exposition ÷ levier, indicatif')}
+      ${kv('Marge disponible saisie', lb && isNum(lb.marginAvail) ? usd(lb.marginAvail) : 'Non saisie', lb && isNum(lb.marginAvail) ? fmtDate(lb.date) : 'Réglages › Valeurs courtier')}
+    </dl></details>
   </section>`;
 }
 // Explique ce qui manque quand la performance n'est pas calculable.
@@ -850,23 +995,36 @@ function perfWhy(P) {
 }
 function chartSVG(pts) {
   if (pts.length < 2) return '<p class="hint">La courbe apparaîtra après deux observations.</p>';
-  const W = 660, H = 220, L = 52, R = 12, Tp = 12, B = 28;
+  const vw = (document.querySelector('#view') || {}).clientWidth || 700;
+  const W = Math.round(Math.max(320, Math.min(700, vw - 38))), H = W < 500 ? 220 : 280, L = 46, R = 10, Tp = 14, B = 28;
   const t0 = Date.parse(pts[0].date), t1 = Date.parse(pts[pts.length - 1].date);
-  const vals = pts.map(p => (p.index - 1) * 100);
-  let lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
-  if (hi - lo < 1) { hi += 0.5; lo -= 0.5; }
-  const span = hi - lo, stepRaw = span / 4, mag = Math.pow(10, Math.floor(Math.log10(stepRaw)));
-  const step = [1, 2, 2.5, 5, 10].map(k => k * mag).find(s => s >= stepRaw);
-  lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
+  const ticks = (lo, hi, n) => {
+    if (hi - lo < 1) { hi += 0.5; lo -= 0.5; }
+    const stepRaw = (hi - lo) / n, mag = Math.pow(10, Math.floor(Math.log10(stepRaw)));
+    const step = [1, 2, 2.5, 5, 10].map(k => k * mag).find(s => s >= stepRaw);
+    return { lo: Math.floor(lo / step) * step, hi: Math.ceil(hi / step) * step, step };
+  };
   const x = d => L + (t1 === t0 ? 0 : (Date.parse(d) - t0) / (t1 - t0)) * (W - L - R);
-  const y = v => Tp + (hi - v) / (hi - lo) * (H - Tp - B);
-  let g = '';
-  for (let v = lo; v <= hi + 1e-9; v += step) g += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${fmtNum(v, 1)} %</text>`;
+  const grid = (sc, y) => { let g = ''; for (let v = sc.lo; v <= sc.hi + 1e-9; v += sc.step) g += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${fmtNum(v, 1)} %</text>`; return g; };
+  // Courbe cumulée corrigée des apports
+  const vals = pts.map(p => (p.index - 1) * 100);
+  const sc = ticks(Math.min(0, ...vals), Math.max(0, ...vals), 4);
+  const y = v => Tp + (sc.hi - v) / (sc.hi - sc.lo) * (H - Tp - B);
   const path = pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.date).toFixed(1)},${y((p.index - 1) * 100).toFixed(1)}`).join('');
-  const area = path + `L${x(pts[pts.length - 1].date).toFixed(1)},${y(lo)}L${x(pts[0].date).toFixed(1)},${y(lo)}Z`;
-  const dots = pts.map(p => `<circle class="dot ${p.source === 'courtier' ? 'br' : (p.est ? 'est' : '')}" cx="${x(p.date).toFixed(1)}" cy="${y((p.index - 1) * 100).toFixed(1)}" r="3"><title>${fmtDate(p.date)} : ${pct((p.index - 1) * 100, true)} · ${usd(p.value)}</title></circle>`).join('');
+  const area = path + `L${x(pts[pts.length - 1].date).toFixed(1)},${y(sc.lo)}L${x(pts[0].date).toFixed(1)},${y(sc.lo)}Z`;
+  const dots = pts.map(p => `<circle class="dot ${p.source === 'courtier' ? 'br' : (p.est ? 'est' : '')}" cx="${x(p.date).toFixed(1)}" cy="${y((p.index - 1) * 100).toFixed(1)}" r="3.5"><title>${fmtDate(p.date)} : ${pct((p.index - 1) * 100, true)} · ${usd(p.value)}</title></circle>`).join('');
   const lab = `<text x="${L}" y="${H - 8}">${fmtDate(pts[0].date)}</text><text x="${W - R}" y="${H - 8}" text-anchor="end">${fmtDate(pts[pts.length - 1].date)}</text>`;
-  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Courbe de performance cumulée corrigée des apports">${g}<line class="zero" x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}"/><path class="area" d="${area}"/><path class="line" d="${path}"/>${dots}${lab}</svg>`;
+  const main = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Courbe de performance cumulée corrigée des apports"><defs><linearGradient id="gArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".28"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>${grid(sc, y)}<line class="zero" x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}"/><path class="area" d="${area}"/><path class="line" d="${path}"/>${dots}${lab}</svg>`;
+  // Drawdown : recul depuis le plus haut précédent
+  let peak = pts[0].index;
+  const dd = pts.map(p => { peak = Math.max(peak, p.index); return (p.index / peak - 1) * 100; });
+  const minDD = Math.min(...dd);
+  if (!(minDD < -0.005)) return main;
+  const H2 = W < 500 ? 110 : 130, sd = ticks(minDD, 0, 2);
+  const y2 = v => Tp + (0 - v) / (0 - sd.lo) * (H2 - Tp - 10);
+  const dpath = pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.date).toFixed(1)},${y2(dd[i]).toFixed(1)}`).join('');
+  let g2 = ''; for (let v = sd.lo; v <= 1e-9; v += sd.step) g2 += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y2(v)}" y2="${y2(v)}"/><text x="${L - 6}" y="${y2(v) + 4}" text-anchor="end">${fmtNum(v, 1)} %</text>`;
+  return main + `<p class="chart-t">Drawdown</p><svg class="chart" viewBox="0 0 ${W} ${H2}" role="img" aria-label="Recul depuis le plus haut">${g2}<path class="dd" d="${dpath}L${x(pts[pts.length - 1].date).toFixed(1)},${y2(0)}L${x(pts[0].date).toFixed(1)},${y2(0)}Z"/><path class="ddl" d="${dpath}"/></svg>`;
 }
 
 // ----- Calculateur -----
@@ -943,6 +1101,16 @@ function lotView(lot) {
   const unreal = ls.closed || !last ? 0 : ls.rem * (last.price - lot.price);
   return { lot, ls, last, sa, unreal };
 }
+// Barre stop · entrée · cours : où se trouve le cours entre le stop et le prix d'achat.
+function rail(entry, stop, price) {
+  if (!(isNum(stop) && stop > 0) || !isNum(price)) return '';
+  const lo = Math.min(stop, entry, price), hi = Math.max(stop, entry, price), pad = (hi - lo) * 0.06 || entry * 0.01;
+  const X = v => (v - lo + pad) / (hi - lo + 2 * pad) * 100;
+  const a = X(Math.min(stop, price)), b = X(Math.max(stop, price));
+  return `<div class="rail" aria-hidden="true"><i class="zone ${price > stop ? '' : 'bad'}" style="left:${a.toFixed(1)}%;width:${(b - a).toFixed(1)}%"></i><b class="mk stop" style="left:${X(stop).toFixed(1)}%"></b><b class="mk entry" style="left:${X(entry).toFixed(1)}%"></b><b class="mk px" style="left:${X(price).toFixed(1)}%"></b></div>
+    <div class="rail-leg"><span class="s">Stop ${usd(stop)}</span><span>Entrée ${usd(entry)}</span><span class="p">Cours ${usd(price)}</span></div>`;
+}
+let posSort = 'risk';
 function viewPos() {
   const today = todayISO();
   const views = S.lots.map(lotView);
@@ -956,52 +1124,65 @@ function viewPos() {
   const lossVsEntry = withStop.reduce((a, v) => a + Math.min(0, v.sa.vsEntry), 0);
   const pullback = withStop.reduce((a, v) => a + (v.sa.pullback || 0), 0);
   const equity = referenceCapital().acc.equity;
-  const tickers = Object.keys(byT).sort();
-  const tCards = tickers.map(t => {
+  const cards = Object.keys(byT).map(t => {
     const vs = byT[t];
     const q = vs.reduce((a, v) => a + v.ls.rem, 0);
     const avg = vs.reduce((a, v) => a + v.ls.rem * v.lot.price, 0) / q;
-    const last = vs[0].last;
-    const expo = q * (last ? last.price : avg);
-    const margin = vs.reduce((a, v) => a + v.ls.rem * (last ? last.price : v.lot.price) / (v.lot.leverage || 1), 0);
+    const last = vs[0].last, px = last ? last.price : null;
+    const expo = q * (px == null ? avg : px);
+    const margin = vs.reduce((a, v) => a + v.ls.rem * (px == null ? v.lot.price : px) / (v.lot.leverage || 1), 0);
     const un = vs.reduce((a, v) => a + v.unreal, 0);
-    const feesT = vs.reduce((a, v) => a + v.ls.txFees + v.ls.funding, 0);
+    const stops = vs.map(v => v.lot.stopCurrent).filter(x => isNum(x) && x > 0);
+    const stop = stops.length === vs.length ? Math.min(...stops) : null;
+    const atStop = vs.every(v => !v.sa.missing) ? vs.reduce((a, v) => a + v.sa.vsEntry, 0) : null;
+    const dist = stop != null && px != null ? (px - stop) / px * 100 : null;
     const first = vs.map(v => v.lot.date).sort()[0];
-    return `<article class="ticker-card">
-      <header><span class="tk">${esc(t)}</span><span class="muted">${vs.length > 1 ? vs.length + ' achats agrégés · ' : ''}détenu depuis ${Core.days(first, today)} j</span></header>
-      <dl class="kv">
-        ${kv('Quantité restante', qty(q))}
-        ${kv('Prix moyen d’entrée', usd(avg))}
-        ${kv('Dernier cours', last ? usd(last.price) : 'Non saisi', last ? fmtDate(last.date) + (Core.days(last.date, today) > S.settings.staleDays ? ' · ancien' : '') : '', last && Core.days(last.date, today) > S.settings.staleDays ? 'wrn' : '')}
-        ${kv('Exposition actuelle', usd(expo))}
-        ${kv('Marge estimée', usd(margin))}
-        ${kv('Latent', usd(un, true), 'avant frais de sortie', cls(un))}
-        ${kv('Frais cumulés', usd(feesT), 'transaction + financement')}
-      </dl>
-      ${vs.map(v => lotDetails(v)).join('')}
+    const stale = !last || Core.days(last.date, today) > S.settings.staleDays;
+    const lev = [...new Set(vs.map(v => v.lot.leverage))].map(x => '×' + fmtNum(x)).join(' / ');
+    const state = (stop != null && px != null && px <= stop) || stop == null ? 'danger' : un > 0.005 ? 'up' : un < -0.005 ? 'down' : '';
+    const html = `<article class="pcard ${state}">
+      <header><div><span class="tk">${esc(t)}</span> ${stop != null && stop >= avg ? '<span class="pill win">Sans risque</span>' : ''}${state === 'danger' ? `<span class="pill loss">${stop == null ? 'Sans stop' : 'Stop atteint'}</span>` : ''}
+        <small>${vs.length > 1 ? vs.length + ' achats · ' : ''}${Core.days(first, today)} j · levier ${lev}</small></div>
+        <div class="pl ${cls(un)}">${usd(un, true)}<small>${pct(un / (q * avg) * 100, true)}</small></div></header>
+      ${px != null ? rail(avg, stop, px) : '<p class="hint">Aucun cours saisi.</p>'}
+      <div class="mini">
+        <div><span>Quantité</span><b>${qty(q)}</b></div>
+        <div><span>Exposition</span><b>${usd(expo)}</b></div>
+        <div><span>Marge</span><b>${usd(margin)}</b></div>
+        <div><span>Au stop</span><b class="${cls(atStop)}">${atStop == null ? '—' : usd(atStop, true)}</b></div>
+        <div><span>Dist. stop</span><b class="${dist != null && dist < 1 ? 'neg' : ''}">${dist == null ? '—' : pct(dist)}</b></div>
+        <div><span>Cours du</span><b class="${stale ? 'wrn' : ''}">${last ? fmtDate(last.date).replace(/ \d{4}$/, '') : '—'}</b></div>
+      </div>
+      ${vs.map(v => lotDetails(v, false, vs.length === 1)).join('')}
     </article>`;
-  }).join('');
+    return { t, html, dist: dist == null ? -1e9 : dist, un, expo };
+  });
+  const sorter = { risk: (a, b) => a.dist - b.dist, gain: (a, b) => b.un - a.un, expo: (a, b) => b.expo - a.expo, az: (a, b) => a.t < b.t ? -1 : 1 }[posSort] || ((a, b) => a.dist - b.dist);
+  cards.sort(sorter);
+  const sortBtns = [['risk', 'Près du stop'], ['gain', 'Gain'], ['expo', 'Exposition'], ['az', 'A → Z']]
+    .map(([k, l]) => `<button class="btn sm" data-act="psort" data-f="${k}" aria-pressed="${posSort === k}">${l}</button>`).join('');
   const jl = views.filter(v => journalFilter === 'all' || (journalFilter === 'closed' ? v.ls.closed : !v.ls.closed))
     .sort((a, b) => (a.lot.date < b.lot.date ? 1 : -1));
+  const expoRows = Object.keys(byT).map(t => [t, byT[t].reduce((a, v) => a + v.ls.rem * (v.last ? v.last.price : v.lot.price), 0)]).sort((a, b) => b[1] - a[1]);
+  const maxE = expoRows.length ? expoRows[0][1] : 1;
   return `${demoBanner()}
+  ${alertsStrip()}
   <section class="card">
     <div class="sec-head"><h2>Risque des positions ouvertes</h2><button class="btn primary sm" data-act="prices" ${open.length ? '' : 'disabled'}>Mettre à jour les cours</button></div>
     <dl class="kv">
-      ${kv('Positions ouvertes', String(open.length), tickers.length ? tickers.length + ' ticker(s)' : '')}
+      ${kv('Positions ouvertes', String(open.length), Object.keys(byT).length + ' ticker(s)')}
       ${kv('Risque initial historique', usd(riskInit), equity > 0 ? pct(riskInit / equity * 100) + ' de la valeur nette' : '')}
       ${kv('Perte possible vs entrée', usd(lossVsEntry, true), 'si les stops actuels sont exécutés', cls(lossVsEntry))}
       ${kv('Recul possible depuis le cours', usd(-pullback), 'gain latent pouvant être reperdu inclus', pullback > 0 ? 'neg' : '')}
     </dl>
     ${missing.length ? `<div class="banner err">Stop manquant : ${[...new Set(missing.map(v => esc(v.lot.ticker)))].join(', ')}. Le risque de ces lignes n’est pas borné et n’est pas compté dans les totaux ci-dessus.</div>` : ''}
-    <p class="hint">Un stop au-dessus de l’entrée protège un bénéfice, mais la partie du gain latent située au-dessus du stop peut encore être reperdue.</p>
-    ${open.length ? `<div><h3 style="margin-bottom:8px">Exposition par ticker</h3>${tickers.map(t => {
-      const e = byT[t].reduce((a, v) => a + v.ls.rem * (v.last ? v.last.price : v.lot.price), 0);
-      return `<div class="expo"><span class="tk">${esc(t)}</span><span class="bar"><i style="width:${(e / totalExpo * 100).toFixed(1)}%"></i></span><span class="num">${usd(e)}</span></div>`;
-    }).join('')}</div>` : ''}
+    ${open.length ? `<details class="more"><summary>Exposition par ticker (${usd(totalExpo)})</summary><div class="expo-list">${expoRows.map(([t, e]) =>
+      `<div class="expo"><span class="tk">${esc(t)}</span><span class="bar"><i class="${e > S.settings.cap + 0.005 ? 'over' : ''}" style="width:${(e / maxE * 100).toFixed(1)}%"></i></span><span class="num">${usd(e)}</span></div>`).join('')}</div>
+      <p class="hint" style="margin-top:8px">En orange : au-dessus du plafond de ${usd(S.settings.cap)}.</p></details>` : ''}
   </section>
   <section class="card">
-    <div class="sec-head"><h2>Positions ouvertes</h2><button class="btn sm" data-act="go-calc">Nouvelle position</button></div>
-    ${open.length ? tCards : '<p class="lead">Aucune position ouverte. Calculez une taille dans « Nouvelle position », puis enregistrez l’achat.</p>'}
+    <div class="sec-head"><h2>Positions ouvertes</h2><button class="btn sm primary" data-act="go-calc">+ Nouvelle position</button></div>
+    ${open.length ? `<div class="filters">${sortBtns}</div><div class="pgrid">${cards.map(c => c.html).join('')}</div>` : '<p class="lead">Aucune position ouverte. Calculez une taille dans « Nouvelle position », puis enregistrez l’achat.</p>'}
   </section>
   <section class="card">
     <div class="sec-head"><h2>Journal</h2>
@@ -1009,7 +1190,7 @@ function viewPos() {
     ${jl.length ? jl.map(v => lotDetails(v, true)).join('') : '<p class="lead">Rien à afficher pour ce filtre.</p>'}
   </section>`;
 }
-function lotDetails(v, inJournal) {
+function lotDetails(v, inJournal, compact) {
   const { lot, ls, last, sa, unreal } = v;
   const R = ls.closed && lot.riskInitial > 0 ? ls.netRealized / lot.riskInitial : null;
   const status = ls.closed ? (ls.netRealized > 0.0049 ? '<span class="pill win">Gagnante</span>' : ls.netRealized < -0.0049 ? '<span class="pill loss">Perdante</span>' : '<span class="pill">Neutre</span>') : '<span class="pill open">Ouverte</span>';
@@ -1028,7 +1209,7 @@ function lotDetails(v, inJournal) {
     ? `<span class="num ${cls(ls.netRealized)}">${usd(ls.netRealized, true)}${R != null ? ' · ' + (R > 0 ? '+' : '') + fmtNum(R, 2) + ' R' : ''}</span>`
     : `<span class="num ${cls(unreal)}">${usd(unreal, true)}</span>`;
   return `<details class="lot" data-key="${key}" ${openLots.has(key) ? 'open' : ''}>
-    <summary><span><span class="tk">${esc(lot.ticker)}</span> ${status} ${lot.demo ? '<span class="pill demo">Démo</span>' : ''}<br><small>${fmtDate(lot.date)} · ${qty(lot.qty)} à ${usd(lot.price)} · ${MOTIFS[lot.motif] || 'Autre'}</small></span>${sumRight}</summary>
+    <summary>${compact ? `<span>Détails et actions <small>· achat du ${fmtDate(lot.date)} à ${usd(lot.price)}</small></span><span class="chev">›</span>` : `<span><span class="tk">${esc(lot.ticker)}</span> ${status} ${lot.demo ? '<span class="pill demo">Démo</span>' : ''}<br><small>${fmtDate(lot.date)} · ${qty(lot.qty)} à ${usd(lot.price)} · ${MOTIFS[lot.motif] || 'Autre'}</small></span>${sumRight}`}</summary>
     <div class="body">
       <dl class="kv">
         ${kv('Quantité restante', qty(ls.rem), ls.sold ? `vendu ${qty(ls.sold)}` : '')}
@@ -1371,9 +1552,11 @@ function sheetPrices() {
   const tickers = [...new Set(S.lots.filter(l => !Core.lotState(l).closed).map(l => l.ticker))].sort();
   openSheet({
     title: 'Mettre à jour les cours', ok: 'Enregistrer les cours',
-    body: `<p class="lead">Cours de clôture lus sur votre plateforme. Saisir tous les tickers à la même date crée une observation exacte pour la performance.</p><div class="fields">
-      ${dateInp('date', 'Date des cours', todayISO())}
-      ${tickers.map(t => { const lp = Core.lastPrice(S.prices, t); return dec('p_' + t, t + ' ($)', '', `placeholder="${lp ? fmtNum(lp.price, 4) : ''}"`, lp ? 'dernier : ' + usd(lp.price) + ' le ' + fmtDate(lp.date) : ''); }).join('')}</div>`,
+    body: `<p class="lead">Cours de clôture lus dans MT5. Saisir tous les tickers à la même date crée une observation exacte pour la performance.</p>
+      <div class="fields">${dateInp('date', 'Date des cours', todayISO())}</div>
+      <div class="plist">${tickers.map(t => { const lp = Core.lastPrice(S.prices, t);
+        return `<label class="pr" for="f-p_${esc(t)}"><span class="tk">${esc(t)}</span><small>${lp ? usd(lp.price) + ' · ' + fmtDate(lp.date).replace(/ \d{4}$/, '') : 'aucun cours'}</small><input id="f-p_${esc(t)}" name="p_${esc(t)}" inputmode="decimal" autocomplete="off" placeholder="${lp ? fmtNum(lp.price, 4) : ''}"></label>`; }).join('')}</div>
+      <p class="hint">Case vide : le cours n’est pas modifié.</p>`,
     onSubmit: form => {
       const date = F(form, 'date'); need(date, 'Date requise.'); need(date <= todayISO(), 'Date dans le futur.');
       let n = 0;
@@ -1542,6 +1725,13 @@ document.addEventListener('click', e => {
     case 'record-buy': sheetBuy(); break;
     case 'prices': sheetPrices(); break;
     case 'jfilter': journalFilter = b.dataset.f; render(); break;
+    case 'psort': posSort = b.dataset.f; render(); break;
+    case 'open-lot': {
+      tab = 'pos'; openLots.add('p-' + b.dataset.lot); render();
+      const d = document.querySelector(`details.lot[data-key="p-${b.dataset.lot}"]`);
+      if (d) { d.open = true; d.closest('.pcard, details').scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+      break;
+    }
     case 'sell': sheetSell(lot); break;
     case 'sell-img': sheetSellImg(lot, lot.events.find(x => x.id === b.dataset.ev)); break;
     case 'stop': sheetStop(lot); break;
