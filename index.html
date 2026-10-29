@@ -92,6 +92,8 @@ section.card{background:var(--surface);border:1px solid var(--line);border-radiu
 .alert.err{background:var(--loss-bg);border-color:transparent;color:var(--loss)} .alert.err::before{background:var(--loss)}
 .alert.warn{background:var(--warn-bg);border-color:transparent;color:var(--warn)} .alert.warn::before{background:var(--warn)}
 .alert.ok{color:var(--muted)} .alert.ok::before{background:var(--gain)}
+.alert.live::before{background:var(--muted)} .alert.live.on::before{background:var(--gain);box-shadow:0 0 0 3px var(--gain-bg)}
+.alert small{font-size:.76rem;color:var(--muted)}
 .alert span{flex:1;min-width:0} .alert .btn{flex:none}
 .alerts details summary{cursor:pointer;font-size:.82rem;color:var(--muted);padding:2px 4px}
 .alerts details[open]{display:grid;gap:8px}
@@ -265,7 +267,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.2.1 · licence MIT */
+/* Carnet de positions v1.3.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -835,14 +837,106 @@ function perf() {
   };
 }
 
+// ---------- Cours automatiques (Finnhub) : en direct pendant la séance, clôture enregistrée une fois le marché fermé ----------
+// Les cours en direct restent en mémoire (affichage) ; seule la clôture de chaque séance est enregistrée et synchronisée.
+const QUOTE_KEY = 'carnet-positions:finnhub';
+const Live = { prices: {}, at: 0, busy: false, err: '', miss: [] };
+const quoteKey = () => { try { return localStorage.getItem(QUOTE_KEY) || ''; } catch (e) { return ''; } };
+const hhmm = t => new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+function nyParts(ms) {
+  const p = {};
+  for (const x of new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(ms))) p[x.type] = x.value;
+  return { date: `${p.year}-${p.month}-${p.day}`, min: +p.hour * 60 + +p.minute };
+}
+// Séance régulière NYSE / Nasdaq : 9 h 30 – 16 h à New York, du lundi au vendredi (jours fériés non gérés).
+function marketOpen(ms) {
+  const n = nyParts(ms), wd = new Date(n.date + 'T12:00:00').getDay();
+  return wd >= 1 && wd <= 5 && n.min >= 570 && n.min < 960;
+}
+async function fetchQuote(sym, key) {
+  const url = 'https://finnhub.io/api/v1/quote?symbol=' + encodeURIComponent(sym);
+  let r;
+  try { r = await fetch(url, { headers: { 'X-Finnhub-Token': key }, cache: 'no-store' }); }
+  catch (e) { r = await fetch(url + '&token=' + encodeURIComponent(key), { cache: 'no-store' }); }
+  if (r.status === 401 || r.status === 403) throw Object.assign(new Error('clé Finnhub refusée'), { stop: true });
+  if (r.status === 429) throw Object.assign(new Error('limite gratuite atteinte, réessayez dans une minute'), { stop: true });
+  if (!r.ok) throw new Error('erreur Finnhub ' + r.status);
+  return r.json();
+}
+async function refreshQuotes(manual) {
+  const key = quoteKey();
+  if (!key || Live.busy) return;
+  const tickers = [...new Set(S.lots.filter(l => !Core.lotState(l).closed).map(l => l.ticker))].sort();
+  if (!tickers.length) return;
+  Live.busy = true;
+  if (manual) toast('Récupération des cours…');
+  // D'abord récupérer les changements de l'autre appareil, pour ne pas créer de conflit en enregistrant une clôture.
+  if (typeof syncNow === 'function' && Store.cfg) {
+    const idle = async () => { while (Store.busy) await new Promise(r => setTimeout(r, 200)); };
+    await idle(); await syncNow(); await idle();
+  }
+  const ny = nyParts(Date.now()), got = {}, miss = [];
+  let saved = 0, err = '';
+  for (const t of tickers) {
+    try {
+      const q = await fetchQuote(t, key);
+      if (!(q && q.c > 0 && q.t > 0)) { miss.push(t); continue; }
+      const d = nyParts(q.t * 1000).date;
+      got[t] = { date: d, price: q.c, live: true, at: q.t * 1000, dp: q.dp };
+      // Séance terminée (16 h 05 à New York passé, ou jour suivant) : le dernier cours est la clôture.
+      if (ny.date > d || ny.min >= 965) {
+        const ex = (S.prices[t] || []).find(x => x.date === d);
+        if (!ex || (ex.src === 'auto' && ex.price !== q.c)) { addPrice(t, d, q.c, false, 'auto'); saved++; }
+      }
+    } catch (e) { err = e.message; if (e.stop) break; }
+  }
+  Object.assign(Live, { prices: got, at: Date.now(), miss, err, busy: false });
+  if (saved) save(manual ? `Cours mis à jour · ${saved} clôture(s) enregistrée(s)` : '');
+  else { if (tab !== 'calc') render(); if (manual) toast(err ? 'Cours : ' + err : 'Cours mis à jour'); }
+}
+// Affichage : les cours en direct remplacent le dernier cours enregistré, sans être sauvegardés.
+function withLive(prices) {
+  const out = Object.assign({}, prices);
+  for (const t in Live.prices) {
+    const L = Live.prices[t];
+    out[t] = (prices[t] || []).filter(x => x.date !== L.date).concat([L]).sort((a, b) => a.date < b.date ? -1 : 1);
+  }
+  return out;
+}
+function liveBar() {
+  if (!quoteKey()) return '';
+  const n = Object.keys(Live.prices).length, open = marketOpen(Date.now());
+  const txt = !Live.at ? 'Récupération des cours…'
+    : `${open ? '<strong>Marché ouvert</strong> · cours en direct' : '<strong>Marché fermé</strong> · cours de clôture'} de ${n} action(s), mis à jour à ${hhmm(Live.at)}`;
+  return `<div class="alert live ${open ? 'on' : ''}"><span>${txt}${Live.miss.length ? `<br><small>Non trouvé(s) sur Finnhub, à saisir à la main : ${Live.miss.map(esc).join(', ')}</small>` : ''}${Live.err ? `<br><small>${esc(Live.err)}</small>` : ''}</span><button class="btn sm" data-act="quotes-now" ${Live.busy ? 'disabled' : ''}>Actualiser</button></div>`;
+}
+function quotesPanel() {
+  const k = quoteKey();
+  return `<section class="card">
+    <div class="sec-head"><h2>Cours automatiques</h2>${k ? '<span class="pill win">Actif sur cet appareil</span>' : ''}</div>
+    <p class="lead">Avec une clé gratuite Finnhub, l’app affiche les cours en direct à l’ouverture pendant la séance de Wall Street, et enregistre la clôture de chaque action une fois le marché fermé. Ce sont les cours de la bourse : ceux de votre CFD peuvent différer légèrement, et c’est MT5 qui déclenche les stops.</p>
+    ${k ? `<div class="row"><button class="btn primary sm" data-act="quotes-now">Actualiser maintenant</button><button class="btn sm danger" data-act="quotes-off">Retirer la clé</button></div>${Live.err ? `<div class="banner err">Dernière tentative : ${esc(Live.err)}</div>` : ''}`
+      : `<ol class="lead" style="padding-left:18px;margin:0;display:grid;gap:6px">
+        <li>Créez un compte gratuit sur <a href="https://finnhub.io/register" target="_blank" rel="noopener">finnhub.io</a>.</li>
+        <li>Sur votre tableau de bord Finnhub, copiez la clé API (« API Key »).</li>
+        <li>Collez-la ci-dessous, puis touchez Enregistrer. À faire sur chaque appareil.</li></ol>
+      <div class="fields"><div class="fld wide"><label for="q-key">Clé API Finnhub</label><input id="q-key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false"></div></div>
+      <div class="row"><button class="btn primary sm" data-act="quotes-on">Enregistrer et tester</button></div>`}
+    <p class="hint">La clé reste sur cet appareil : elle n’est ni synchronisée ni exportée.</p>
+  </section>`;
+}
+
 // ---------- Rendu ----------
 function render() {
   document.querySelectorAll('nav.tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === tab ? 'true' : 'false'));
-  const v = $('#view');
-  if (tab === 'dash') v.innerHTML = viewDash();
-  else if (tab === 'calc') { v.innerHTML = viewCalc(); updateCalc(); }
-  else if (tab === 'pos') { v.innerHTML = viewPos(); loadThumbs(); }
-  else v.innerHTML = viewSettings();
+  const v = $('#view'), saved = S.prices;
+  if (Object.keys(Live.prices).length) S.prices = withLive(saved);
+  try {
+    if (tab === 'dash') v.innerHTML = viewDash();
+    else if (tab === 'calc') { v.innerHTML = viewCalc(); updateCalc(); }
+    else if (tab === 'pos') { v.innerHTML = viewPos(); loadThumbs(); }
+    else v.innerHTML = viewSettings();
+  } finally { S.prices = saved; }
 }
 const kv = (label, value, extra, c) => `<div><dt>${label}</dt><dd class="${c || ''}">${value}${extra ? `<small>${extra}</small>` : ''}</dd></div>`;
 function demoBanner() {
@@ -924,6 +1018,7 @@ function viewDash() {
   const method = P.estCount ? `Rendement pondéré dans le temps, ${P.estCount} sous-période(s) estimée(s) par Modified Dietz faute de valorisation à la date d’un flux.` : 'Rendement pondéré dans le temps (valorisations disponibles autour de chaque flux).';
   return `${demoBanner()}
   ${alertsStrip()}
+  ${liveBar()}
   <div class="hero-card">
     <div class="row" style="justify-content:space-between"><span class="lbl">Valeur nette du compte</span><small>${ref.label} · cours au ${fmtDate(acc.openCount ? acc.minPriceDate : todayISO())}</small></div>
     <div><div class="big">${usd(acc.equity)}</div>
@@ -1151,7 +1246,7 @@ function viewPos() {
         <div><span>Marge</span><b>${usd(margin)}</b></div>
         <div><span>Au stop</span><b class="${cls(atStop)}">${atStop == null ? '—' : usd(atStop, true)}</b></div>
         <div><span>Dist. stop</span><b class="${dist != null && dist < 1 ? 'neg' : ''}">${dist == null ? '—' : pct(dist)}</b></div>
-        <div><span>Cours du</span><b class="${stale ? 'wrn' : ''}">${last ? fmtDate(last.date).replace(/ \d{4}$/, '') : '—'}</b></div>
+        <div><span>Cours du</span><b class="${stale ? 'wrn' : last && last.live ? 'pos' : ''}">${last ? (last.live ? 'direct ' + hhmm(last.at) : fmtDate(last.date).replace(/ \d{4}$/, '')) : '—'}</b></div>
       </div>
       ${vs.map(v => lotDetails(v, false, vs.length === 1)).join('')}
     </article>`;
@@ -1167,6 +1262,7 @@ function viewPos() {
   const maxE = expoRows.length ? expoRows[0][1] : 1;
   return `${demoBanner()}
   ${alertsStrip()}
+  ${liveBar()}
   <section class="card">
     <div class="sec-head"><h2>Risque des positions ouvertes</h2><button class="btn primary sm" data-act="prices" ${open.length ? '' : 'disabled'}>Mettre à jour les cours</button></div>
     <dl class="kv">
@@ -1296,6 +1392,7 @@ function viewSettings() {
     ${snaps.length ? `<div class="tbl"><table><thead><tr><th>Date</th><th class="n">Valeur nette</th><th class="n">Marge dispo</th><th class="n">Écart</th><th></th><th></th></tr></thead><tbody>${snapRows}</tbody></table></div>` : '<p class="hint">Aucune valeur saisie.</p>'}
   </section>
   </div>
+  ${quotesPanel()}
   <section class="card">
     <div class="sec-head"><h2>Synchronisation et sauvegarde</h2></div>
     ${syncPanel()}
@@ -1364,10 +1461,10 @@ const planSel = (val) => `<div class="fld"><label for="f-planOk">Plan respecté<
 const planVal = v => v === 'yes' ? true : v === 'no' ? false : null;
 function need(cond, msg) { if (!cond) throw new Error(msg); }
 function findLot(id) { return S.lots.find(l => l.id === id); }
-function addPrice(ticker, date, price, demo) {
+function addPrice(ticker, date, price, demo, src) {
   const h = S.prices[ticker] = S.prices[ticker] || [];
   const i = h.findIndex(x => x.date === date);
-  const rec = { date, price }; if (demo) rec.demo = true;
+  const rec = { date, price }; if (demo) rec.demo = true; if (src) rec.src = src;
   if (i >= 0) h[i] = rec; else h.push(rec);
   h.sort((a, b) => a.date < b.date ? -1 : 1);
 }
@@ -1726,6 +1823,20 @@ document.addEventListener('click', e => {
     case 'prices': sheetPrices(); break;
     case 'jfilter': journalFilter = b.dataset.f; render(); break;
     case 'psort': posSort = b.dataset.f; render(); break;
+    case 'quotes-now': refreshQuotes(true); break;
+    case 'quotes-on': {
+      const k = ($('#q-key').value || '').trim();
+      if (!/^[A-Za-z0-9]{12,}$/.test(k)) { toast('Collez la clé API Finnhub (lettres et chiffres).'); break; }
+      b.disabled = true;
+      fetchQuote('AAPL', k).then(q => {
+        if (!(q && q.c > 0)) throw new Error('réponse vide');
+        try { localStorage.setItem(QUOTE_KEY, k); } catch (e) {}
+        toast('Clé enregistrée : cours automatiques actifs'); render(); refreshQuotes(true);
+      }).catch(e => { b.disabled = false; toast('Clé non valide : ' + (e instanceof TypeError ? 'pas de réseau' : e.message)); });
+      break;
+    }
+    case 'quotes-off': confirmSheet('Retirer la clé Finnhub ?', 'Les cours ne seront plus récupérés sur cet appareil. Les clôtures déjà enregistrées restent.', 'Retirer', () => {
+      try { localStorage.removeItem(QUOTE_KEY); } catch (e) {} Live.prices = {}; Live.at = 0; Live.miss = []; Live.err = ''; render(); toast('Clé retirée'); }); break;
     case 'open-lot': {
       tab = 'pos'; openLots.add('p-' + b.dataset.lot); render();
       const d = document.querySelector(`details.lot[data-key="p-${b.dataset.lot}"]`);
@@ -1858,6 +1969,10 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet
   render();
   if (Store.cfg) { setSync('saving'); syncNow(); } else setSync('local');
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+  // Cours automatiques : à l'ouverture, au retour sur l'app, puis toutes les 2 minutes pendant la séance.
+  refreshQuotes();
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - Live.at > 60000) refreshQuotes(); });
+  setInterval(() => { if (document.visibilityState === 'visible' && tab !== 'calc' && marketOpen(Date.now())) refreshQuotes(); }, 120000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Store.cfg) scheduleSync(200); });
   window.addEventListener('online', () => { if (Store.cfg) scheduleSync(200); });
   setInterval(() => { if (Store.cfg && document.visibilityState === 'visible') syncNow(); }, 60000);
