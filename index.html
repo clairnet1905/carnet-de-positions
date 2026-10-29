@@ -267,7 +267,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.3.1 · licence MIT */
+/* Carnet de positions v1.3.2 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -584,7 +584,7 @@ function defaultState() {
   return {
     app: 'carnet-positions', version: 1, updatedAt: 0,
     settings: { initialCapital: 1000, startDate: todayISO(), riskPct: 1, cap: 100, leverage: 5,
-      fees: { inFixed: 0, inPct: 0, outFixed: 0, outPct: 0 }, fractional: true, decimals: 4, staleDays: 4, refSource: 'auto' },
+      fees: { inFixed: 0, inPct: 0, outFixed: 0, outPct: 0 }, fractional: true, decimals: 4, staleDays: 4, refSource: 'auto', manualTickers: [] },
     flows: [], lots: [], prices: {}, snapshots: []
   };
 }
@@ -841,6 +841,7 @@ function perf() {
 // Les cours en direct restent en mémoire (affichage) ; seule la clôture de chaque séance est enregistrée et synchronisée.
 const QUOTE_KEY = 'carnet-positions:finnhub';
 const Live = { prices: {}, at: 0, busy: false, err: '', miss: [] };
+const manualSet = () => new Set((S.settings.manualTickers || []).map(t => String(t).toUpperCase()));
 const quoteKey = () => { try { return localStorage.getItem(QUOTE_KEY) || ''; } catch (e) { return ''; } };
 const hhmm = t => new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 function nyParts(ms) {
@@ -856,7 +857,8 @@ function marketOpen(ms) {
 async function fetchQuote(sym, key) {
   // Depuis un navigateur, Finnhub n'accepte la clé que dans l'adresse (l'en-tête est bloqué par CORS).
   const r = await fetch('https://finnhub.io/api/v1/quote?symbol=' + encodeURIComponent(sym) + '&token=' + encodeURIComponent(key), { cache: 'no-store' });
-  if (r.status === 401 || r.status === 403) throw Object.assign(new Error('clé Finnhub refusée'), { stop: true });
+  if (r.status === 401) throw Object.assign(new Error('clé Finnhub refusée'), { stop: true });
+  if (r.status === 403) return { c: 0, t: 0 };
   if (r.status === 429) throw Object.assign(new Error('limite gratuite atteinte, réessayez dans une minute'), { stop: true });
   if (!r.ok) throw new Error('erreur Finnhub ' + r.status);
   return r.json();
@@ -864,7 +866,8 @@ async function fetchQuote(sym, key) {
 async function refreshQuotes(manual) {
   const key = quoteKey();
   if (!key || Live.busy) return;
-  const tickers = [...new Set(S.lots.filter(l => !Core.lotState(l).closed).map(l => l.ticker))].sort();
+  const skip = manualSet();
+  const tickers = [...new Set(S.lots.filter(l => !Core.lotState(l).closed).map(l => l.ticker))].filter(t => !skip.has(t)).sort();
   if (!tickers.length) return;
   Live.busy = true;
   if (manual) toast('Récupération des cours…');
@@ -906,7 +909,8 @@ function liveBar() {
   const n = Object.keys(Live.prices).length, open = marketOpen(Date.now());
   const txt = !Live.at ? 'Récupération des cours…'
     : `${open ? '<strong>Marché ouvert</strong> · cours en direct' : '<strong>Marché fermé</strong> · cours de clôture'} de ${n} action(s), mis à jour à ${hhmm(Live.at)}`;
-  return `<div class="alert live ${open ? 'on' : ''}"><span>${txt}${Live.miss.length ? `<br><small>Non trouvé(s) sur Finnhub, à saisir à la main : ${Live.miss.map(esc).join(', ')}</small>` : ''}${Live.err ? `<br><small>${esc(Live.err)}</small>` : ''}</span><button class="btn sm" data-act="quotes-now" ${Live.busy ? 'disabled' : ''}>Actualiser</button></div>`;
+  const man = [...manualSet()].filter(t => S.lots.some(l => l.ticker === t && !Core.lotState(l).closed));
+  return `<div class="alert live ${open ? 'on' : ''}"><span>${txt}${man.length ? `<br><small>Saisie manuelle : ${man.map(esc).join(', ')}</small>` : ''}${Live.miss.length ? `<br><small>Non trouvé(s) sur Finnhub, à saisir à la main : ${Live.miss.map(esc).join(', ')}</small>` : ''}${Live.err ? `<br><small>${esc(Live.err)}</small>` : ''}</span><button class="btn sm" data-act="quotes-now" ${Live.busy ? 'disabled' : ''}>Actualiser</button></div>`;
 }
 function quotesPanel() {
   const k = quoteKey();
@@ -920,7 +924,10 @@ function quotesPanel() {
         <li>Collez-la ci-dessous, puis touchez Enregistrer. À faire sur chaque appareil.</li></ol>
       <div class="fields"><div class="fld wide"><label for="q-key">Clé API Finnhub</label><input id="q-key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false"></div></div>
       <div class="row"><button class="btn primary sm" data-act="quotes-on">Enregistrer et tester</button></div>`}
-    <p class="hint">La clé reste sur cet appareil : elle n’est ni synchronisée ni exportée.</p>
+    <div class="fields"><div class="fld wide"><label for="q-manual">Actions à saisir à la main (non US, ou symbole d’une autre société sur Finnhub)</label>
+      <input id="q-manual" value="${esc((S.settings.manualTickers || []).join(', '))}" autocapitalize="characters" autocomplete="off" placeholder="ex. NEM, WKL"></div></div>
+    <div class="row"><button class="btn sm" data-act="quotes-manual">Enregistrer la liste</button></div>
+    <p class="hint">Ces actions ne sont jamais cherchées sur Finnhub : leurs cours restent ceux que vous saisissez. La liste est synchronisée entre vos appareils. La clé, elle, reste sur cet appareil : elle n’est ni synchronisée ni exportée.</p>
   </section>`;
 }
 
@@ -1822,6 +1829,16 @@ document.addEventListener('click', e => {
     case 'jfilter': journalFilter = b.dataset.f; render(); break;
     case 'psort': posSort = b.dataset.f; render(); break;
     case 'quotes-now': refreshQuotes(true); break;
+    case 'quotes-manual': {
+      const list = [...new Set(($('#q-manual').value || '').toUpperCase().split(/[\s,;]+/).filter(Boolean))];
+      if (list.some(t => !/^[A-Z0-9.\-]{1,12}$/.test(t))) { toast('Tickers invalides : séparez-les par des virgules.'); break; }
+      S.settings.manualTickers = list;
+      // Retire les cours récupérés automatiquement pour ces actions (ils pouvaient venir d'une autre société).
+      let removed = 0;
+      for (const t of list) { delete Live.prices[t]; if (S.prices[t]) { const n = S.prices[t].length; S.prices[t] = S.prices[t].filter(x => x.src !== 'auto'); removed += n - S.prices[t].length; } }
+      save(list.length ? `Saisie manuelle : ${list.join(', ')}${removed ? ` · ${removed} cours automatique(s) retiré(s)` : ''}` : 'Toutes les actions passent par Finnhub');
+      break;
+    }
     case 'quotes-on': {
       const k = ($('#q-key').value || '').trim();
       if (!/^[A-Za-z0-9]{12,}$/.test(k)) { toast('Collez la clé API Finnhub (lettres et chiffres).'); break; }

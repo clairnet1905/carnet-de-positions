@@ -1,6 +1,6 @@
 // Page : réseau d'abord (sans cache HTTP) pour voir chaque mise à jour dès l'ouverture, copie locale si hors ligne.
 // Icônes et polices : cache d'abord, mises à jour en arrière-plan.
-const CACHE = 'carnet-v1.3.1';
+const CACHE = 'carnet-v1.3.2';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './apple-touch-icon.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
