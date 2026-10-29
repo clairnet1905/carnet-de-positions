@@ -265,7 +265,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.2.0 · licence MIT */
+/* Carnet de positions v1.2.1 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -1861,7 +1861,11 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Store.cfg) scheduleSync(200); });
   window.addEventListener('online', () => { if (Store.cfg) scheduleSync(200); });
   setInterval(() => { if (Store.cfg && document.visibilityState === 'visible') syncNow(); }, 60000);
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(() => {});
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    const hadCtrl = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadCtrl && $('#sheet').hidden) location.reload(); });
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then(r => { document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') r.update().catch(() => {}); }); }).catch(() => {});
+  }
 })();
 </script>
 </body>
