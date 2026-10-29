@@ -1,0 +1,1640 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="description" content="Calculateur de taille de position, journal et performance de trading. Open source, données sur vos appareils.">
+<meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#151D25" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Carnet">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style>
+<title>Carnet de positions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;600;700&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout : registre sobre, une colonne sur iPhone, deux colonnes au-delà de 820 px ; onglets en bas sur mobile, en haut sur ordinateur. */
+:root{
+  --bg:#F2F4F7; --surface:#FFFFFF; --surface-2:#E8ECF1; --ink:#16202B; --muted:#5B6877; --line:#D3DAE2;
+  --accent:#1E4F8F; --accent-ink:#FFFFFF; --accent-soft:#DCE6F3;
+  --gain:#16704A; --loss:#B0392D; --warn:#8F5B00; --warn-bg:#FFF2D6; --loss-bg:#FBE7E4; --gain-bg:#E1F2E8;
+  --f-display:"Familjen Grotesk","Helvetica Neue",Arial,sans-serif;
+  --f-body:"Public Sans",-apple-system,"Segoe UI",Roboto,sans-serif;
+  --f-num:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --r:10px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0E141A; --surface:#151D25; --surface-2:#1C2630; --ink:#E5EBF1; --muted:#95A3B2; --line:#2A3644;
+  --accent:#86B4EE; --accent-ink:#0E141A; --accent-soft:#1D2E44;
+  --gain:#5DC892; --loss:#F28C80; --warn:#E6B75A; --warn-bg:#2E2512; --loss-bg:#341B1B; --gain-bg:#14291F; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0E141A; --surface:#151D25; --surface-2:#1C2630; --ink:#E5EBF1; --muted:#95A3B2; --line:#2A3644;
+  --accent:#86B4EE; --accent-ink:#0E141A; --accent-soft:#1D2E44;
+  --gain:#5DC892; --loss:#F28C80; --warn:#E6B75A; --warn-bg:#2E2512; --loss-bg:#341B1B; --gain-bg:#14291F; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{background:var(--bg)}
+body{color:var(--ink);font:15px/1.5 var(--f-body);padding-bottom:calc(76px + env(safe-area-inset-bottom,0px))}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:30;background:var(--surface)}
+.wrap{max-width:1060px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;letter-spacing:-.01em}
+h2{font-size:1.25rem}
+h3{font-size:1.02rem}
+.num,td.n,.kv dd{font-family:var(--f-num);font-variant-numeric:tabular-nums}
+small,.muted{color:var(--muted)}
+a{color:var(--accent)}
+/* En-tête */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--surface);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:12px;padding-block:10px;flex-wrap:wrap}
+.brand{font-family:var(--f-display);font-weight:700;font-size:1.1rem;display:flex;align-items:baseline;gap:8px}
+.brand span{font:500 .72rem var(--f-num);color:var(--muted);letter-spacing:.04em}
+.sync{margin-left:auto;font-size:.78rem;color:var(--muted);display:flex;align-items:center;gap:6px;max-width:100%}
+.sync i{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
+.sync[data-s="synced"] i{background:var(--gain)} .sync[data-s="local"] i{background:var(--warn)} .sync[data-s="error"] i{background:var(--loss)}
+nav.tabs{display:flex;gap:4px}
+nav.tabs button{font:600 .9rem var(--f-body);border:0;background:none;color:var(--muted);padding:8px 12px;border-radius:8px;cursor:pointer}
+nav.tabs button[aria-selected="true"]{background:var(--accent-soft);color:var(--accent)}
+nav.tabs .s{display:none}
+@media (max-width:819px){
+  nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:25;background:var(--surface);border-top:1px solid var(--line);
+    padding:6px max(8px,env(safe-area-inset-right,0px)) calc(6px + env(safe-area-inset-bottom,0px)) max(8px,env(safe-area-inset-left,0px));justify-content:space-around}
+  nav.tabs button{flex:1;padding:8px 4px;font-size:.8rem}
+  nav.tabs .l{display:none} nav.tabs .s{display:inline}
+}
+@media (min-width:820px){ body{padding-bottom:40px} .top .wrap{flex-wrap:nowrap} .sync{order:3;margin-left:0} nav.tabs{margin-left:auto} }
+main{padding-block:18px 24px;display:grid;gap:18px}
+section.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;display:grid;gap:12px;min-width:0}
+.sec-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.lead{font-size:.86rem;color:var(--muted);margin:0;max-width:68ch}
+.grid2{display:grid;gap:18px}
+@media (min-width:820px){.grid2{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+/* Bannières */
+.banner{border-radius:8px;padding:10px 12px;font-size:.88rem;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.banner.warn{background:var(--warn-bg);color:var(--warn)} .banner.err{background:var(--loss-bg);color:var(--loss)} .banner.info{background:var(--accent-soft);color:var(--ink)}
+.banner .btn{margin-left:auto}
+/* Valeurs */
+.hero{display:grid;gap:4px}
+.hero .big{font:600 2.1rem/1.1 var(--f-num);letter-spacing:-.02em}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:8px;margin:0}
+.kv div{background:var(--surface-2);border-radius:8px;padding:9px 11px;min-width:0}
+.kv dt{font-size:.74rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.kv dd{margin:2px 0 0;font-size:1rem;overflow-wrap:anywhere}
+.kv dd small{display:block;font-family:var(--f-body);font-size:.74rem}
+.pos{color:var(--gain)} .neg{color:var(--loss)} .wrn{color:var(--warn)}
+.pill{display:inline-block;font:600 .7rem var(--f-body);padding:2px 8px;border-radius:99px;letter-spacing:.03em;text-transform:uppercase;background:var(--surface-2);color:var(--muted)}
+.pill.open{background:var(--accent-soft);color:var(--accent)} .pill.win{background:var(--gain-bg);color:var(--gain)} .pill.loss{background:var(--loss-bg);color:var(--loss)} .pill.warn{background:var(--warn-bg);color:var(--warn)} .pill.demo{background:var(--warn-bg);color:var(--warn)}
+/* Formulaires */
+form .fields,.fields{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+.fld{display:grid;gap:4px;min-width:0}
+.fld.wide{grid-column:1/-1}
+label,.lbl{font-size:.8rem;font-weight:600;color:var(--muted)}
+input,select,textarea{font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 10px;width:100%;min-width:0}
+input[type=checkbox]{width:auto;accent-color:var(--accent)}
+input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+textarea{min-height:70px;resize:vertical}
+.check{display:flex;align-items:center;gap:8px;font-size:.9rem;color:var(--ink);font-weight:500}
+.hint{font-size:.76rem;color:var(--muted);margin:0}
+.btn{font:600 .9rem var(--f-body);border-radius:8px;padding:9px 14px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;white-space:nowrap}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.danger{color:var(--loss);border-color:var(--loss)}
+.btn.sm{padding:5px 10px;font-size:.8rem}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+/* Résultats du calculateur */
+.result{display:grid;gap:12px}
+.qty-big{font:600 2rem/1.1 var(--f-num)}
+.reason{font-size:.88rem;background:var(--warn-bg);color:var(--warn);border-radius:8px;padding:8px 10px;margin:0}
+.fine{font-size:.76rem;color:var(--muted);border-top:1px dashed var(--line);padding-top:10px;margin:0}
+.errs{margin:0;padding:10px 12px 10px 28px;background:var(--loss-bg);color:var(--loss);border-radius:8px;font-size:.9rem}
+/* Tableaux */
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:.86rem}
+th,td{padding:7px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600;background:var(--surface-2)}
+td.n,th.n{text-align:right}
+tr:last-child td{border-bottom:0}
+/* Positions */
+details.lot{border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+details.lot>summary{list-style:none;cursor:pointer;padding:10px 12px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center}
+details.lot>summary::-webkit-details-marker{display:none}
+details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
+.tk{font:700 1rem var(--f-display)}
+.ticker-card{display:grid;gap:10px;border:1px solid var(--line);border-radius:var(--r);padding:12px;background:var(--surface)}
+.ticker-card header{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline}
+.bar{height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent)}
+.expo{display:grid;grid-template-columns:70px minmax(0,1fr) auto;gap:8px;align-items:center;font-size:.86rem}
+.thumb{max-width:100%;max-height:260px;border-radius:6px;border:1px solid var(--line)}
+.filters{display:flex;gap:6px;flex-wrap:wrap}
+.filters button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent);border-color:transparent}
+/* Courbe */
+.chart{width:100%;height:auto;display:block}
+.chart text{fill:var(--muted);font:11px var(--f-num)}
+.chart .grid{stroke:var(--line);stroke-width:1}
+.chart .zero{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
+.chart .line{fill:none;stroke:var(--accent);stroke-width:2}
+.chart .area{fill:var(--accent);opacity:.1}
+.chart .dot{fill:var(--accent)} .chart .dot.est{fill:var(--surface);stroke:var(--accent);stroke-width:1.5} .chart .dot.br{fill:var(--warn)}
+/* Feuille modale */
+.sheet{position:fixed;inset:0;z-index:50;background:rgba(10,16,24,.45);display:flex;align-items:flex-end;justify-content:center}
+.sheet-card{background:var(--surface);width:100%;max-width:620px;max-height:92vh;overflow:auto;border-radius:14px 14px 0 0;
+  padding:16px max(16px,env(safe-area-inset-right,0px)) calc(16px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+@media (min-width:820px){.sheet{align-items:center}.sheet-card{border-radius:14px}}
+.sheet-card form{display:grid;gap:12px}
+.sheet-card header{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.sheet-card footer{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.form-err{color:var(--loss);font-size:.88rem;margin:0}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom,0px));z-index:60;background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;font-size:.88rem;max-width:calc(100% - 32px)}
+@media (min-width:820px){.toast{bottom:24px}}
+@media (prefers-reduced-motion:no-preference){ .sheet-card{animation:up .18s ease-out} @keyframes up{from{transform:translateY(16px);opacity:.6}} }
+</style>
+
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <div class="brand">Carnet de positions <span>USD · ACTIONS US</span></div>
+    <div class="sync" id="sync" data-s="local"><i></i><span id="syncText">Chargement…</span></div>
+    <nav class="tabs" role="tablist" aria-label="Sections">
+      <button role="tab" id="tab-dash" data-tab="dash"><span class="l">Tableau de bord</span><span class="s">Bord</span></button>
+      <button role="tab" id="tab-calc" data-tab="calc"><span class="l">Nouvelle position</span><span class="s">Nouvelle</span></button>
+      <button role="tab" id="tab-pos" data-tab="pos"><span class="l">Positions et journal</span><span class="s">Positions</span></button>
+      <button role="tab" id="tab-set" data-tab="set"><span class="l">Réglages</span><span class="s">Réglages</span></button>
+    </nav>
+  </div>
+</header>
+<main class="wrap" id="view"></main>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <form id="sheetForm" novalidate>
+      <header><h2 id="sheetTitle"></h2><button type="button" class="btn sm" data-act="close-sheet">Fermer</button></header>
+      <div id="sheetBody"></div>
+      <p class="form-err" id="sheetErr" role="alert"></p>
+      <footer><button type="button" class="btn" data-act="close-sheet">Annuler</button><button type="submit" class="btn primary" id="sheetOk">Valider</button></footer>
+    </form>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+<script>
+/* Carnet de positions v1.0.0 · licence MIT */
+/*CORE-START*/
+// Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
+const Core = (() => {
+  const nf2 = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const nfq = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 8 });
+
+  function usd(x, sign) {
+    if (x == null || !isFinite(x)) return 'Non calculable';
+    if (Math.abs(x) < 0.005) x = 0;
+    const pre = x < 0 ? '−' : (sign && x > 0 ? '+' : '');
+    return pre + nf2.format(Math.abs(x)) + ' $';
+  }
+  function pct(x, sign) {
+    if (x == null || !isFinite(x)) return 'Non calculable';
+    if (Math.abs(x) < 0.005) x = 0;
+    const pre = x < 0 ? '−' : (sign && x > 0 ? '+' : '');
+    return pre + nf2.format(Math.abs(x)) + ' %';
+  }
+  const qty = x => (x == null || !isFinite(x)) ? 'Non calculable' : nfq.format(x);
+
+  function num(v) {
+    if (typeof v === 'number') return v;
+    if (v == null) return NaN;
+    const s = String(v).replace(/[\s  ]/g, '').replace(',', '.');
+    if (s === '' || !/^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(s)) return NaN;
+    return Number(s);
+  }
+  function numOr(v, d) { return (v == null || String(v).trim() === '') ? d : num(v); }
+  const isNum = x => typeof x === 'number' && isFinite(x);
+  function roundTo(x, d) { const f = Math.pow(10, d); return Math.round(x * f) / f; }
+  function floorTo(x, d) { const f = Math.pow(10, d); return Math.floor(x * f + 1e-6) / f; }
+  function le(a, b) { return a <= b + 1e-9 * Math.max(1, Math.abs(b)); }
+  function days(a, b) { return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 864e5); }
+
+  function normFees(f) {
+    f = f || {};
+    return { inFixed: numOr(f.inFixed, 0), inPct: numOr(f.inPct, 0), outFixed: numOr(f.outFixed, 0), outPct: numOr(f.outPct, 0) };
+  }
+  // Frais d'entrée et de sortie : part fixe + part proportionnelle au montant échangé.
+  function feeIn(q, price, f) { return q > 0 ? f.inFixed + q * price * f.inPct / 100 : 0; }
+  function feeOut(q, price, f) { return q > 0 ? f.outFixed + q * price * f.outPct / 100 : 0; }
+
+  // ---------- 1. Calculateur avant achat ----------
+  function sizePosition(inp) {
+    const fees = normFees(inp.fees);
+    const fractional = !!inp.fractional;
+    const p = {
+      equity: num(inp.equity), riskPct: num(inp.riskPct), entry: num(inp.entry), stop: num(inp.stop),
+      leverage: num(inp.leverage), cap: num(inp.cap), fractional,
+      decimals: fractional ? numOr(inp.decimals, 4) : 0,
+      marginAvail: numOr(inp.marginAvail, null), fees
+    };
+    const errors = [];
+    if (!isNum(p.equity) || p.equity <= 0) errors.push('La valeur nette de référence doit être positive.');
+    if (!isNum(p.riskPct) || p.riskPct <= 0 || p.riskPct > 100) errors.push('Le risque par position doit être compris entre 0 et 100 %.');
+    if (!isNum(p.entry) || p.entry <= 0) errors.push('Indiquez un prix d’entrée positif.');
+    if (!isNum(p.stop) || p.stop <= 0) errors.push('Indiquez un stop initial positif.');
+    if (isNum(p.entry) && isNum(p.stop) && p.stop > 0 && p.entry > 0 && p.stop >= p.entry) errors.push('Le stop doit être strictement inférieur au prix d’entrée (achat uniquement).');
+    if (!isNum(p.leverage) || p.leverage < 1) errors.push('Le levier doit être supérieur ou égal à 1.');
+    if (!isNum(p.cap) || p.cap <= 0) errors.push('Le plafond de position doit être positif.');
+    const feeLabels = { inFixed: 'Frais fixes d’entrée', inPct: 'Frais d’entrée en %', outFixed: 'Frais fixes de sortie', outPct: 'Frais de sortie en %' };
+    for (const k in feeLabels) if (!isNum(fees[k]) || fees[k] < 0) errors.push(feeLabels[k] + ' : valeur invalide.');
+    if (fractional && (!Number.isInteger(p.decimals) || p.decimals < 0 || p.decimals > 8)) errors.push('La précision doit être un nombre entier de décimales entre 0 et 8.');
+    if (p.marginAvail !== null && (!isNum(p.marginAvail) || p.marginAvail < 0)) errors.push('La marge disponible est invalide.');
+    if (errors.length) return { ok: false, errors };
+
+    const budget = p.equity * p.riskPct / 100;
+    const fixed = fees.inFixed + fees.outFixed;
+    const perUnit = (p.entry - p.stop) + p.entry * fees.inPct / 100 + p.stop * fees.outPct / 100;
+    const lim = {
+      risk: Math.max(0, (budget - fixed) / perUnit),
+      cap: p.cap / p.entry,
+      margin: p.marginAvail === null ? Infinity
+        : Math.max(0, (p.marginAvail - fees.inFixed) / (p.entry / p.leverage + p.entry * fees.inPct / 100))
+    };
+    const dec = p.decimals, step = Math.pow(10, -dec);
+    const ev = q => {
+      const exposure = q * p.entry, margin = exposure / p.leverage;
+      const fi = feeIn(q, p.entry, fees), fo = feeOut(q, p.stop, fees);
+      const priceRisk = q * (p.entry - p.stop);
+      return { q, exposure, margin, feeIn: fi, feeOut: fo, feesRT: fi + fo, priceRisk, totalRisk: priceRisk + fi + fo, marginNeed: margin + fi };
+    };
+    const fits = r => le(r.totalRisk, budget) && le(r.exposure, p.cap) && (p.marginAvail === null || le(r.marginNeed, p.marginAvail));
+    const qMax = Math.min(lim.risk, lim.cap, lim.margin);
+    let q = floorTo(qMax, dec), r = ev(q), guard = 0;
+    while (q > 0 && !fits(r) && guard++ < 100000) { q = roundTo(q - step, dec); r = ev(q); }
+    const binding = qMax === lim.cap ? 'cap' : (qMax === lim.risk ? 'risk' : 'margin');
+    const stopDistPct = (p.entry - p.stop) / p.entry * 100;
+    const base = { budget, lim, binding, stopDistPct, decimals: dec, step, marginChecked: p.marginAvail !== null, params: p };
+
+    if (!(q > 0)) {
+      const r1 = ev(step);
+      const unit = dec === 0 ? '1 action' : qty(step) + ' action';
+      const parts = [];
+      if (fixed >= budget) parts.push(`les frais fixes aller-retour (${usd(fixed)}) atteignent déjà le budget de risque (${usd(budget)})`);
+      else if (!le(r1.totalRisk, budget)) parts.push(`le risque estimé serait de ${usd(r1.totalRisk)} pour un budget de ${usd(budget)}`);
+      if (!le(r1.exposure, p.cap)) parts.push(`l’exposition serait de ${usd(r1.exposure)} pour un plafond de ${usd(p.cap)}`);
+      if (p.marginAvail !== null && !le(r1.marginNeed, p.marginAvail)) parts.push(`la marge et les frais d’entrée (${usd(r1.marginNeed)}) dépasseraient la marge disponible (${usd(p.marginAvail)})`);
+      const msg = `Aucune position ne peut être prise : avec la plus petite quantité autorisée (${unit}), ${parts.join(' ; ')}.`
+        + (dec === 0 ? ' Les fractions d’action sont désactivées.' : '');
+      return Object.assign({ ok: false, blocked: true, errors: [msg] }, base);
+    }
+
+    let reason = null;
+    if (r.exposure < p.cap - 0.005) {
+      if (binding === 'risk') reason = `Taille réduite pour respecter le budget de risque de ${nf2.format(p.riskPct)} % (${usd(budget)}) : le stop est à ${pct(stopDistPct)} de l’entrée${(fixed || fees.inPct || fees.outPct) ? ', frais compris' : ''}.`;
+      else if (binding === 'margin') reason = `Taille réduite par la marge disponible (${usd(p.marginAvail)}).`;
+      else reason = `Quantité arrondie vers le bas à la précision autorisée (${qty(step)}).`;
+      if (binding !== 'cap' && q < floorTo(qMax, dec) - step / 2) reason += ' Ajustée vers le bas après recalcul des frais.';
+      else if (binding !== 'cap' && dec === 0) reason += ' Arrondie à l’action entière inférieure.';
+    }
+    return Object.assign({ ok: true, errors: [], reason, riskPctAccount: r.totalRisk / p.equity * 100, drop10: r.exposure * 0.10 }, base, r);
+  }
+
+  // ---------- 2. Comptabilité ----------
+  function lotState(lot, upTo) {
+    const evs = (lot.events || []).filter(e => !upTo || e.date <= upTo);
+    let sold = 0, gross = 0, exitFees = 0, funding = 0, divs = 0, lastSell = null;
+    for (const e of evs) {
+      if (e.type === 'sell') {
+        sold += e.qty; gross += e.qty * (e.price - lot.price); exitFees += e.fee || 0;
+        if (!lastSell || e.date > lastSell) lastSell = e.date;
+      } else if (e.type === 'funding') funding += e.amount;
+      else if (e.type === 'dividend' || e.type === 'adjust') divs += e.amount;
+    }
+    let rem = lot.qty - sold;
+    if (Math.abs(rem) < 1e-9) rem = 0;
+    const entryFee = lot.entryFee || 0;
+    // Chaque coût n'apparaît qu'une fois : frais d'entrée, frais de sortie, financement.
+    const netRealized = gross + divs - entryFee - exitFees - funding;
+    return { rem, sold, gross, exitFees, funding, divs, entryFee, txFees: entryFee + exitFees, netRealized, closed: rem <= 0, closeDate: rem <= 0 ? lastSell : null };
+  }
+
+  function priceHist(prices, t) { return (prices && prices[t]) || []; }
+  function priceOn(prices, t, d) { return priceHist(prices, t).find(x => x.date === d) || null; }
+  function lastPrice(prices, t, upTo) {
+    let best = null;
+    for (const x of priceHist(prices, t)) if ((!upTo || x.date <= upTo) && (!best || x.date >= best.date)) best = x;
+    return best;
+  }
+
+  // mode 'last' : dernier cours connu ; mode 'exact' : cours saisi exactement à la date upTo.
+  function accountState(st, upTo, mode) {
+    const s = st.settings;
+    let deposits = 0, withdrawals = 0;
+    for (const f of st.flows) if (!upTo || f.date <= upTo) { if (f.amount >= 0) deposits += f.amount; else withdrawals -= f.amount; }
+    let realized = 0, unreal = 0, txFees = 0, funding = 0, divs = 0, gross = 0, exposure = 0, margin = 0, openCount = 0, minPriceDate = null;
+    const missing = [], fallback = [];
+    for (const lot of st.lots) {
+      if (upTo && lot.date > upTo) continue;
+      const ls = lotState(lot, upTo);
+      realized += ls.netRealized; txFees += ls.txFees; funding += ls.funding; divs += ls.divs; gross += ls.gross;
+      if (ls.closed) continue;
+      openCount++;
+      let pr = mode === 'exact' ? priceOn(st.prices, lot.ticker, upTo) : lastPrice(st.prices, lot.ticker, upTo);
+      if (!pr) {
+        if (mode === 'exact') { missing.push(lot.ticker); continue; }
+        pr = { price: lot.price, date: lot.date }; fallback.push(lot.ticker);
+      }
+      unreal += ls.rem * (pr.price - lot.price);
+      exposure += ls.rem * pr.price;
+      margin += ls.rem * pr.price / (lot.leverage || 1);
+      if (!minPriceDate || pr.date < minPriceDate) minPriceDate = pr.date;
+    }
+    const equity = s.initialCapital + deposits - withdrawals + realized + unreal;
+    return { equity, deposits, withdrawals, realized, unreal, txFees, funding, divs, gross, exposure, margin, openCount, minPriceDate, missing, fallback };
+  }
+
+  // ---------- 3. Performance ----------
+  // Une observation n'existe qu'à une date où chaque position ouverte a un cours saisi ce jour-là,
+  // ou quand aucune position n'est ouverte. Les valeurs courtier sont prioritaires à leur date.
+  function observations(st, today) {
+    const s = st.settings, start = s.startDate;
+    const startFlows = st.flows.filter(f => f.date <= start).reduce((a, f) => a + f.amount, 0);
+    const map = new Map();
+    map.set(start, { date: start, value: s.initialCapital + startFlows, source: 'initial' });
+    const dates = new Set();
+    for (const t in st.prices) for (const x of st.prices[t]) dates.add(x.date);
+    for (const l of st.lots) { dates.add(l.date); for (const e of l.events || []) dates.add(e.date); }
+    for (const f of st.flows) dates.add(f.date);
+    for (const d of dates) {
+      if (d <= start || (today && d > today)) continue;
+      const a = accountState(st, d, 'exact');
+      if (a.missing.length) continue;
+      map.set(d, { date: d, value: a.equity, source: a.openCount ? 'app' : 'app-flat' });
+    }
+    for (const b of st.snapshots || []) {
+      if (b.date < start || (today && b.date > today) || !isNum(b.netValue)) continue;
+      const appObs = map.get(b.date);
+      map.set(b.date, { date: b.date, value: b.netValue, source: 'courtier', appValue: appObs && appObs.source !== 'courtier' ? appObs.value : null });
+    }
+    return [...map.values()].sort((a, b) => a.date < b.date ? -1 : 1);
+  }
+
+  function twr(obs, flows) {
+    const pts = [];
+    if (!obs.length) return { points: pts, broken: false };
+    pts.push(Object.assign({}, obs[0], { index: 1, r: null, est: false }));
+    let idx = 1;
+    for (let i = 1; i < obs.length; i++) {
+      const a = obs[i - 1], b = obs[i];
+      const fl = flows.filter(f => f.date > a.date && f.date <= b.date);
+      const F = fl.reduce((x, f) => x + f.amount, 0);
+      const exact = fl.every(f => f.date === b.date);
+      let r;
+      if (exact) {
+        if (!(a.value > 0)) return { points: pts, broken: true, brokenAt: b.date };
+        r = (b.value - F) / a.value - 1;
+      } else {
+        // Modified Dietz : flux pondérés par la durée restante de la sous-période.
+        const T = days(a.date, b.date);
+        const W = fl.reduce((x, f) => x + f.amount * days(f.date, b.date) / T, 0);
+        const den = a.value + W;
+        if (!(den > 0)) return { points: pts, broken: true, brokenAt: b.date };
+        r = (b.value - a.value - F) / den;
+      }
+      idx *= 1 + r;
+      pts.push(Object.assign({}, b, { index: idx, r, est: !exact }));
+    }
+    return { points: pts, broken: false };
+  }
+
+  function periodReturn(points, from, to) {
+    if (!points.length) return null;
+    let base = null, end = null;
+    for (const p of points) { if (p.date < from) base = p; if (p.date <= to) end = p; }
+    if (!base && points[0].date <= to) base = points[0];
+    if (!base || !end || end.date <= base.date) return null;
+    const est = points.some(p => p.date > base.date && p.date <= end.date && p.est);
+    return { r: (end.index / base.index - 1) * 100, from: base.date, to: end.date, est };
+  }
+
+  function maxDrawdown(points) {
+    if (points.length < 2) return null;
+    let peak = points[0], worst = { dd: 0, peak: points[0].date, trough: points[0].date };
+    for (const p of points) {
+      if (p.index > peak.index) peak = p;
+      const dd = (p.index / peak.index - 1) * 100;
+      if (dd < worst.dd) worst = { dd, peak: peak.date, trough: p.date };
+    }
+    return worst;
+  }
+
+  function frequency(points) {
+    if (points.length < 2) return null;
+    const gaps = [];
+    for (let i = 1; i < points.length; i++) gaps.push(days(points[i - 1].date, points[i].date));
+    gaps.sort((a, b) => a - b);
+    const m = gaps.length % 2 ? gaps[(gaps.length - 1) / 2] : (gaps[gaps.length / 2 - 1] + gaps[gaps.length / 2]) / 2;
+    return { count: points.length, medianGap: m, maxGap: gaps[gaps.length - 1] };
+  }
+
+  // ---------- 4. Statistiques des positions clôturées ----------
+  function tradeStats(st) {
+    const closed = [];
+    for (const lot of st.lots) {
+      const ls = lotState(lot);
+      if (ls.closed) closed.push({ lot, net: ls.netRealized, R: lot.riskInitial > 0 ? ls.netRealized / lot.riskInitial : null });
+    }
+    const wins = closed.filter(c => c.net > 0.0049), losses = closed.filter(c => c.net < -0.0049);
+    const sumW = wins.reduce((a, c) => a + c.net, 0), sumL = losses.reduce((a, c) => a + c.net, 0);
+    const withR = closed.filter(c => c.R != null);
+    const planned = st.lots.filter(l => l.planOk === true || l.planOk === false);
+    return {
+      count: closed.length, wins: wins.length, losses: losses.length,
+      winRate: closed.length ? wins.length / closed.length * 100 : null,
+      avgWin: wins.length ? sumW / wins.length : null,
+      avgLoss: losses.length ? sumL / losses.length : null,
+      profitFactor: sumL < 0 ? sumW / -sumL : null,
+      avgR: withR.length ? withR.reduce((a, c) => a + c.R, 0) / withR.length : null,
+      rCount: withR.length,
+      planRate: planned.length ? planned.filter(l => l.planOk).length / planned.length * 100 : null,
+      planCount: planned.length, closed
+    };
+  }
+
+  // Analyse du stop pour la partie restante d'une ligne.
+  function stopAnalysis(lot, ls, last, fees) {
+    const stop = lot.stopCurrent;
+    if (!(isNum(stop) && stop > 0)) return { missing: true };
+    const estExit = feeOut(ls.rem, stop, normFees(fees));
+    const vsEntry = ls.rem * (stop - lot.price) - estExit;
+    return {
+      missing: false, estExit, vsEntry,
+      totalIfStop: ls.netRealized + ls.rem * (stop - lot.price) - estExit,
+      pullback: last ? ls.rem * (last.price - stop) + estExit : null,
+      belowStop: last ? last.price <= stop : false
+    };
+  }
+
+  return { usd, pct, qty, num, numOr, isNum, roundTo, floorTo, days, normFees, feeIn, feeOut, sizePosition,
+    lotState, priceOn, lastPrice, accountState, observations, twr, periodReturn, maxDrawdown, frequency, tradeStats, stopAnalysis };
+})();
+/*CORE-END*/
+
+// ---------- Utilitaires ----------
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const { usd, pct, qty, num, numOr, isNum } = Core;
+const LS_KEY = 'carnet-positions:v1';
+const todayISO = () => new Date().toLocaleDateString('sv-SE');
+function addDays(d, n) { const t = new Date(d + 'T12:00:00'); t.setDate(t.getDate() + n); return t.toLocaleDateString('sv-SE'); }
+const fmtDate = d => d ? new Date(d + 'T12:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const cls = x => !isNum(x) || Math.abs(x) < 0.005 ? '' : (x > 0 ? 'pos' : 'neg');
+const fmtNum = (x, d = 2) => isNum(x) ? new Intl.NumberFormat('fr-FR', { maximumFractionDigits: d }).format(x).replace('-', '−') : '';
+const MOTIFS = { cassure: 'Cassure', pullback: 'Pullback', continuation: 'Continuation', autre: 'Autre' };
+let toastTimer;
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, 2800); }
+function withTimeout(p, ms) { return Promise.race([p, new Promise(r => setTimeout(() => r(null), ms))]); }
+
+// ---------- État ----------
+function defaultState() {
+  return {
+    app: 'carnet-positions', version: 1, updatedAt: 0,
+    settings: { initialCapital: 1000, startDate: todayISO(), riskPct: 1, cap: 100, leverage: 5,
+      fees: { inFixed: 0, inPct: 0, outFixed: 0, outPct: 0 }, fractional: true, decimals: 4, staleDays: 4, refSource: 'auto' },
+    flows: [], lots: [], prices: {}, snapshots: []
+  };
+}
+function normalize(st) {
+  const d = defaultState();
+  st = st && typeof st === 'object' ? st : {};
+  const out = Object.assign({}, d, st);
+  out.settings = Object.assign({}, d.settings, st.settings || {});
+  out.settings.fees = Object.assign({}, d.settings.fees, (st.settings && st.settings.fees) || {});
+  for (const k of ['flows', 'lots', 'snapshots']) out[k] = Array.isArray(st[k]) ? st[k] : [];
+  out.prices = st.prices && typeof st.prices === 'object' ? st.prices : {};
+  for (const l of out.lots) l.events = Array.isArray(l.events) ? l.events : [];
+  return out;
+}
+let S = defaultState();
+let tab = 'dash';
+const openLots = new Set();
+let journalFilter = 'closed';
+let calcDraft = null;
+
+// ---------- Stockage : copie sur l'appareil, synchronisée avec un Gist GitHub secret si connecté ----------
+const SYNC_KEY = 'carnet-positions:sync', PENDING_KEY = 'carnet-positions:img-pending', CONFLICT_KEY = 'carnet-positions:conflit', EXPORT_KEY = 'carnet-positions:dernier-export';
+const STATE_FILE = 'carnet-positions.json';
+const Store = { cfg: null, busy: false, again: false, timer: null, files: {}, lastOk: 0 };
+function readLocal() { try { const t = localStorage.getItem(LS_KEY); return t ? JSON.parse(t) : null; } catch (e) { return null; } }
+function writeLocal() { try { localStorage.setItem(LS_KEY, JSON.stringify(S)); return true; } catch (e) { return false; } }
+function readJSON(k, d) { try { const t = localStorage.getItem(k); return t ? JSON.parse(t) : d; } catch (e) { return d; } }
+function writeJSON(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+const fmtTime = t => new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+function setSync(s, extra) {
+  const el = $('#sync'); el.dataset.s = s === 'saving' ? 'local' : s;
+  $('#syncText').textContent = {
+    local: 'Données conservées uniquement sur cet appareil',
+    synced: 'Synchronisé · ' + fmtTime(Store.lastOk || Date.now()),
+    saving: 'Synchronisation…',
+    offline: 'Hors ligne · enregistré sur l’appareil, envoi au retour du réseau',
+    error: 'Synchronisation impossible' + (extra ? ' (' + extra + ')' : '') + ' · enregistré sur l’appareil'
+  }[s];
+}
+function save(msg) {
+  S.updatedAt = Math.max(Date.now(), (S.updatedAt || 0) + 1);
+  const okLocal = writeLocal();
+  if (Store.cfg) { Store.cfg.dirty = true; writeJSON(SYNC_KEY, Store.cfg); scheduleSync(1500); } else setSync('local');
+  if (!okLocal) toast('Attention : le navigateur refuse la sauvegarde locale. Exportez vos données.');
+  render();
+  if (msg) toast(msg);
+}
+
+// Images : IndexedDB (plus de place que localStorage).
+const IDB = {
+  p: null,
+  open() {
+    if (!this.p) this.p = new Promise((res, rej) => {
+      const r = indexedDB.open('carnet-positions', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('img');
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+    return this.p;
+  },
+  async run(mode, fn) {
+    try {
+      const db = await this.open();
+      return await new Promise(res => { const tx = db.transaction('img', mode); const q = fn(tx.objectStore('img')); tx.oncomplete = () => res(q && q.result); tx.onerror = () => res(null); });
+    } catch (e) { return null; }
+  },
+  get(k) { return this.run('readonly', s => s.get(k)); },
+  set(k, v) { return this.run('readwrite', s => s.put(v, k)); },
+  del(k) { return this.run('readwrite', s => s.delete(k)); }
+};
+function queueImg(id, op) {
+  const p = readJSON(PENDING_KEY, {}); p[id] = op; writeJSON(PENDING_KEY, p);
+  if (Store.cfg) scheduleSync(1500);
+}
+async function putImage(id, dataUrl) { await IDB.set(id, dataUrl); queueImg(id, 'put'); }
+async function getImage(id) {
+  const v = await IDB.get(id);
+  if (v) return v;
+  const f = Store.files['img-' + id + '.txt'];
+  if (f) { try { const t = f.content && !f.truncated ? f.content : await (await fetch(f.raw_url)).text(); await IDB.set(id, t); return t; } catch (e) {} }
+  return null;
+}
+async function delImage(id) { await IDB.del(id); queueImg(id, 'del'); }
+
+// ----- GitHub Gist -----
+async function gh(path, opts) {
+  opts = opts || {};
+  const headers = { Accept: 'application/vnd.github+json', Authorization: 'Bearer ' + Store.cfg.token, 'X-GitHub-Api-Version': '2022-11-28' };
+  if (opts.body) headers['Content-Type'] = 'application/json';
+  const r = await fetch('https://api.github.com' + path, Object.assign({}, opts, { headers, cache: 'no-store' }));
+  if (!r.ok) {
+    const e = new Error(r.status === 401 ? 'jeton refusé ou expiré' : r.status === 404 ? 'gist introuvable ou jeton sans droit « gist »' : r.status === 403 ? 'accès refusé ou limite atteinte' : 'erreur ' + r.status);
+    e.status = r.status; throw e;
+  }
+  return r.status === 204 ? null : r.json();
+}
+async function findGist() {
+  for (let page = 1; page <= 10; page++) {
+    const list = await gh('/gists?per_page=100&page=' + page);
+    const g = list.find(x => x.files && x.files[STATE_FILE]);
+    if (g) return g.id;
+    if (list.length < 100) break;
+  }
+  return null;
+}
+async function fetchRemote() {
+  const g = await gh('/gists/' + Store.cfg.gistId);
+  Store.files = g.files || {};
+  const f = Store.files[STATE_FILE];
+  if (!f) return null;
+  const text = f.truncated ? await (await fetch(f.raw_url, { cache: 'no-store' })).text() : f.content;
+  return normalize(JSON.parse(text));
+}
+async function pushRemote() {
+  const sent = S.updatedAt;
+  const files = { [STATE_FILE]: { content: JSON.stringify(S) } };
+  const pend = readJSON(PENDING_KEY, {});
+  for (const id in pend) {
+    if (pend[id] === 'del') { if (Store.files['img-' + id + '.txt']) files['img-' + id + '.txt'] = null; }
+    else { const d = await IDB.get(id); if (d) files['img-' + id + '.txt'] = { content: d }; }
+  }
+  const g = await gh('/gists/' + Store.cfg.gistId, { method: 'PATCH', body: JSON.stringify({ files }) });
+  Store.files = g.files || Store.files;
+  const now = readJSON(PENDING_KEY, {});
+  for (const id in pend) if (now[id] === pend[id]) delete now[id];
+  writeJSON(PENDING_KEY, now);
+  Store.cfg.syncedRev = sent; Store.cfg.dirty = S.updatedAt !== sent; writeJSON(SYNC_KEY, Store.cfg);
+}
+const hasRealData = st => st && (st.lots.some(l => !l.demo) || st.flows.some(f => !f.demo) || st.snapshots.some(s => !s.demo));
+function scheduleSync(ms) { clearTimeout(Store.timer); Store.timer = setTimeout(syncNow, ms || 0); }
+// Synchronisation : la version modifiée depuis la dernière synchro gagne ; si les deux ont changé, la plus récente gagne et l'autre est mise de côté.
+// « Modifié » se lit avec un indicateur et un numéro de version, jamais en comparant les horloges des appareils.
+async function syncNow() {
+  if (!Store.cfg) return;
+  if (Store.busy) { Store.again = true; return; }
+  Store.busy = true; setSync('saving');
+  try {
+    const remote = await fetchRemote();
+    const localChanged = !!Store.cfg.dirty, remoteChanged = !!remote && remote.updatedAt !== Store.cfg.syncedRev;
+    const pend = Object.keys(readJSON(PENDING_KEY, {})).length > 0;
+    if (!remote) await pushRemote();
+    else if (remoteChanged && !localChanged) adoptRemote(remote);
+    else if (remoteChanged && localChanged) {
+      if (remote.updatedAt === S.updatedAt) { Store.cfg.syncedRev = S.updatedAt; Store.cfg.dirty = false; writeJSON(SYNC_KEY, Store.cfg); }
+      else if (S.updatedAt > remote.updatedAt) { writeJSON(CONFLICT_KEY, { at: Date.now(), from: 'en ligne', state: remote }); await pushRemote(); toast('Modifications faites sur deux appareils : la plus récente est gardée, l’autre est mise de côté (Réglages).'); }
+      else { writeJSON(CONFLICT_KEY, { at: Date.now(), from: 'cet appareil', state: S }); adoptRemote(remote); toast('Modifications faites sur deux appareils : la plus récente est gardée, l’autre est mise de côté (Réglages).'); }
+    } else if (localChanged || pend) await pushRemote();
+    Store.lastOk = Date.now(); setSync('synced');
+    if (tab === 'set') render();
+  } catch (e) {
+    if (e instanceof TypeError || !navigator.onLine) setSync('offline'); else setSync('error', e.message);
+  } finally {
+    Store.busy = false;
+    if (Store.again) { Store.again = false; scheduleSync(300); }
+  }
+}
+function adoptRemote(remote) {
+  S = remote; writeLocal();
+  Store.cfg.syncedRev = remote.updatedAt; Store.cfg.dirty = false; writeJSON(SYNC_KEY, Store.cfg);
+  calcDraft = null; render();
+}
+async function connectGist(token) {
+  Store.cfg = { token, gistId: null, syncedRev: null, dirty: false };
+  try {
+    let id = await findGist();
+    if (!id) {
+      const g = await gh('/gists', { method: 'POST', body: JSON.stringify({ description: 'Carnet de positions : données (gist secret, ne pas rendre public)', public: false, files: { [STATE_FILE]: { content: JSON.stringify(S) } } }) });
+      id = g.id; Store.files = g.files || {};
+      Store.cfg.gistId = id; Store.cfg.syncedRev = S.updatedAt; writeJSON(SYNC_KEY, Store.cfg);
+      const p = {}; for (const l of S.lots) if (l.imgId) p[l.imgId] = 'put'; writeJSON(PENDING_KEY, p);
+      if (Object.keys(p).length) await pushRemote();
+      Store.lastOk = Date.now(); setSync('synced'); render();
+      return 'created';
+    }
+    Store.cfg.gistId = id;
+    const remote = await fetchRemote();
+    writeJSON(SYNC_KEY, Store.cfg);
+    if (!remote || !hasRealData(remote)) { await pushRemote(); Store.lastOk = Date.now(); setSync('synced'); render(); return 'pushed'; }
+    if (!hasRealData(S)) { adoptRemote(remote); Store.lastOk = Date.now(); setSync('synced'); return 'pulled'; }
+    return { choose: remote };
+  } catch (e) { Store.cfg = null; writeJSON(SYNC_KEY, null); throw e; }
+}
+function readImageFile(file) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onerror = () => rej(new Error('Lecture impossible'));
+    fr.onload = () => {
+      const img = new Image();
+      img.onerror = () => rej(new Error('Image illisible'));
+      img.onload = () => {
+        let max = 1400, q = 0.78, out;
+        for (let i = 0; i < 6; i++) {
+          const k = Math.min(1, max / Math.max(img.width, img.height));
+          const cv = document.createElement('canvas'); cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k);
+          cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+          out = cv.toDataURL('image/jpeg', q);
+          if (out.length < 230000) break;
+          max *= 0.8; q -= 0.08;
+        }
+        res(out);
+      };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+
+// ---------- Données dérivées ----------
+const fees = () => Core.normFees(S.settings.fees);
+function latestBroker() { return [...S.snapshots].sort((a, b) => a.date < b.date ? 1 : -1)[0] || null; }
+function lastEventDate() {
+  let m = null;
+  const up = d => { if (d && (!m || d > m)) m = d; };
+  for (const l of S.lots) { up(l.date); for (const e of l.events) up(e.date); }
+  for (const f of S.flows) up(f.date);
+  return m;
+}
+function referenceCapital() {
+  const today = todayISO();
+  const acc = Core.accountState(S, null, 'last');
+  const appDate = acc.openCount ? acc.minPriceDate : (lastEventDate() && lastEventDate() > today ? lastEventDate() : today);
+  const app = { value: acc.equity, date: appDate, source: 'app', label: 'Calcul de l’application' };
+  const lb = latestBroker();
+  const br = lb ? { value: lb.netValue, date: lb.date, source: 'courtier', label: 'Valeur saisie depuis le courtier' } : null;
+  const led = lastEventDate();
+  let ref = app; const notes = [];
+  const src = S.settings.refSource;
+  if (src === 'broker' && br) { ref = br; if (led && led > br.date) notes.push('Des opérations ont été saisies après cette valeur courtier.'); }
+  else if (src === 'auto' && br && br.date > appDate && (!led || br.date >= led)) ref = br;
+  if (src === 'broker' && !br) notes.push('Aucune valeur courtier saisie : calcul de l’application utilisé.');
+  if (ref.source === 'app' && acc.fallback.length) notes.push('Cours manquant pour ' + [...new Set(acc.fallback)].join(', ') + ' : valorisé au prix d’entrée.');
+  const age = Core.days(ref.date, today);
+  const stale = age > S.settings.staleDays;
+  return Object.assign({}, ref, { age, stale, notes, acc });
+}
+function hasDemo() { return S.lots.some(l => l.demo) || S.flows.some(f => f.demo) || S.snapshots.some(s => s.demo); }
+function perf() {
+  const today = todayISO();
+  const obs = Core.observations(S, today);
+  const t = Core.twr(obs, S.flows);
+  const pts = t.points;
+  const y = today.slice(0, 4), m = today.slice(0, 7);
+  return {
+    obs, pts, broken: t.broken, brokenAt: t.brokenAt,
+    month: Core.periodReturn(pts, m + '-01', today),
+    year: Core.periodReturn(pts, y + '-01-01', today),
+    itd: pts.length > 1 ? { r: (pts[pts.length - 1].index - 1) * 100, from: pts[0].date, to: pts[pts.length - 1].date, est: pts.some(p => p.est) } : null,
+    dd: Core.maxDrawdown(pts), freq: Core.frequency(pts), estCount: pts.filter(p => p.est).length
+  };
+}
+
+// ---------- Rendu ----------
+function render() {
+  document.querySelectorAll('nav.tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === tab ? 'true' : 'false'));
+  const v = $('#view');
+  if (tab === 'dash') v.innerHTML = viewDash();
+  else if (tab === 'calc') { v.innerHTML = viewCalc(); updateCalc(); }
+  else if (tab === 'pos') { v.innerHTML = viewPos(); loadThumbs(); }
+  else v.innerHTML = viewSettings();
+}
+const kv = (label, value, extra, c) => `<div><dt>${label}</dt><dd class="${c || ''}">${value}${extra ? `<small>${extra}</small>` : ''}</dd></div>`;
+function demoBanner() {
+  const lastExp = readJSON(EXPORT_KEY, null);
+  const remind = !Store.cfg && hasRealData(S) && (!lastExp || Date.now() - lastExp > 7 * 864e5)
+    ? `<div class="banner warn"><span>Vos données ne sont que sur cet appareil et n’ont pas été exportées depuis ${lastExp ? 'plus de 7 jours' : 'le début'}.</span><button class="btn sm" data-act="go-set">Sauvegarder</button></div>` : '';
+  return remind + (hasDemo() ? `<div class="banner warn"><span><strong>Données de démonstration affichées.</strong> Elles se mélangent aux calculs : effacez-les avant de saisir vos vraies positions.</span><button class="btn sm" data-act="clear-demo">Effacer la démo</button></div>` : '');
+}
+
+// ----- Tableau de bord -----
+function viewDash() {
+  const ref = referenceCapital(), acc = ref.acc, lb = latestBroker(), P = perf(), T = Core.tradeStats(S);
+  const accNow = acc;
+  let gap = '';
+  if (lb) {
+    const atDate = Core.accountState(S, lb.date, 'exact');
+    const appV = atDate.missing.length ? null : atDate.equity;
+    gap = appV == null
+      ? `Écart non calculable : cours manquants au ${fmtDate(lb.date)}.`
+      : `Écart avec le calcul à cette date : <span class="${cls(lb.netValue - appV)}">${usd(lb.netValue - appV, true)}</span> (courtier − application).`;
+  }
+  const lev = accNow.equity > 0 ? accNow.exposure / accNow.equity : null;
+  const perfCell = (label, p) => kv(label, p ? `<span class="${cls(p.r)}">${pct(p.r, true)}</span>` : 'Non calculable',
+    p ? `${fmtDate(p.from)} → ${fmtDate(p.to)}${p.est ? ' · estimation Modified Dietz' : ''}` : 'Pas assez d’observations');
+  const method = P.estCount ? `Rendement pondéré dans le temps, ${P.estCount} sous-période(s) estimée(s) par Modified Dietz faute de valorisation à la date d’un flux.` : 'Rendement pondéré dans le temps (valorisations disponibles autour de chaque flux).';
+  return `${demoBanner()}
+  <section class="card">
+    <div class="sec-head"><h2>Valeur nette du compte</h2><small>${ref.label}</small></div>
+    <div class="hero"><div class="big num">${usd(accNow.equity)}</div>
+      <small>Capital initial ${usd(S.settings.initialCapital)} + flux externes + résultat réalisé net + latent. Cours valorisés au ${fmtDate(accNow.openCount ? accNow.minPriceDate : todayISO())}.</small></div>
+    ${ref.stale ? `<div class="banner warn">Valorisation datée de ${ref.age} jours (${fmtDate(ref.date)}). Mettez à jour les cours ou saisissez la valeur du courtier.</div>` : ''}
+    ${lb ? `<div class="banner info"><span>Courtier au ${fmtDate(lb.date)} : <strong class="num">${usd(lb.netValue)}</strong>${isNum(lb.marginAvail) ? `, marge disponible <span class="num">${usd(lb.marginAvail)}</span>` : ''}. ${gap}</span></div>` : ''}
+    <dl class="kv">
+      ${kv('Versements cumulés', usd(accNow.deposits))}
+      ${kv('Retraits cumulés', usd(accNow.withdrawals))}
+      ${kv('Résultat réalisé net', usd(accNow.realized, true), 'après tous les frais payés', cls(accNow.realized))}
+      ${kv('Résultat latent', usd(accNow.unreal, true), 'avant frais de sortie', cls(accNow.unreal))}
+      ${kv('Frais de transaction', usd(accNow.txFees))}
+      ${kv('Frais de financement', usd(accNow.funding))}
+      ${kv('Dividendes et ajustements', usd(accNow.divs, true))}
+      ${kv('Exposition totale', usd(accNow.exposure))}
+      ${kv('Levier effectif', lev == null ? 'Non calculable' : '×' + fmtNum(lev, 2), 'exposition ÷ valeur nette')}
+      ${kv('Marge estimée utilisée', usd(accNow.margin), 'exposition ÷ levier, indicatif')}
+      ${kv('Marge disponible saisie', lb && isNum(lb.marginAvail) ? usd(lb.marginAvail) : 'Non saisie', lb && isNum(lb.marginAvail) ? fmtDate(lb.date) : 'Réglages › Valeurs courtier')}
+    </dl>
+  </section>
+  <section class="card">
+    <div class="sec-head"><h2>Performance</h2></div>
+    <p class="lead">${method} Un dépôt n’est jamais compté comme un gain, un retrait jamais comme une perte.</p>
+    <dl class="kv">
+      ${perfCell('Mois en cours', P.month)}
+      ${perfCell('Année en cours', P.year)}
+      ${perfCell('Depuis le début', P.itd)}
+      ${kv('Drawdown maximal observé', P.dd ? `<span class="${cls(P.dd.dd)}">${pct(P.dd.dd)}</span>` : 'Non calculable', P.dd && P.dd.dd < 0 ? `${fmtDate(P.dd.peak)} → ${fmtDate(P.dd.trough)}` : 'courbe corrigée des apports')}
+    </dl>
+    ${P.broken ? `<div class="banner err">Courbe interrompue au ${fmtDate(P.brokenAt)} : valeur de départ nulle ou négative.</div>` : ''}
+    ${chartSVG(P.pts)}
+    <p class="hint">${P.freq ? `${P.freq.count} observations, écart médian ${fmtNum(P.freq.medianGap, 1)} jour(s), écart maximal ${P.freq.maxGap} jours. Les baisses survenues entre deux observations (intrajournalières notamment) ne sont pas mesurées.` : 'Pas encore assez d’observations.'}
+    Une observation existe quand toutes les positions ouvertes ont un cours saisi le même jour, quand aucune position n’est ouverte, ou quand vous saisissez la valeur du courtier. ● calcul exact, ○ sous-période estimée, ● orange : valeur courtier.</p>
+  </section>
+  <section class="card">
+    <div class="sec-head"><h2>Positions clôturées</h2><small>sorties partielles regroupées avec leur achat</small></div>
+    <dl class="kv">
+      ${kv('Positions clôturées', String(T.count))}
+      ${kv('Taux de réussite', T.winRate == null ? 'Non calculable' : pct(T.winRate), T.count ? `${T.wins} gagnante(s), ${T.losses} perdante(s)` : '')}
+      ${kv('Gain moyen', T.avgWin == null ? 'Non calculable' : usd(T.avgWin, true), '', 'pos')}
+      ${kv('Perte moyenne', T.avgLoss == null ? 'Non calculable' : usd(T.avgLoss, true), '', 'neg')}
+      ${kv('Profit factor', T.profitFactor == null ? 'Non calculable' : fmtNum(T.profitFactor, 2), 'gains bruts ÷ pertes brutes')}
+      ${kv('Résultat moyen en R', T.avgR == null ? 'Non calculable' : (T.avgR > 0 ? '+' : '') + fmtNum(T.avgR, 2) + ' R', T.rCount < T.count ? `${T.rCount} sur ${T.count} ont un risque initial` : 'R = résultat net ÷ risque initial')}
+      ${kv('Respect du plan', T.planRate == null ? 'Non calculable' : pct(T.planRate), T.planCount ? `${T.planCount} position(s) évaluée(s)` : 'aucune évaluation')}
+    </dl>
+  </section>`;
+}
+function chartSVG(pts) {
+  if (pts.length < 2) return '<p class="hint">La courbe apparaîtra après deux observations.</p>';
+  const W = 660, H = 220, L = 52, R = 12, Tp = 12, B = 28;
+  const t0 = Date.parse(pts[0].date), t1 = Date.parse(pts[pts.length - 1].date);
+  const vals = pts.map(p => (p.index - 1) * 100);
+  let lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
+  if (hi - lo < 1) { hi += 0.5; lo -= 0.5; }
+  const span = hi - lo, stepRaw = span / 4, mag = Math.pow(10, Math.floor(Math.log10(stepRaw)));
+  const step = [1, 2, 2.5, 5, 10].map(k => k * mag).find(s => s >= stepRaw);
+  lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
+  const x = d => L + (t1 === t0 ? 0 : (Date.parse(d) - t0) / (t1 - t0)) * (W - L - R);
+  const y = v => Tp + (hi - v) / (hi - lo) * (H - Tp - B);
+  let g = '';
+  for (let v = lo; v <= hi + 1e-9; v += step) g += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${fmtNum(v, 1)} %</text>`;
+  const path = pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.date).toFixed(1)},${y((p.index - 1) * 100).toFixed(1)}`).join('');
+  const area = path + `L${x(pts[pts.length - 1].date).toFixed(1)},${y(lo)}L${x(pts[0].date).toFixed(1)},${y(lo)}Z`;
+  const dots = pts.map(p => `<circle class="dot ${p.source === 'courtier' ? 'br' : (p.est ? 'est' : '')}" cx="${x(p.date).toFixed(1)}" cy="${y((p.index - 1) * 100).toFixed(1)}" r="3"><title>${fmtDate(p.date)} : ${pct((p.index - 1) * 100, true)} · ${usd(p.value)}</title></circle>`).join('');
+  const lab = `<text x="${L}" y="${H - 8}">${fmtDate(pts[0].date)}</text><text x="${W - R}" y="${H - 8}" text-anchor="end">${fmtDate(pts[pts.length - 1].date)}</text>`;
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Courbe de performance cumulée corrigée des apports">${g}<line class="zero" x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}"/><path class="area" d="${area}"/><path class="line" d="${path}"/>${dots}${lab}</svg>`;
+}
+
+// ----- Calculateur -----
+function freshDraft() {
+  const s = S.settings, lb = latestBroker();
+  return { ticker: '', entry: '100', stop: '90', leverage: String(s.leverage), cap: String(s.cap),
+    inFixed: String(s.fees.inFixed), inPct: String(s.fees.inPct), outFixed: String(s.fees.outFixed), outPct: String(s.fees.outPct),
+    fractional: s.fractional, decimals: String(s.decimals), marginAvail: lb && isNum(lb.marginAvail) ? String(lb.marginAvail) : '', example: true };
+}
+function viewCalc() {
+  if (!calcDraft) calcDraft = freshDraft();
+  const d = calcDraft, ref = referenceCapital();
+  const f = (id, label, val, extra = '') => `<div class="fld"><label for="c-${id}">${label}</label><input id="c-${id}" name="${id}" value="${esc(val)}" inputmode="decimal" autocomplete="off" ${extra}></div>`;
+  return `${demoBanner()}
+  <div class="grid2">
+  <section class="card">
+    <div class="sec-head"><h2>Calculateur avant achat</h2><button class="btn sm" data-act="reset-calc">Réinitialiser</button></div>
+    <div class="banner ${ref.stale ? 'warn' : 'info'}"><span>Capital de référence : <strong class="num">${usd(ref.value)}</strong> · ${ref.label.toLowerCase()} au ${fmtDate(ref.date)}${ref.stale ? ` · <strong>données de ${ref.age} jours</strong>` : ''}. Budget de risque : <strong class="num">${usd(ref.value * S.settings.riskPct / 100)}</strong> (${fmtNum(S.settings.riskPct)} %).${ref.notes.length ? '<br>' + ref.notes.join(' ') : ''}</span></div>
+    <form id="calcForm" class="fields" autocomplete="off">
+      <div class="fld"><label for="c-ticker">Ticker</label><input id="c-ticker" name="ticker" value="${esc(d.ticker)}" autocapitalize="characters" placeholder="ex. MSFT"></div>
+      ${f('entry', 'Prix d’entrée prévu ($)', d.entry)}
+      ${f('stop', 'Stop initial ($)', d.stop)}
+      ${f('leverage', 'Levier applicable (×)', d.leverage)}
+      ${f('cap', 'Plafond d’exposition ($)', d.cap)}
+      ${f('marginAvail', 'Marge disponible courtier ($)', d.marginAvail, 'placeholder="facultatif"')}
+      ${f('inFixed', 'Frais entrée fixes ($)', d.inFixed)}
+      ${f('inPct', 'Frais entrée (% montant)', d.inPct)}
+      ${f('outFixed', 'Frais sortie fixes ($)', d.outFixed)}
+      ${f('outPct', 'Frais sortie (% montant)', d.outPct)}
+      <div class="fld"><span class="lbl">Fractions d’action</span><label class="check"><input type="checkbox" id="c-fractional" name="fractional" ${d.fractional ? 'checked' : ''}> autorisées</label></div>
+      ${f('decimals', 'Précision (décimales)', d.decimals, d.fractional ? '' : 'disabled')}
+    </form>
+    ${d.example ? '<p class="hint">Entrée 100 $ et stop 90 $ sont des valeurs d’exemple : remplacez-les.</p>' : ''}
+  </section>
+  <section class="card" aria-live="polite"><div id="calcResult"></div></section>
+  </div>`;
+}
+function calcInput() {
+  const d = calcDraft, ref = referenceCapital();
+  return { equity: ref.value, riskPct: S.settings.riskPct, entry: d.entry, stop: d.stop, leverage: d.leverage, cap: d.cap,
+    fractional: d.fractional, decimals: d.decimals, marginAvail: d.marginAvail,
+    fees: { inFixed: d.inFixed, inPct: d.inPct, outFixed: d.outFixed, outPct: d.outPct } };
+}
+function updateCalc() {
+  const box = $('#calcResult'); if (!box) return;
+  const r = Core.sizePosition(calcInput());
+  if (!r.ok) {
+    box.innerHTML = `<h2>Résultat</h2><ul class="errs">${r.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul>${fine()}`;
+    return;
+  }
+  const lev = r.params.leverage;
+  box.innerHTML = `<div class="result">
+    <div class="sec-head"><h2>Quantité proposée</h2><small>${calcDraft.ticker ? esc(calcDraft.ticker.toUpperCase()) : 'Ticker non saisi'}</small></div>
+    <div class="qty-big">${qty(r.q)} <small>action${r.q >= 2 ? 's' : ''}</small></div>
+    ${r.reason ? `<p class="reason">${esc(r.reason)}</p>` : ''}
+    <dl class="kv">
+      ${kv('Exposition totale', usd(r.exposure), `plafond ${usd(r.params.cap)}`)}
+      ${kv('Marge initiale estimée', usd(r.margin), `exposition ÷ ${fmtNum(lev)}`)}
+      ${kv('Distance du stop', pct(r.stopDistPct))}
+      ${kv('Perte prévue au stop', usd(-r.totalRisk), `prix ${usd(r.priceRisk)} + frais ${usd(r.feesRT)}`, 'neg')}
+      ${kv('Risque du compte', pct(r.riskPctAccount), `budget ${usd(r.budget)}`)}
+      ${kv('Baisse de 10 % du cours', usd(-r.drop10), 'perte réelle, sans re-multiplier par le levier', 'neg')}
+    </dl>
+    ${r.marginChecked ? '' : '<p class="hint">Marge disponible non saisie : la contrainte de marge n’est pas vérifiée.</p>'}
+    <div class="row"><button class="btn primary" data-act="record-buy">Enregistrer l’achat</button></div>
+    ${fine()}</div>`;
+}
+const fine = () => '<p class="fine">Le risque au stop est estimé. Un gap, le glissement ou les frais de financement peuvent augmenter la perte réelle. La marge affichée est indicative : les règles du courtier prévalent. Aucun prix de liquidation n’est calculé.</p>';
+
+// ----- Positions et journal -----
+function lotView(lot) {
+  const ls = Core.lotState(lot), last = Core.lastPrice(S.prices, lot.ticker);
+  const sa = ls.closed ? null : Core.stopAnalysis(lot, ls, last, fees());
+  const unreal = ls.closed || !last ? 0 : ls.rem * (last.price - lot.price);
+  return { lot, ls, last, sa, unreal };
+}
+function viewPos() {
+  const today = todayISO();
+  const views = S.lots.map(lotView);
+  const open = views.filter(v => !v.ls.closed);
+  const byT = {};
+  for (const v of open) (byT[v.lot.ticker] = byT[v.lot.ticker] || []).push(v);
+  const totalExpo = open.reduce((a, v) => a + v.ls.rem * (v.last ? v.last.price : v.lot.price), 0);
+  const missing = open.filter(v => v.sa.missing);
+  const riskInit = open.reduce((a, v) => a + (v.lot.riskInitial || 0), 0);
+  const withStop = open.filter(v => !v.sa.missing);
+  const lossVsEntry = withStop.reduce((a, v) => a + Math.min(0, v.sa.vsEntry), 0);
+  const pullback = withStop.reduce((a, v) => a + (v.sa.pullback || 0), 0);
+  const equity = referenceCapital().acc.equity;
+  const tickers = Object.keys(byT).sort();
+  const tCards = tickers.map(t => {
+    const vs = byT[t];
+    const q = vs.reduce((a, v) => a + v.ls.rem, 0);
+    const avg = vs.reduce((a, v) => a + v.ls.rem * v.lot.price, 0) / q;
+    const last = vs[0].last;
+    const expo = q * (last ? last.price : avg);
+    const margin = vs.reduce((a, v) => a + v.ls.rem * (last ? last.price : v.lot.price) / (v.lot.leverage || 1), 0);
+    const un = vs.reduce((a, v) => a + v.unreal, 0);
+    const feesT = vs.reduce((a, v) => a + v.ls.txFees + v.ls.funding, 0);
+    const first = vs.map(v => v.lot.date).sort()[0];
+    return `<article class="ticker-card">
+      <header><span class="tk">${esc(t)}</span><span class="muted">${vs.length > 1 ? vs.length + ' achats agrégés · ' : ''}détenu depuis ${Core.days(first, today)} j</span></header>
+      <dl class="kv">
+        ${kv('Quantité restante', qty(q))}
+        ${kv('Prix moyen d’entrée', usd(avg))}
+        ${kv('Dernier cours', last ? usd(last.price) : 'Non saisi', last ? fmtDate(last.date) + (Core.days(last.date, today) > S.settings.staleDays ? ' · ancien' : '') : '', last && Core.days(last.date, today) > S.settings.staleDays ? 'wrn' : '')}
+        ${kv('Exposition actuelle', usd(expo))}
+        ${kv('Marge estimée', usd(margin))}
+        ${kv('Latent', usd(un, true), 'avant frais de sortie', cls(un))}
+        ${kv('Frais cumulés', usd(feesT), 'transaction + financement')}
+      </dl>
+      ${vs.map(v => lotDetails(v)).join('')}
+    </article>`;
+  }).join('');
+  const jl = views.filter(v => journalFilter === 'all' || (journalFilter === 'closed' ? v.ls.closed : !v.ls.closed))
+    .sort((a, b) => (a.lot.date < b.lot.date ? 1 : -1));
+  return `${demoBanner()}
+  <section class="card">
+    <div class="sec-head"><h2>Risque des positions ouvertes</h2><button class="btn primary sm" data-act="prices" ${open.length ? '' : 'disabled'}>Mettre à jour les cours</button></div>
+    <dl class="kv">
+      ${kv('Positions ouvertes', String(open.length), tickers.length ? tickers.length + ' ticker(s)' : '')}
+      ${kv('Risque initial historique', usd(riskInit), equity > 0 ? pct(riskInit / equity * 100) + ' de la valeur nette' : '')}
+      ${kv('Perte possible vs entrée', usd(lossVsEntry, true), 'si les stops actuels sont exécutés', cls(lossVsEntry))}
+      ${kv('Recul possible depuis le cours', usd(-pullback), 'gain latent pouvant être reperdu inclus', pullback > 0 ? 'neg' : '')}
+    </dl>
+    ${missing.length ? `<div class="banner err">Stop manquant : ${[...new Set(missing.map(v => esc(v.lot.ticker)))].join(', ')}. Le risque de ces lignes n’est pas borné et n’est pas compté dans les totaux ci-dessus.</div>` : ''}
+    <p class="hint">Un stop au-dessus de l’entrée protège un bénéfice, mais la partie du gain latent située au-dessus du stop peut encore être reperdue.</p>
+    ${open.length ? `<div><h3 style="margin-bottom:8px">Exposition par ticker</h3>${tickers.map(t => {
+      const e = byT[t].reduce((a, v) => a + v.ls.rem * (v.last ? v.last.price : v.lot.price), 0);
+      return `<div class="expo"><span class="tk">${esc(t)}</span><span class="bar"><i style="width:${(e / totalExpo * 100).toFixed(1)}%"></i></span><span class="num">${usd(e)}</span></div>`;
+    }).join('')}</div>` : ''}
+  </section>
+  <section class="card">
+    <div class="sec-head"><h2>Positions ouvertes</h2><button class="btn sm" data-act="go-calc">Nouvelle position</button></div>
+    ${open.length ? tCards : '<p class="lead">Aucune position ouverte. Calculez une taille dans « Nouvelle position », puis enregistrez l’achat.</p>'}
+  </section>
+  <section class="card">
+    <div class="sec-head"><h2>Journal</h2>
+      <div class="filters">${[['closed', 'Clôturées'], ['open', 'Ouvertes'], ['all', 'Toutes']].map(([k, l]) => `<button class="btn sm" data-act="jfilter" data-f="${k}" aria-pressed="${journalFilter === k}">${l}</button>`).join('')}</div></div>
+    ${jl.length ? jl.map(v => lotDetails(v, true)).join('') : '<p class="lead">Rien à afficher pour ce filtre.</p>'}
+  </section>`;
+}
+function lotDetails(v, inJournal) {
+  const { lot, ls, last, sa, unreal } = v;
+  const R = ls.closed && lot.riskInitial > 0 ? ls.netRealized / lot.riskInitial : null;
+  const status = ls.closed ? (ls.netRealized > 0.0049 ? '<span class="pill win">Gagnante</span>' : ls.netRealized < -0.0049 ? '<span class="pill loss">Perdante</span>' : '<span class="pill">Neutre</span>') : '<span class="pill open">Ouverte</span>';
+  const key = (inJournal ? 'j-' : 'p-') + lot.id;
+  const evRows = lot.events.slice().sort((a, b) => a.date < b.date ? -1 : 1).map(e => {
+    const lab = { sell: 'Vente', funding: 'Financement', dividend: 'Dividende', adjust: 'Ajustement', stop: 'Stop' }[e.type] || e.type;
+    let detail = '', amt = '';
+    if (e.type === 'sell') { detail = `${qty(e.qty)} × ${usd(e.price)} · frais ${usd(e.fee || 0)}`; amt = usd(e.qty * (e.price - lot.price) - (e.fee || 0), true); }
+    else if (e.type === 'funding') { detail = esc(e.note || ''); amt = usd(-e.amount, true); }
+    else if (e.type === 'stop') { detail = `${e.from == null ? 'aucun' : usd(e.from)} → ${e.to == null ? 'aucun' : usd(e.to)}`; }
+    else { detail = esc(e.note || ''); amt = usd(e.amount, true); }
+    return `<tr><td>${fmtDate(e.date)}</td><td>${lab}</td><td>${detail}</td><td class="n">${amt}</td><td><button class="btn sm" data-act="del-event" data-lot="${lot.id}" data-ev="${e.id}" aria-label="Supprimer ce mouvement">Suppr.</button></td></tr>`;
+  }).join('');
+  const sumRight = ls.closed
+    ? `<span class="num ${cls(ls.netRealized)}">${usd(ls.netRealized, true)}${R != null ? ' · ' + (R > 0 ? '+' : '') + fmtNum(R, 2) + ' R' : ''}</span>`
+    : `<span class="num ${cls(unreal)}">${usd(unreal, true)}</span>`;
+  return `<details class="lot" data-key="${key}" ${openLots.has(key) ? 'open' : ''}>
+    <summary><span><span class="tk">${esc(lot.ticker)}</span> ${status} ${lot.demo ? '<span class="pill demo">Démo</span>' : ''}<br><small>${fmtDate(lot.date)} · ${qty(lot.qty)} à ${usd(lot.price)} · ${MOTIFS[lot.motif] || 'Autre'}</small></span>${sumRight}</summary>
+    <div class="body">
+      <dl class="kv">
+        ${kv('Quantité restante', qty(ls.rem), ls.sold ? `vendu ${qty(ls.sold)}` : '')}
+        ${kv('Exposition à l’entrée', usd(lot.qty * lot.price), `levier ×${fmtNum(lot.leverage)}`)}
+        ${kv('Stop initial', isNum(lot.stopInitial) ? usd(lot.stopInitial) : 'Non saisi')}
+        ${kv('Stop actuel', isNum(lot.stopCurrent) && lot.stopCurrent > 0 ? usd(lot.stopCurrent) : 'Manquant', '', isNum(lot.stopCurrent) && lot.stopCurrent > 0 ? '' : 'neg')}
+        ${kv('Risque initial', isNum(lot.riskInitial) ? usd(lot.riskInitial) : 'Non calculable', isNum(lot.riskInitialPct) ? pct(lot.riskInitialPct) + ' de ' + usd(lot.refCapital) : '')}
+        ${kv('Frais payés', usd(ls.txFees), `entrée ${usd(ls.entryFee)} · sortie ${usd(ls.exitFees)}`)}
+        ${kv('Financement', usd(ls.funding))}
+        ${ls.divs ? kv('Dividendes / ajust.', usd(ls.divs, true)) : ''}
+        ${kv('Réalisé net', usd(ls.netRealized, true), 'frais déduits', cls(ls.netRealized))}
+        ${ls.closed ? kv('Durée', Core.days(lot.date, ls.closeDate) + ' jours', 'clôturée le ' + fmtDate(ls.closeDate)) : kv('Durée de détention', Core.days(lot.date, todayISO()) + ' jours')}
+        ${!ls.closed && sa && !sa.missing ? kv('Si stop actuel exécuté', usd(sa.vsEntry, true), 'partie restante vs entrée, frais de sortie estimés', cls(sa.vsEntry)) : ''}
+        ${!ls.closed && sa && !sa.missing ? kv('Résultat total si stop', usd(sa.totalIfStop, true), 'y compris réalisé et frais payés', cls(sa.totalIfStop)) : ''}
+        ${!ls.closed && sa && !sa.missing ? kv('Recul cours → stop', sa.pullback == null ? 'Non calculable' : usd(-sa.pullback), sa.belowStop ? 'cours sous le stop !' : (last ? 'depuis ' + usd(last.price) : ''), sa.belowStop ? 'neg' : '') : ''}
+        ${ls.closed && R != null ? kv('Résultat en R', (R > 0 ? '+' : '') + fmtNum(R, 2) + ' R', '', cls(R)) : ''}
+        ${kv('Plan respecté', lot.planOk === true ? 'Oui' : lot.planOk === false ? 'Non' : 'Non renseigné', esc(lot.planComment || ''))}
+      </dl>
+      ${!ls.closed && sa && sa.missing ? '<div class="banner err">Stop manquant : risque non borné.</div>' : ''}
+      ${lot.note ? `<p class="lead">${esc(lot.note)}</p>` : ''}
+      ${lot.imgId ? `<img class="thumb" data-img="${lot.imgId}" alt="Capture du graphique ${esc(lot.ticker)}">` : ''}
+      ${evRows ? `<div class="tbl"><table><thead><tr><th>Date</th><th>Mouvement</th><th>Détail</th><th class="n">Montant</th><th></th></tr></thead><tbody>${evRows}</tbody></table></div>` : ''}
+      <div class="row">
+        ${ls.closed ? '' : `<button class="btn sm primary" data-act="sell" data-lot="${lot.id}">Vendre</button><button class="btn sm" data-act="stop" data-lot="${lot.id}">Modifier le stop</button><button class="btn sm" data-act="funding" data-lot="${lot.id}">Financement</button>`}
+        <button class="btn sm" data-act="dividend" data-lot="${lot.id}">Dividende / ajustement</button>
+        <button class="btn sm" data-act="plan" data-lot="${lot.id}">Plan respecté ?</button>
+        <button class="btn sm" data-act="edit-lot" data-lot="${lot.id}">Corriger</button>
+        <button class="btn sm danger" data-act="del-lot" data-lot="${lot.id}">Supprimer</button>
+      </div>
+    </div></details>`;
+}
+async function loadThumbs() {
+  for (const img of document.querySelectorAll('img[data-img]')) {
+    const src = await getImage(img.dataset.img);
+    if (src) img.src = src; else img.replaceWith(Object.assign(document.createElement('p'), { className: 'hint', textContent: 'Capture introuvable sur cet appareil.' }));
+  }
+}
+
+// ----- Réglages -----
+function viewSettings() {
+  const s = S.settings, f = s.fees;
+  const fld = (id, label, val, hint) => `<div class="fld"><label for="s-${id}">${label}</label><input id="s-${id}" name="${id}" value="${esc(val)}" inputmode="decimal">${hint ? `<p class="hint">${hint}</p>` : ''}</div>`;
+  const flows = S.flows.slice().sort((a, b) => a.date < b.date ? 1 : -1);
+  const snaps = S.snapshots.slice().sort((a, b) => a.date < b.date ? 1 : -1);
+  const snapRows = snaps.map(b => {
+    const a = Core.accountState(S, b.date, 'exact');
+    const gap = a.missing.length ? 'Non calculable' : usd(b.netValue - a.equity, true);
+    return `<tr><td>${fmtDate(b.date)}</td><td class="n">${usd(b.netValue)}</td><td class="n">${isNum(b.marginAvail) ? usd(b.marginAvail) : '—'}</td><td class="n">${gap}</td><td>${b.demo ? '<span class="pill demo">Démo</span>' : ''}</td><td><button class="btn sm" data-act="del-snap" data-id="${b.id}">Suppr.</button></td></tr>`;
+  }).join('');
+  return `${demoBanner()}
+  <section class="card">
+    <div class="sec-head"><h2>Compte et règles de risque</h2></div>
+    <form id="setForm" class="fields">
+      ${fld('initialCapital', 'Capital initial ($)', s.initialCapital)}
+      <div class="fld"><label for="s-startDate">Date de départ</label><input type="date" id="s-startDate" name="startDate" value="${esc(s.startDate)}"></div>
+      ${fld('riskPct', 'Risque par position (%)', s.riskPct)}
+      ${fld('cap', 'Plafond d’exposition ($)', s.cap, 'Exposition réelle, pas la marge.')}
+      ${fld('leverage', 'Levier par défaut (×)', s.leverage)}
+      ${fld('staleDays', 'Alerte données anciennes (jours)', s.staleDays)}
+      ${fld('inFixed', 'Frais entrée fixes ($)', f.inFixed)}
+      ${fld('inPct', 'Frais entrée (%)', f.inPct)}
+      ${fld('outFixed', 'Frais sortie fixes ($)', f.outFixed)}
+      ${fld('outPct', 'Frais sortie (%)', f.outPct)}
+      <div class="fld"><span class="lbl">Fractions d’action</span><label class="check"><input type="checkbox" name="fractional" ${s.fractional ? 'checked' : ''}> autorisées</label></div>
+      ${fld('decimals', 'Précision (décimales)', s.decimals)}
+      <div class="fld wide"><label for="s-refSource">Capital de référence du calculateur</label>
+        <select id="s-refSource" name="refSource">
+          <option value="auto" ${s.refSource === 'auto' ? 'selected' : ''}>Automatique : la valorisation la plus récente</option>
+          <option value="app" ${s.refSource === 'app' ? 'selected' : ''}>Toujours le calcul de l’application</option>
+          <option value="broker" ${s.refSource === 'broker' ? 'selected' : ''}>Toujours la dernière valeur courtier</option>
+        </select></div>
+      <div class="row fld wide"><button type="submit" class="btn primary">Enregistrer les réglages</button></div>
+    </form>
+  </section>
+  <div class="grid2">
+  <section class="card">
+    <div class="sec-head"><h2>Versements et retraits</h2><button class="btn sm primary" data-act="add-flow">Ajouter</button></div>
+    <p class="lead">Flux externes uniquement. Ils changent la valeur nette, jamais la performance.</p>
+    ${flows.length ? `<div class="tbl"><table><thead><tr><th>Date</th><th>Type</th><th class="n">Montant</th><th></th><th></th></tr></thead><tbody>${flows.map(x => `<tr><td>${fmtDate(x.date)}</td><td>${x.amount >= 0 ? 'Versement' : 'Retrait'}${x.note ? ' · ' + esc(x.note) : ''}</td><td class="n">${usd(x.amount, true)}</td><td>${x.demo ? '<span class="pill demo">Démo</span>' : ''}</td><td><button class="btn sm" data-act="del-flow" data-id="${x.id}">Suppr.</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">Aucun flux saisi.</p>'}
+  </section>
+  <section class="card">
+    <div class="sec-head"><h2>Valeurs courtier</h2><button class="btn sm primary" data-act="add-snap">Ajouter</button></div>
+    <p class="lead">Valeur nette et marge disponible lues chez le courtier, en fin de journée. L’écart avec le calcul est affiché sans rien écraser.</p>
+    ${snaps.length ? `<div class="tbl"><table><thead><tr><th>Date</th><th class="n">Valeur nette</th><th class="n">Marge dispo</th><th class="n">Écart</th><th></th><th></th></tr></thead><tbody>${snapRows}</tbody></table></div>` : '<p class="hint">Aucune valeur saisie.</p>'}
+  </section>
+  </div>
+  <section class="card">
+    <div class="sec-head"><h2>Synchronisation et sauvegarde</h2></div>
+    ${syncPanel()}
+    <div class="row">
+      <button class="btn" data-act="export-csv">Exporter le journal (CSV)</button>
+      <button class="btn" data-act="export-json">Exporter tout (JSON)</button>
+      <button class="btn" data-act="import-json">Restaurer un JSON</button>
+    </div>
+    <div class="row">
+      ${hasDemo() ? '<button class="btn" data-act="clear-demo">Effacer les données de démonstration</button>' : '<button class="btn" data-act="load-demo">Charger des données de démonstration</button>'}
+      <button class="btn danger" data-act="wipe">Effacer toutes les données</button>
+    </div>
+    <p class="hint">L’application ne demande aucun identifiant de courtier, n’exécute aucun ordre et n’utilise aucune API de cotation : les cours se saisissent à la main. Code open source (licence MIT).</p>
+  </section>`;
+}
+
+
+function syncPanel() {
+  const conflict = readJSON(CONFLICT_KEY, null);
+  const lastExp = readJSON(EXPORT_KEY, null);
+  const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
+  const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>`;
+  if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
+      ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
+    <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
+      <a class="btn" href="https://gist.github.com/${esc(Store.cfg.gistId)}/revisions" target="_blank" rel="noopener">Historique des versions</a>
+      <button class="btn danger" data-act="sync-off">Déconnecter cet appareil</button></div>${conf}${exp}`;
+  return `<div class="banner warn"><span><strong>Données conservées uniquement sur cet appareil.</strong> Connectez GitHub pour synchroniser Mac et iPhone, ou exportez régulièrement en JSON.</span></div>
+    <details class="lot"><summary><span><span class="tk">Activer la synchronisation</span><br><small>Gratuit, avec votre compte GitHub. Environ 2 minutes, une fois par appareil.</small></span><span class="pill open">Guide</span></summary>
+    <div class="body">
+      <ol class="lead" style="padding-left:18px;margin:0;display:grid;gap:6px">
+        <li>Ouvrez <a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=Carnet%20de%20positions" target="_blank" rel="noopener">GitHub › nouveau jeton (classic)</a>, connecté à votre compte.</li>
+        <li>Laissez cochée uniquement la case <strong>gist</strong>, choisissez une expiration (par exemple « No expiration »), puis <strong>Generate token</strong>.</li>
+        <li>Copiez le jeton (il commence par <code>ghp_</code>) et collez-le ci-dessous. Gardez-le dans vos mots de passe pour l’autre appareil.</li>
+      </ol>
+      <div class="fields"><div class="fld wide"><label for="sync-token">Jeton GitHub (droit gist uniquement)</label><input id="sync-token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ghp_…"></div></div>
+      <div class="row"><button class="btn primary" data-act="sync-on">Connecter</button></div>
+      <p class="hint">Vos données vont dans un Gist <strong>secret</strong> de votre compte : invisible dans votre profil, mais lisible par quiconque obtiendrait son adresse. Le jeton reste sur cet appareil et ne permet que de lire et écrire vos gists.</p>
+    </div></details>${conf}${exp}`;
+}
+
+// ---------- Feuilles de saisie ----------
+let sheetCfg = null;
+function openSheet(cfg) {
+  sheetCfg = cfg;
+  $('#sheetTitle').textContent = cfg.title;
+  $('#sheetBody').innerHTML = cfg.body;
+  $('#sheetErr').textContent = '';
+  const ok = $('#sheetOk');
+  ok.hidden = !cfg.onSubmit; ok.textContent = cfg.ok || 'Valider';
+  ok.className = 'btn ' + (cfg.danger ? 'danger' : 'primary');
+  $('#sheet').hidden = false;
+  if (cfg.onInput) cfg.onInput($('#sheetForm'));
+  const first = $('#sheetBody input:not([type=hidden]):not([readonly]), #sheetBody select');
+  if (first && !cfg.noFocus) first.focus();
+}
+function closeSheet() { $('#sheet').hidden = true; sheetCfg = null; }
+function confirmSheet(title, message, okLabel, fn) {
+  openSheet({ title, body: `<p>${message}</p>`, ok: okLabel, danger: true, noFocus: true, onSubmit: () => { fn(); } });
+}
+const F = (form, n) => form.elements[n] ? form.elements[n].value : '';
+const inp = (id, label, val, attrs = '', hint = '') => `<div class="fld"><label for="f-${id}">${label}</label><input id="f-${id}" name="${id}" value="${esc(val == null ? '' : val)}" ${attrs}>${hint ? `<p class="hint">${hint}</p>` : ''}</div>`;
+const dec = (id, label, val, attrs = '', hint = '') => inp(id, label, val, 'inputmode="decimal" autocomplete="off" ' + attrs, hint);
+const dateInp = (id, label, val) => `<div class="fld"><label for="f-${id}">${label}</label><input type="date" id="f-${id}" name="${id}" value="${esc(val)}" required></div>`;
+const planSel = (val) => `<div class="fld"><label for="f-planOk">Plan respecté</label><select id="f-planOk" name="planOk"><option value="" ${val == null ? 'selected' : ''}>Non renseigné</option><option value="yes" ${val === true ? 'selected' : ''}>Oui</option><option value="no" ${val === false ? 'selected' : ''}>Non</option></select></div>`;
+const planVal = v => v === 'yes' ? true : v === 'no' ? false : null;
+function need(cond, msg) { if (!cond) throw new Error(msg); }
+function findLot(id) { return S.lots.find(l => l.id === id); }
+function addPrice(ticker, date, price, demo) {
+  const h = S.prices[ticker] = S.prices[ticker] || [];
+  const i = h.findIndex(x => x.date === date);
+  const rec = { date, price }; if (demo) rec.demo = true;
+  if (i >= 0) h[i] = rec; else h.push(rec);
+  h.sort((a, b) => a.date < b.date ? -1 : 1);
+}
+
+function riskOf(q, price, stop, entryFee, f) {
+  if (!(q > 0 && price > 0 && stop > 0)) return null;
+  return q * (price - stop) + entryFee + Core.feeOut(q, stop, f);
+}
+function sheetBuy() {
+  const r = Core.sizePosition(calcInput()); if (!r.ok) return;
+  const d = calcDraft, ref = referenceCapital();
+  const f = Core.normFees({ inFixed: d.inFixed, inPct: d.inPct, outFixed: d.outFixed, outPct: d.outPct });
+  openSheet({
+    title: 'Confirmer l’achat exécuté', ok: 'Enregistrer l’achat',
+    body: `<p class="lead">Corrigez avec les valeurs réellement exécutées chez le courtier.</p><div class="fields">
+      ${inp('ticker', 'Ticker', (d.ticker || '').toUpperCase(), 'autocapitalize="characters" required')}
+      ${dateInp('date', 'Date d’exécution', todayISO())}
+      ${dec('price', 'Prix exécuté ($)', d.entry)}
+      ${dec('qty', 'Quantité exécutée', r.q)}
+      ${dec('leverage', 'Levier (×)', d.leverage)}
+      ${dec('entryFee', 'Frais réels d’entrée ($)', Core.roundTo(r.feeIn, 4))}
+      ${dec('stop', 'Stop initial ($)', d.stop)}
+      <div class="fld"><label for="f-motif">Motif</label><select id="f-motif" name="motif">${Object.entries(MOTIFS).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></div>
+      <div class="fld wide"><label for="f-note">Note</label><textarea id="f-note" name="note" placeholder="facultatif"></textarea></div>
+      <div class="fld wide"><label for="f-img">Capture du graphique</label><input type="file" id="f-img" name="img" accept="image/*"><p class="hint">Facultatif. Compressée avant sauvegarde.</p></div>
+    </div><div id="buyCheck" class="banner info"></div>`,
+    onInput: form => {
+      const q = num(F(form, 'qty')), p = num(F(form, 'price')), st = num(F(form, 'stop')), fe = numOr(F(form, 'entryFee'), 0), lv = num(F(form, 'leverage'));
+      const risk = riskOf(q, p, st, fe, f), box = $('#buyCheck');
+      if (risk == null || !(st < p) || !(lv >= 1)) { box.className = 'banner err'; box.textContent = 'Vérifiez prix, quantité, stop (inférieur au prix) et levier.'; return; }
+      const rp = risk / ref.value * 100, over = risk > r.budget + 0.005, expo = q * p;
+      box.className = 'banner ' + (over || expo > r.params.cap + 0.005 ? 'warn' : 'info');
+      box.innerHTML = `Exposition <strong class="num">${usd(expo)}</strong> · marge ≈ <span class="num">${usd(expo / lv)}</span> · risque initial <strong class="num">${usd(risk)}</strong> (${pct(rp)} de ${usd(ref.value)})${over ? ' · <strong>dépasse le budget de ' + usd(r.budget) + '</strong>' : ''}${expo > r.params.cap + 0.005 ? ' · <strong>dépasse le plafond</strong>' : ''}`;
+    },
+    onSubmit: async form => {
+      const t = F(form, 'ticker').trim().toUpperCase(), date = F(form, 'date');
+      const q = num(F(form, 'qty')), p = num(F(form, 'price')), st = num(F(form, 'stop')), fe = numOr(F(form, 'entryFee'), NaN), lv = num(F(form, 'leverage'));
+      need(/^[A-Z0-9.\-]{1,12}$/.test(t), 'Ticker invalide (lettres, chiffres, point ou tiret).');
+      need(date, 'Date requise.');
+      need(p > 0 && q > 0, 'Prix et quantité doivent être positifs.');
+      need(st > 0 && st < p, 'Le stop initial doit être positif et inférieur au prix d’achat.');
+      need(lv >= 1, 'Levier invalide.');
+      need(isNum(fe) && fe >= 0, 'Frais d’entrée invalides.');
+      const id = uid(); let imgId = null;
+      const file = form.elements.img.files[0];
+      if (file) { imgId = 'i' + id; await putImage(imgId, await readImageFile(file)); }
+      const estExitFee = Core.feeOut(q, st, f);
+      const risk = q * (p - st) + fe + estExitFee;
+      S.lots.push({ id, ticker: t, date, price: p, qty: q, leverage: lv, entryFee: fe, estExitFee, stopInitial: st, stopCurrent: st,
+        refCapital: ref.value, refDate: ref.date, riskInitial: risk, riskInitialPct: risk / ref.value * 100,
+        motif: F(form, 'motif'), note: F(form, 'note').trim(), imgId, planOk: null, planComment: '', events: [] });
+      const lp = Core.lastPrice(S.prices, t);
+      if (!lp || lp.date <= date) addPrice(t, date, p);
+      calcDraft = null; tab = 'pos'; openLots.add('p-' + id);
+      save('Achat enregistré');
+    }
+  });
+}
+function sheetSell(lot) {
+  const ls = Core.lotState(lot), f = fees(), last = Core.lastPrice(S.prices, lot.ticker);
+  openSheet({
+    title: 'Vente ' + lot.ticker, ok: 'Enregistrer la vente',
+    body: `<p class="lead">Reste ${qty(ls.rem)} action(s) achetée(s) à ${usd(lot.price)}. Une vente totale clôture la position.</p><div class="fields">
+      ${dateInp('date', 'Date', todayISO())}
+      ${dec('qty', 'Quantité vendue', ls.rem)}
+      ${dec('price', 'Prix de vente ($)', last ? last.price : '')}
+      ${dec('fee', 'Frais réels de sortie ($)', '')}
+      ${planSel(lot.planOk)}
+      <div class="fld wide"><label for="f-planComment">Commentaire</label><input id="f-planComment" name="planComment" value="${esc(lot.planComment || '')}" placeholder="facultatif"></div>
+    </div><div id="sellCheck" class="banner info"></div>`,
+    onInput: form => {
+      const q = num(F(form, 'qty')), p = num(F(form, 'price'));
+      const feeEl = form.elements.fee;
+      if (!feeEl.dataset.touched && q > 0 && p > 0) feeEl.value = Core.roundTo(Core.feeOut(q, p, f), 4);
+      const fe = numOr(feeEl.value, 0), box = $('#sellCheck');
+      if (!(q > 0 && p > 0)) { box.textContent = 'Saisissez quantité et prix.'; return; }
+      box.innerHTML = `Résultat de cette vente : <strong class="num ${cls(q * (p - lot.price) - fe)}">${usd(q * (p - lot.price) - fe, true)}</strong> (frais de sortie déduits)${q >= ls.rem - 1e-9 ? ' · clôture la position' : ''}`;
+    },
+    onSubmit: form => {
+      const q = num(F(form, 'qty')), p = num(F(form, 'price')), fe = numOr(F(form, 'fee'), 0), date = F(form, 'date');
+      need(date, 'Date requise.'); need(date >= lot.date, 'La vente ne peut pas précéder l’achat.');
+      need(q > 0 && q <= ls.rem + 1e-9, `Quantité entre 0 et ${qty(ls.rem)}.`);
+      need(p > 0, 'Prix invalide.'); need(isNum(fe) && fe >= 0, 'Frais invalides.');
+      lot.events.push({ id: uid(), type: 'sell', date, qty: Math.min(q, ls.rem), price: p, fee: fe });
+      lot.planOk = planVal(F(form, 'planOk')); lot.planComment = F(form, 'planComment').trim();
+      const lp = Core.lastPrice(S.prices, lot.ticker);
+      if (!lp || lp.date <= date) addPrice(lot.ticker, date, p);
+      save(Core.lotState(lot).closed ? 'Position clôturée' : 'Vente partielle enregistrée');
+    }
+  });
+}
+function sheetStop(lot) {
+  openSheet({
+    title: 'Stop actuel ' + lot.ticker, ok: 'Enregistrer',
+    body: `<p class="lead">Le risque initial historique (${usd(lot.riskInitial)}) reste inchangé. Laissez vide pour signaler une position sans stop.</p><div class="fields">
+      ${dateInp('date', 'Date', todayISO())}${dec('stop', 'Nouveau stop ($)', lot.stopCurrent)}</div>`,
+    onSubmit: form => {
+      const v = F(form, 'stop').trim(), st = v === '' ? null : num(v);
+      need(st === null || st > 0, 'Stop invalide.');
+      lot.events.push({ id: uid(), type: 'stop', date: F(form, 'date') || todayISO(), from: isNum(lot.stopCurrent) ? lot.stopCurrent : null, to: st });
+      lot.stopCurrent = st;
+      save('Stop mis à jour');
+    }
+  });
+}
+function sheetAmount(lot, kind) {
+  const isF = kind === 'funding';
+  openSheet({
+    title: (isF ? 'Frais de financement ' : 'Dividende ou ajustement ') + lot.ticker, ok: 'Enregistrer',
+    body: `<p class="lead">${isF ? 'Montant réellement débité par le courtier (nombre positif).' : 'Montant réellement crédité (positif) ou débité (négatif).'}</p><div class="fields">
+      ${dateInp('date', 'Date', todayISO())}${dec('amount', 'Montant ($)', '')}
+      ${isF ? '' : `<div class="fld"><label for="f-kind">Type</label><select id="f-kind" name="kind"><option value="dividend">Dividende</option><option value="adjust">Ajustement</option></select></div>`}
+      <div class="fld wide"><label for="f-note">Note</label><input id="f-note" name="note" placeholder="facultatif"></div></div>`,
+    onSubmit: form => {
+      const a = num(F(form, 'amount'));
+      need(isNum(a) && a !== 0, 'Montant invalide.');
+      need(!isF || a > 0, 'Les frais de financement se saisissent en positif.');
+      lot.events.push({ id: uid(), type: isF ? 'funding' : F(form, 'kind'), date: F(form, 'date') || todayISO(), amount: a, note: F(form, 'note').trim() });
+      save('Mouvement enregistré');
+    }
+  });
+}
+function sheetPlan(lot) {
+  openSheet({
+    title: 'Plan respecté ? ' + lot.ticker, ok: 'Enregistrer',
+    body: `<div class="fields">${planSel(lot.planOk)}<div class="fld wide"><label for="f-planComment">Commentaire</label><textarea id="f-planComment" name="planComment">${esc(lot.planComment || '')}</textarea></div></div>`,
+    onSubmit: form => { lot.planOk = planVal(F(form, 'planOk')); lot.planComment = F(form, 'planComment').trim(); save('Évaluation enregistrée'); }
+  });
+}
+function sheetEdit(lot) {
+  openSheet({
+    title: 'Corriger ' + lot.ticker, ok: 'Enregistrer la correction',
+    body: `<p class="lead">Pour corriger une erreur de saisie. Le risque initial est recalculé à partir des valeurs d’entrée corrigées.</p><div class="fields">
+      ${inp('ticker', 'Ticker', lot.ticker, 'autocapitalize="characters"')}${dateInp('date', 'Date d’achat', lot.date)}
+      ${dec('price', 'Prix d’achat ($)', lot.price)}${dec('qty', 'Quantité achetée', lot.qty)}${dec('leverage', 'Levier (×)', lot.leverage)}
+      ${dec('entryFee', 'Frais d’entrée ($)', lot.entryFee)}${dec('estExitFee', 'Frais de sortie estimés ($)', Core.roundTo(lot.estExitFee || 0, 4), '', 'pour le risque initial')}
+      ${dec('stopInitial', 'Stop initial ($)', lot.stopInitial)}${dec('stopCurrent', 'Stop actuel ($)', lot.stopCurrent, 'placeholder="vide = aucun"')}
+      ${dec('refCapital', 'Capital de référence ($)', Core.roundTo(lot.refCapital, 2))}
+      <div class="fld"><label for="f-motif">Motif</label><select id="f-motif" name="motif">${Object.entries(MOTIFS).map(([k, l]) => `<option value="${k}" ${lot.motif === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="fld wide"><label for="f-note">Note</label><textarea id="f-note" name="note">${esc(lot.note || '')}</textarea></div>
+      <div class="fld wide"><label for="f-img">${lot.imgId ? 'Remplacer la capture' : 'Ajouter une capture'}</label><input type="file" id="f-img" name="img" accept="image/*">
+      ${lot.imgId ? '<label class="check"><input type="checkbox" name="rmImg"> supprimer la capture actuelle</label>' : ''}</div></div>`,
+    onSubmit: async form => {
+      const t = F(form, 'ticker').trim().toUpperCase(), p = num(F(form, 'price')), q = num(F(form, 'qty')), lv = num(F(form, 'leverage'));
+      const fe = numOr(F(form, 'entryFee'), 0), xf = numOr(F(form, 'estExitFee'), 0), si = num(F(form, 'stopInitial'));
+      const scv = F(form, 'stopCurrent').trim(), sc = scv === '' ? null : num(scv), rc = num(F(form, 'refCapital')), date = F(form, 'date');
+      const sold = Core.lotState(lot).sold;
+      need(/^[A-Z0-9.\-]{1,12}$/.test(t), 'Ticker invalide.'); need(date, 'Date requise.');
+      need(lot.events.every(e => e.date >= date), 'Des mouvements sont antérieurs à cette date d’achat.');
+      need(p > 0 && q > 0, 'Prix et quantité doivent être positifs.'); need(q >= sold - 1e-9, `Quantité inférieure aux ventes déjà saisies (${qty(sold)}).`);
+      need(lv >= 1, 'Levier invalide.'); need(fe >= 0 && xf >= 0, 'Frais invalides.');
+      need(si > 0 && si < p, 'Stop initial positif et inférieur au prix.'); need(sc === null || sc > 0, 'Stop actuel invalide.'); need(rc > 0, 'Capital de référence invalide.');
+      const file = form.elements.img.files[0];
+      if (file) { if (lot.imgId) await delImage(lot.imgId); lot.imgId = 'i' + uid(); await putImage(lot.imgId, await readImageFile(file)); }
+      else if (form.elements.rmImg && form.elements.rmImg.checked && lot.imgId) { await delImage(lot.imgId); lot.imgId = null; }
+      Object.assign(lot, { ticker: t, date, price: p, qty: q, leverage: lv, entryFee: fe, estExitFee: xf, stopInitial: si, stopCurrent: sc, refCapital: rc, motif: F(form, 'motif'), note: F(form, 'note').trim() });
+      lot.riskInitial = q * (p - si) + fe + xf; lot.riskInitialPct = lot.riskInitial / rc * 100;
+      save('Correction enregistrée');
+    }
+  });
+}
+function sheetPrices() {
+  const tickers = [...new Set(S.lots.filter(l => !Core.lotState(l).closed).map(l => l.ticker))].sort();
+  openSheet({
+    title: 'Mettre à jour les cours', ok: 'Enregistrer les cours',
+    body: `<p class="lead">Cours de clôture lus sur votre plateforme. Saisir tous les tickers à la même date crée une observation exacte pour la performance.</p><div class="fields">
+      ${dateInp('date', 'Date des cours', todayISO())}
+      ${tickers.map(t => { const lp = Core.lastPrice(S.prices, t); return dec('p_' + t, t + ' ($)', '', `placeholder="${lp ? fmtNum(lp.price, 4) : ''}"`, lp ? 'dernier : ' + usd(lp.price) + ' le ' + fmtDate(lp.date) : ''); }).join('')}</div>`,
+    onSubmit: form => {
+      const date = F(form, 'date'); need(date, 'Date requise.'); need(date <= todayISO(), 'Date dans le futur.');
+      let n = 0;
+      for (const t of tickers) {
+        const v = F(form, 'p_' + t).trim(); if (v === '') continue;
+        const p = num(v); need(p > 0, 'Cours invalide pour ' + t + '.');
+        addPrice(t, date, p); n++;
+      }
+      need(n > 0, 'Saisissez au moins un cours.');
+      save(n === tickers.length ? 'Cours enregistrés · observation de performance créée' : `${n} cours enregistré(s) · pas d’observation complète`);
+    }
+  });
+}
+function sheetFlow() {
+  openSheet({
+    title: 'Versement ou retrait', ok: 'Enregistrer',
+    body: `<div class="fields">${dateInp('date', 'Date', todayISO())}
+      <div class="fld"><label for="f-kind">Type</label><select id="f-kind" name="kind"><option value="dep">Versement</option><option value="wd">Retrait</option></select></div>
+      ${dec('amount', 'Montant ($)', '')}<div class="fld wide"><label for="f-note">Note</label><input id="f-note" name="note" placeholder="facultatif"></div></div>`,
+    onSubmit: form => {
+      const a = num(F(form, 'amount')); need(a > 0, 'Montant positif requis.');
+      S.flows.push({ id: uid(), date: F(form, 'date') || todayISO(), amount: F(form, 'kind') === 'wd' ? -a : a, note: F(form, 'note').trim() });
+      save('Flux enregistré');
+    }
+  });
+}
+function sheetSnap() {
+  openSheet({
+    title: 'Valeur courtier', ok: 'Enregistrer',
+    body: `<p class="lead">Recopiez la valeur nette (equity) et la marge disponible affichées par le courtier.</p><div class="fields">${dateInp('date', 'Date', todayISO())}
+      ${dec('netValue', 'Valeur nette ($)', '')}${dec('marginAvail', 'Marge disponible ($)', '', 'placeholder="facultatif"')}</div>`,
+    onSubmit: form => {
+      const v = num(F(form, 'netValue')), m = numOr(F(form, 'marginAvail'), null), date = F(form, 'date');
+      need(v > 0, 'Valeur nette positive requise.'); need(m === null || m >= 0, 'Marge invalide.'); need(date, 'Date requise.');
+      S.snapshots = S.snapshots.filter(s => s.date !== date);
+      S.snapshots.push({ id: uid(), date, netValue: v, marginAvail: m });
+      if (calcDraft && m !== null) calcDraft.marginAvail = String(m);
+      save('Valeur courtier enregistrée');
+    }
+  });
+}
+
+// ---------- Exports et restauration ----------
+const csvCell = v => { const s = typeof v === 'number' ? String(Core.roundTo(v, 6)).replace('.', ',') : String(v == null ? '' : v); return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+function buildCSV() {
+  const head = ['id_position', 'ticker', 'mouvement', 'date', 'quantite', 'prix', 'frais', 'montant', 'levier', 'stop_initial', 'stop_actuel', 'capital_reference', 'risque_initial', 'risque_initial_pct', 'motif', 'plan_respecte', 'commentaire_plan', 'note', 'resultat_net_position', 'R', 'statut'];
+  const rows = [head];
+  for (const lot of S.lots.slice().sort((a, b) => a.date < b.date ? -1 : 1)) {
+    const ls = Core.lotState(lot), R = ls.closed && lot.riskInitial > 0 ? ls.netRealized / lot.riskInitial : '';
+    const plan = lot.planOk === true ? 'oui' : lot.planOk === false ? 'non' : '';
+    rows.push([lot.id, lot.ticker, 'achat', lot.date, lot.qty, lot.price, lot.entryFee, -lot.qty * lot.price, lot.leverage, lot.stopInitial, lot.stopCurrent == null ? '' : lot.stopCurrent, lot.refCapital, lot.riskInitial, lot.riskInitialPct, MOTIFS[lot.motif] || '', plan, lot.planComment || '', lot.note || '', ls.netRealized, R, ls.closed ? 'clôturée' : 'ouverte']);
+    for (const e of lot.events.slice().sort((a, b) => a.date < b.date ? -1 : 1)) {
+      const lab = { sell: 'vente', funding: 'financement', dividend: 'dividende', adjust: 'ajustement', stop: 'stop' }[e.type];
+      if (e.type === 'sell') rows.push([lot.id, lot.ticker, lab, e.date, e.qty, e.price, e.fee || 0, e.qty * e.price, '', '', '', '', '', '', '', '', '', '', '', '', '']);
+      else if (e.type === 'stop') rows.push([lot.id, lot.ticker, lab, e.date, '', e.to == null ? '' : e.to, '', '', '', '', '', '', '', '', '', '', '', 'ancien stop ' + (e.from == null ? 'aucun' : e.from), '', '', '']);
+      else rows.push([lot.id, lot.ticker, lab, e.date, '', '', e.type === 'funding' ? e.amount : '', e.type === 'funding' ? -e.amount : e.amount, '', '', '', '', '', '', '', '', '', e.note || '', '', '', '']);
+    }
+  }
+  return '﻿' + rows.map(r => r.map(csvCell).join(';')).join('\r\n');
+}
+async function buildJSON() {
+  const images = {};
+  for (const l of S.lots) if (l.imgId) { const d = await getImage(l.imgId); if (d) images[l.imgId] = d; }
+  return JSON.stringify({ app: 'carnet-positions', format: 1, exportedAt: new Date().toISOString(), state: S, images }, null, 1);
+}
+async function offerFile(filename, text) {
+  const type = filename.endsWith('.csv') ? 'text/csv' : 'application/json';
+  const file = new File([text], filename, { type });
+  const touch = window.matchMedia && matchMedia('(pointer: coarse)').matches;
+  if (touch && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: filename }); return true; }
+    catch (e) { if (e && e.name === 'AbortError') { toast('Export annulé'); return false; } }
+  }
+  const url = URL.createObjectURL(file);
+  const a = Object.assign(document.createElement('a'), { href: url, download: filename });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  toast('Fichier enregistré : ' + filename);
+  return true;
+}
+function parseBackup(text) {
+  let o; try { o = JSON.parse(text); } catch (e) { throw new Error('Fichier JSON illisible.'); }
+  const st = o && o.state ? o.state : o;
+  if (!st || !st.settings || !Array.isArray(st.lots) || !Array.isArray(st.flows)) throw new Error('Ce JSON ne provient pas du Carnet de positions.');
+  return { state: normalize(st), images: (o && o.images) || {} };
+}
+function sheetImport() {
+  openSheet({
+    title: 'Restaurer une sauvegarde JSON', ok: 'Remplacer toutes les données', danger: true,
+    body: `<p class="lead">La restauration remplace toutes les données actuelles, captures comprises.</p><div class="fields">
+      <div class="fld wide"><label for="f-file">Fichier .json</label><input type="file" id="f-file" name="file" accept="application/json,.json"></div>
+      <div class="fld wide"><label for="f-paste">ou coller le contenu</label><textarea id="f-paste" name="paste" rows="4"></textarea></div></div>`,
+    onSubmit: async form => {
+      const file = form.elements.file.files[0];
+      const text = file ? await file.text() : F(form, 'paste').trim();
+      need(text, 'Choisissez un fichier ou collez un contenu.');
+      const b = parseBackup(text);
+      for (const id in b.images) await putImage(id, b.images[id]);
+      S = b.state; calcDraft = null;
+      save(`Restauration terminée : ${S.lots.length} position(s), ${Object.keys(b.images).length} capture(s)`);
+    }
+  });
+}
+
+// ---------- Démonstration ----------
+function buildDemo() {
+  const T = todayISO(), d = n => addDays(T, -n);
+  const anchors = { MSFT: [[112, 418], [80, 455], [60, 470], [0, 478]], COST: [[112, 905], [95, 900], [72, 870], [70, 852], [30, 960], [0, 1004]],
+    LLY: [[112, 760], [50, 800], [20, 866], [0, 884]], AMD: [[112, 146], [40, 150], [25, 141], [0, 139]] };
+  const px = (t, n) => { const a = anchors[t]; for (let i = 0; i < a.length - 1; i++) { const [n0, p0] = a[i], [n1, p1] = a[i + 1]; if (n <= n0 && n >= n1) return Core.roundTo(p0 + (p1 - p0) * (n0 - n) / (n0 - n1), 2); } return a[a.length - 1][1]; };
+  const fz = { inFixed: 0.5, inPct: 0, outFixed: 0.5, outPct: 0 };
+  const size = (e, s, eq) => Core.sizePosition({ equity: eq, riskPct: 1, entry: e, stop: s, leverage: 5, cap: 100, fractional: true, decimals: 4, fees: fz });
+  const mkLot = (t, n, e, s, eq, extra) => {
+    const r = size(e, s, eq);
+    return Object.assign({ id: 'demo-' + uid(), demo: true, ticker: t, date: d(n), price: e, qty: r.q, leverage: 5, entryFee: 0.5, estExitFee: 0.5,
+      stopInitial: s, stopCurrent: s, refCapital: eq, refDate: d(n), riskInitial: r.totalRisk, riskInitialPct: r.riskPctAccount,
+      motif: 'cassure', note: '', imgId: null, planOk: null, planComment: '', events: [] }, extra);
+  };
+  const L1 = mkLot('MSFT', 110, 420, 378, 1000, { motif: 'cassure', note: 'Cassure du plus haut 52 semaines, weekly haussier.', planOk: true, stopCurrent: 440 });
+  const h = Core.roundTo(L1.qty / 2, 4);
+  L1.events.push({ id: uid(), type: 'sell', date: d(80), qty: h, price: 455, fee: 0.5 }, { id: uid(), type: 'sell', date: d(60), qty: Core.roundTo(L1.qty - h, 4), price: 470, fee: 0.5 });
+  const L2 = mkLot('COST', 95, 900, 855, 1000, { motif: 'pullback', planOk: true, planComment: 'Gap sous le stop, sortie à l’ouverture.' });
+  L2.events.push({ id: uid(), type: 'sell', date: d(70), qty: L2.qty, price: 852, fee: 0.5 });
+  const L3 = mkLot('AMD', 40, 150, 135, 1500, { motif: 'continuation', planOk: false, planComment: 'Sortie avant le stop sans signal de sortie.' });
+  L3.events.push({ id: uid(), type: 'sell', date: d(25), qty: L3.qty, price: 141, fee: 0.5 });
+  const L4 = mkLot('LLY', 50, 800, 720, 1500, { motif: 'cassure', stopCurrent: 820 });
+  L4.events.push({ id: uid(), type: 'stop', date: d(15), from: 720, to: 820 }, { id: uid(), type: 'funding', date: d(20), amount: 0.35, note: 'Financement mensuel' }, { id: uid(), type: 'funding', date: d(5), amount: 0.3, note: 'Financement mensuel' });
+  const L5 = mkLot('COST', 30, 960, 900, 1500, { motif: 'continuation', stopCurrent: 930 });
+  const lots = [L1, L2, L3, L4, L5];
+  const flows = [{ id: 'demo-' + uid(), demo: true, date: d(45), amount: 500, note: 'Versement' }];
+  const tmp = { settings: Object.assign({}, S.settings, { startDate: d(120) }), lots, flows, prices: {}, snapshots: [] };
+  const add = (t, date, p) => { const hh = tmp.prices[t] = tmp.prices[t] || []; if (!hh.some(x => x.date === date)) hh.push({ date, price: p, demo: true }); };
+  for (const l of lots) add(l.ticker, l.date, l.price);
+  for (let n = 112; n >= 0; n -= 7) for (const l of lots) {
+    const ls = Core.lotState(l, d(n));
+    if (l.date <= d(n) && !ls.closed) add(l.ticker, d(n), px(l.ticker, n));
+  }
+  for (const t in tmp.prices) tmp.prices[t].sort((a, b) => a.date < b.date ? -1 : 1);
+  const at = Core.accountState(tmp, d(7), 'exact');
+  const snaps = at.missing.length ? [] : [{ id: 'demo-' + uid(), demo: true, date: d(7), netValue: Core.roundTo(at.equity + 1.15, 2), marginAvail: 410 }];
+  return { lots, flows, prices: tmp.prices, snapshots: snaps, startDate: d(120) };
+}
+function loadDemo() {
+  const D = buildDemo();
+  const hasReal = S.lots.some(l => !l.demo) || S.flows.some(f => !f.demo);
+  if (!hasReal) S.settings.startDate = D.startDate;
+  S.lots.push(...D.lots); S.flows.push(...D.flows); S.snapshots.push(...D.snapshots);
+  for (const t in D.prices) for (const x of D.prices[t]) { const h = S.prices[t] = S.prices[t] || []; if (!h.some(y => y.date === x.date)) h.push(x); h.sort((a, b) => a.date < b.date ? -1 : 1); }
+}
+function clearDemo() {
+  S.lots = S.lots.filter(l => !l.demo); S.flows = S.flows.filter(f => !f.demo); S.snapshots = S.snapshots.filter(s => !s.demo);
+  for (const t in S.prices) { S.prices[t] = S.prices[t].filter(x => !x.demo); if (!S.prices[t].length) delete S.prices[t]; }
+  if (!S.lots.length && !S.flows.length) S.settings.startDate = todayISO();
+  calcDraft = null;
+}
+
+// ---------- Événements ----------
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-tab],[data-act]'); if (!b) return;
+  if (b.dataset.tab) { tab = b.dataset.tab; render(); window.scrollTo(0, 0); return; }
+  const a = b.dataset.act, lot = b.dataset.lot ? findLot(b.dataset.lot) : null;
+  switch (a) {
+    case 'close-sheet': closeSheet(); break;
+    case 'go-calc': tab = 'calc'; render(); break;
+    case 'reset-calc': calcDraft = freshDraft(); render(); break;
+    case 'record-buy': sheetBuy(); break;
+    case 'prices': sheetPrices(); break;
+    case 'jfilter': journalFilter = b.dataset.f; render(); break;
+    case 'sell': sheetSell(lot); break;
+    case 'stop': sheetStop(lot); break;
+    case 'funding': sheetAmount(lot, 'funding'); break;
+    case 'dividend': sheetAmount(lot, 'dividend'); break;
+    case 'plan': sheetPlan(lot); break;
+    case 'edit-lot': sheetEdit(lot); break;
+    case 'del-lot': confirmSheet('Supprimer cette position ?', `${esc(lot.ticker)} du ${fmtDate(lot.date)}, avec ses ${lot.events.length} mouvement(s). Cette suppression est définitive.`, 'Supprimer', async () => {
+      if (lot.imgId) await delImage(lot.imgId); S.lots = S.lots.filter(l => l !== lot); save('Position supprimée'); }); break;
+    case 'del-event': {
+      const ev = lot.events.find(x => x.id === b.dataset.ev);
+      confirmSheet('Supprimer ce mouvement ?', `Mouvement du ${fmtDate(ev.date)} sur ${esc(lot.ticker)}.`, 'Supprimer', () => {
+        lot.events = lot.events.filter(x => x !== ev);
+        if (ev.type === 'stop') { const prev = lot.events.filter(x => x.type === 'stop').sort((p, q) => p.date < q.date ? -1 : 1).pop(); lot.stopCurrent = prev ? prev.to : lot.stopInitial; }
+        save('Mouvement supprimé');
+      }); break;
+    }
+    case 'add-flow': sheetFlow(); break;
+    case 'add-snap': sheetSnap(); break;
+    case 'del-flow': confirmSheet('Supprimer ce flux ?', 'Le versement ou retrait sera retiré des calculs.', 'Supprimer', () => { S.flows = S.flows.filter(x => x.id !== b.dataset.id); save('Flux supprimé'); }); break;
+    case 'del-snap': confirmSheet('Supprimer cette valeur courtier ?', 'Elle ne servira plus d’observation.', 'Supprimer', () => { S.snapshots = S.snapshots.filter(x => x.id !== b.dataset.id); save('Valeur supprimée'); }); break;
+    case 'export-csv': offerFile('journal-trading-' + todayISO() + '.csv', buildCSV()); break;
+    case 'export-json': buildJSON().then(t => offerFile('carnet-positions-' + todayISO() + '.json', t)).then(ok => { if (ok) { writeJSON(EXPORT_KEY, Date.now()); if (tab === 'set') render(); } }); break;
+    case 'go-set': tab = 'set'; render(); window.scrollTo(0, 0); break;
+    case 'sync-now': syncNow(); break;
+    case 'sync-on': {
+      const tk = ($('#sync-token').value || '').trim();
+      if (!/^(ghp_|github_pat_|gho_)[A-Za-z0-9_]{20,}$/.test(tk)) { toast('Collez un jeton GitHub valide (ghp_…).'); break; }
+      if (tk.startsWith('github_pat_')) toast('Les jetons « fine-grained » ne gèrent pas les gists : créez un jeton classic.');
+      b.disabled = true; setSync('saving');
+      connectGist(tk).then(res => {
+        if (res && res.choose) {
+          const remote = res.choose;
+          openSheet({ title: 'Quelles données garder ?', ok: 'Valider',
+            body: `<p class="lead">Cet appareil et votre compte contiennent chacun des données. Choisissez celles à garder sur tous vos appareils. L’autre version est mise de côté et reste restaurable.</p>
+              <div class="fields"><div class="fld wide"><label for="f-keep">Garder</label><select id="f-keep" name="keep">
+              <option value="remote">Données du compte : ${remote.lots.length} position(s), modifiées le ${new Date(remote.updatedAt).toLocaleString('fr-FR')}</option>
+              <option value="local">Données de cet appareil : ${S.lots.length} position(s), modifiées le ${new Date(S.updatedAt).toLocaleString('fr-FR')}</option></select></div></div>`,
+            onSubmit: async form => {
+              if (F(form, 'keep') === 'remote') { writeJSON(CONFLICT_KEY, { at: Date.now(), from: 'cet appareil', state: S }); adoptRemote(remote); }
+              else { writeJSON(CONFLICT_KEY, { at: Date.now(), from: 'en ligne', state: remote }); S.updatedAt = Date.now(); writeLocal(); await pushRemote(); }
+              Store.lastOk = Date.now(); setSync('synced'); render(); toast('Synchronisation activée');
+            } });
+        } else toast(res === 'pulled' ? 'Synchronisation activée : données récupérées' : 'Synchronisation activée');
+      }, e => { setSync('error', e.message); toast('Connexion impossible : ' + (e instanceof TypeError ? 'pas de réseau' : e.message)); b.disabled = false; });
+      break;
+    }
+    case 'sync-off': confirmSheet('Déconnecter cet appareil ?', 'Les données restent sur cet appareil et dans votre Gist. Cet appareil ne se synchronisera plus et le jeton y sera effacé.', 'Déconnecter', () => {
+      Store.cfg = null; writeJSON(SYNC_KEY, null); setSync('local'); render(); toast('Appareil déconnecté'); }); break;
+    case 'restore-conflict': confirmSheet('Restaurer la version mise de côté ?', 'Elle remplacera les données actuelles sur tous vos appareils. La version actuelle sera mise de côté à son tour.', 'Restaurer', () => {
+      const c = readJSON(CONFLICT_KEY, null); if (!c) return;
+      writeJSON(CONFLICT_KEY, { at: Date.now(), from: 'avant restauration', state: S });
+      S = normalize(c.state); calcDraft = null; save('Version restaurée'); }); break;
+    case 'drop-conflict': writeJSON(CONFLICT_KEY, null); render(); break;
+    case 'import-json': sheetImport(); break;
+    case 'load-demo': loadDemo(); save('Données de démonstration chargées'); break;
+    case 'clear-demo': confirmSheet('Effacer la démonstration ?', 'Seules les données marquées « Démo » sont supprimées. Vos propres saisies restent.', 'Effacer la démo', () => { clearDemo(); save('Démonstration effacée'); }); break;
+    case 'wipe': confirmSheet('Effacer toutes les données ?', 'Positions, flux, valeurs courtier, cours, réglages et captures seront supprimés. Exportez d’abord en JSON si besoin.', 'Tout effacer', async () => {
+      for (const l of S.lots) if (l.imgId) await delImage(l.imgId); S = defaultState(); calcDraft = null; save('Toutes les données ont été effacées'); }); break;
+    case 'copy-ta': {
+      const ta = $('#exportTa'), text = window.__exportText || ta.value;
+      if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => toast('Contenu copié'), () => { ta.select(); toast('Sélectionné : copiez avec ⌘C / Ctrl+C'); });
+      else { ta.select(); toast('Sélectionné : copiez avec ⌘C / Ctrl+C'); }
+      break;
+    }
+  }
+});
+document.addEventListener('toggle', e => {
+  const d = e.target; if (!d.matches || !d.matches('details.lot')) return;
+  if (d.open) { openLots.add(d.dataset.key); loadThumbs(); } else openLots.delete(d.dataset.key);
+}, true);
+document.addEventListener('input', e => {
+  const f = e.target.form;
+  if (f && f.id === 'calcForm') {
+    const el = e.target;
+    calcDraft[el.name] = el.type === 'checkbox' ? el.checked : el.value;
+    if (el.name !== 'ticker') calcDraft.example = false;
+    if (el.name === 'fractional') $('#c-decimals').disabled = !el.checked;
+    updateCalc();
+  } else if (f && f.id === 'sheetForm' && sheetCfg && sheetCfg.onInput) {
+    if (e.target.name === 'fee') e.target.dataset.touched = '1';
+    sheetCfg.onInput(f);
+  }
+});
+document.addEventListener('change', e => { if (e.target.form && e.target.form.id === 'calcForm' && e.target.type === 'checkbox') e.target.dispatchEvent(new Event('input', { bubbles: true })); });
+document.addEventListener('submit', async e => {
+  e.preventDefault();
+  const form = e.target;
+  if (form.id === 'setForm') {
+    const g = n => form.elements[n].value, s = S.settings;
+    const v = { initialCapital: num(g('initialCapital')), riskPct: num(g('riskPct')), cap: num(g('cap')), leverage: num(g('leverage')), staleDays: num(g('staleDays')), decimals: num(g('decimals')) };
+    const fz = { inFixed: numOr(g('inFixed'), 0), inPct: numOr(g('inPct'), 0), outFixed: numOr(g('outFixed'), 0), outPct: numOr(g('outPct'), 0) };
+    const errs = [];
+    if (!(v.initialCapital > 0)) errs.push('capital initial');
+    if (!(v.riskPct > 0 && v.riskPct <= 100)) errs.push('risque');
+    if (!(v.cap > 0)) errs.push('plafond');
+    if (!(v.leverage >= 1)) errs.push('levier');
+    if (!(v.staleDays >= 0)) errs.push('alerte');
+    if (!(Number.isInteger(v.decimals) && v.decimals >= 0 && v.decimals <= 8)) errs.push('précision (entier 0 à 8)');
+    if (Object.values(fz).some(x => !(x >= 0))) errs.push('frais');
+    if (!g('startDate')) errs.push('date de départ');
+    if (errs.length) { toast('Valeurs invalides : ' + errs.join(', ')); return; }
+    Object.assign(s, v, { fees: fz, fractional: form.elements.fractional.checked, startDate: g('startDate'), refSource: g('refSource') });
+    calcDraft = null; save('Réglages enregistrés');
+    return;
+  }
+  if (form.id === 'sheetForm' && sheetCfg && sheetCfg.onSubmit) {
+    const btn = $('#sheetOk'); btn.disabled = true;
+    try { const cfg = sheetCfg; await cfg.onSubmit(form); if (sheetCfg === cfg) closeSheet(); }
+    catch (err) { $('#sheetErr').textContent = err.message || String(err); }
+    finally { btn.disabled = false; }
+  }
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet(); });
+
+// ---------- Démarrage ----------
+(function boot() {
+  const local = readLocal();
+  if (local) S = normalize(local);
+  try { const h = location.hash.slice(1); if (['dash', 'calc', 'pos', 'set'].includes(h)) tab = h; } catch (e) {}
+  Store.cfg = readJSON(SYNC_KEY, null);
+  if (!local) { loadDemo(); S.updatedAt = 0; writeLocal(); }
+  render();
+  if (Store.cfg) { setSync('saving'); syncNow(); } else setSync('local');
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Store.cfg) scheduleSync(200); });
+  window.addEventListener('online', () => { if (Store.cfg) scheduleSync(200); });
+  setInterval(() => { if (Store.cfg && document.visibilityState === 'visible') syncNow(); }, 60000);
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(() => {});
+})();
+</script>
+</body>
+</html>
