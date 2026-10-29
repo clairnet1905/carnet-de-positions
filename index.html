@@ -267,7 +267,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.3.0 · licence MIT */
+/* Carnet de positions v1.3.1 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -854,10 +854,8 @@ function marketOpen(ms) {
   return wd >= 1 && wd <= 5 && n.min >= 570 && n.min < 960;
 }
 async function fetchQuote(sym, key) {
-  const url = 'https://finnhub.io/api/v1/quote?symbol=' + encodeURIComponent(sym);
-  let r;
-  try { r = await fetch(url, { headers: { 'X-Finnhub-Token': key }, cache: 'no-store' }); }
-  catch (e) { r = await fetch(url + '&token=' + encodeURIComponent(key), { cache: 'no-store' }); }
+  // Depuis un navigateur, Finnhub n'accepte la clé que dans l'adresse (l'en-tête est bloqué par CORS).
+  const r = await fetch('https://finnhub.io/api/v1/quote?symbol=' + encodeURIComponent(sym) + '&token=' + encodeURIComponent(key), { cache: 'no-store' });
   if (r.status === 401 || r.status === 403) throw Object.assign(new Error('clé Finnhub refusée'), { stop: true });
   if (r.status === 429) throw Object.assign(new Error('limite gratuite atteinte, réessayez dans une minute'), { stop: true });
   if (!r.ok) throw new Error('erreur Finnhub ' + r.status);
