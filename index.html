@@ -167,6 +167,11 @@ tr:last-child td{border-bottom:0}
 .pcard.danger{border-color:var(--loss)} .pcard.danger::before{background:var(--loss)}
 .pcard header{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
 .pcard .tk{font-size:1.15rem}
+.src{font:600 .66rem var(--f-body);letter-spacing:.03em;border:1px solid var(--line);background:var(--surface-2);color:var(--muted);border-radius:99px;padding:2px 8px;cursor:pointer;vertical-align:middle}
+.src.on{background:var(--gain-bg);color:var(--gain);border-color:transparent}
+.search{display:grid;gap:4px}
+.search input{padding-left:36px;background:var(--surface-2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235E6B7A' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-4-4'/%3E%3C/svg%3E") no-repeat 11px center/18px}
+.search small{font-size:.76rem}
 .pcard header small{display:block;font-size:.76rem}
 .pl{text-align:right;font:600 1.02rem var(--f-num);white-space:nowrap}
 .pl small{display:block;font-size:.76rem;font-weight:500}
@@ -267,7 +272,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.3.2 · licence MIT */
+/* Carnet de positions v1.4.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -842,6 +847,16 @@ function perf() {
 const QUOTE_KEY = 'carnet-positions:finnhub';
 const Live = { prices: {}, at: 0, busy: false, err: '', miss: [] };
 const manualSet = () => new Set((S.settings.manualTickers || []).map(t => String(t).toUpperCase()));
+function setManual(list, msg) {
+  S.settings.manualTickers = [...new Set(list.map(t => t.toUpperCase()))].sort();
+  // Retire les cours récupérés automatiquement pour ces actions (ils pouvaient venir d'une autre société).
+  let removed = 0;
+  for (const t of S.settings.manualTickers) {
+    delete Live.prices[t];
+    if (S.prices[t]) { const n = S.prices[t].length; S.prices[t] = S.prices[t].filter(x => x.src !== 'auto'); removed += n - S.prices[t].length; }
+  }
+  save(msg + (removed ? ` · ${removed} cours automatique(s) retiré(s)` : ''));
+}
 const quoteKey = () => { try { return localStorage.getItem(QUOTE_KEY) || ''; } catch (e) { return ''; } };
 const hhmm = t => new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 function nyParts(ms) {
@@ -939,7 +954,7 @@ function render() {
   try {
     if (tab === 'dash') v.innerHTML = viewDash();
     else if (tab === 'calc') { v.innerHTML = viewCalc(); updateCalc(); }
-    else if (tab === 'pos') { v.innerHTML = viewPos(); loadThumbs(); }
+    else if (tab === 'pos') { v.innerHTML = viewPos(); applyPosQuery(); loadThumbs(); }
     else v.innerHTML = viewSettings();
   } finally { S.prices = saved; }
 }
@@ -1210,7 +1225,18 @@ function rail(entry, stop, price) {
   return `<div class="rail" aria-hidden="true"><i class="zone ${price > stop ? '' : 'bad'}" style="left:${a.toFixed(1)}%;width:${(b - a).toFixed(1)}%"></i><b class="mk stop" style="left:${X(stop).toFixed(1)}%"></b><b class="mk entry" style="left:${X(entry).toFixed(1)}%"></b><b class="mk px" style="left:${X(price).toFixed(1)}%"></b></div>
     <div class="rail-leg"><span class="s">Stop ${usd(stop)}</span><span>Entrée ${usd(entry)}</span><span class="p">Cours ${usd(price)}</span></div>`;
 }
-let posSort = 'risk';
+let posSort = 'risk', posQuery = '';
+// Filtre sans redessiner la page : le clavier reste ouvert pendant la saisie.
+function applyPosQuery() {
+  const q = posQuery.trim().toLowerCase();
+  let n = 0;
+  for (const el of document.querySelectorAll('.pcard[data-q], #view details.lot[data-q]')) {
+    const hit = !q || el.dataset.q.includes(q);
+    el.hidden = !hit;
+    if (hit && el.classList.contains('pcard')) n++;
+  }
+  const c = $('#pos-q-n'); if (c) c.textContent = q ? n + ' position(s) ouverte(s) trouvée(s)' : '';
+}
 function viewPos() {
   const today = todayISO();
   const views = S.lots.map(lotView);
@@ -1240,8 +1266,8 @@ function viewPos() {
     const stale = !last || Core.days(last.date, today) > S.settings.staleDays;
     const lev = [...new Set(vs.map(v => v.lot.leverage))].map(x => '×' + fmtNum(x)).join(' / ');
     const state = (stop != null && px != null && px <= stop) || stop == null ? 'danger' : un > 0.005 ? 'up' : un < -0.005 ? 'down' : '';
-    const html = `<article class="pcard ${state}">
-      <header><div><span class="tk">${esc(t)}</span> ${stop != null && stop >= avg ? '<span class="pill win">Sans risque</span>' : ''}${state === 'danger' ? `<span class="pill loss">${stop == null ? 'Sans stop' : 'Stop atteint'}</span>` : ''}
+    const html = `<article class="pcard ${state}" data-q="${esc((t + ' ' + vs.map(v => v.lot.note || '').join(' ')).toLowerCase())}">
+      <header><div><span class="tk">${esc(t)}</span> <button class="src ${manualSet().has(t) ? '' : 'on'}" data-act="quote-toggle" data-t="${esc(t)}" title="Source du cours : touchez pour changer">${manualSet().has(t) ? 'Cours manuel' : 'Cours Finnhub'}</button> ${stop != null && stop >= avg ? '<span class="pill win">Sans risque</span>' : ''}${state === 'danger' ? `<span class="pill loss">${stop == null ? 'Sans stop' : 'Stop atteint'}</span>` : ''}
         <small>${vs.length > 1 ? vs.length + ' achats · ' : ''}${Core.days(first, today)} j · levier ${lev}</small></div>
         <div class="pl ${cls(un)}">${usd(un, true)}<small>${pct(un / (q * avg) * 100, true)}</small></div></header>
       ${px != null ? rail(avg, stop, px) : '<p class="hint">Aucun cours saisi.</p>'}
@@ -1283,7 +1309,8 @@ function viewPos() {
   </section>
   <section class="card">
     <div class="sec-head"><h2>Positions ouvertes</h2><button class="btn sm primary" data-act="go-calc">+ Nouvelle position</button></div>
-    ${open.length ? `<div class="filters">${sortBtns}</div><div class="pgrid">${cards.map(c => c.html).join('')}</div>` : '<p class="lead">Aucune position ouverte. Calculez une taille dans « Nouvelle position », puis enregistrez l’achat.</p>'}
+    ${open.length ? `<div class="search"><input type="search" id="pos-q" value="${esc(posQuery)}" placeholder="Rechercher une action (ex. ABBV)" autocomplete="off" autocapitalize="characters" aria-label="Rechercher une action"><small id="pos-q-n"></small></div>
+    <div class="filters">${sortBtns}</div><div class="pgrid">${cards.map(c => c.html).join('')}</div>` : '<p class="lead">Aucune position ouverte. Calculez une taille dans « Nouvelle position », puis enregistrez l’achat.</p>'}
   </section>
   <section class="card">
     <div class="sec-head"><h2>Journal</h2>
@@ -1309,7 +1336,7 @@ function lotDetails(v, inJournal, compact) {
   const sumRight = ls.closed
     ? `<span class="num ${cls(ls.netRealized)}">${usd(ls.netRealized, true)}${R != null ? ' · ' + (R > 0 ? '+' : '') + fmtNum(R, 2) + ' R' : ''}</span>`
     : `<span class="num ${cls(unreal)}">${usd(unreal, true)}</span>`;
-  return `<details class="lot" data-key="${key}" ${openLots.has(key) ? 'open' : ''}>
+  return `<details class="lot" data-key="${key}" ${inJournal ? `data-q="${esc((lot.ticker + ' ' + (lot.note || '')).toLowerCase())}"` : ''} ${openLots.has(key) ? 'open' : ''}>
     <summary>${compact ? `<span>Détails et actions <small>· achat du ${fmtDate(lot.date)} à ${usd(lot.price)}</small></span><span class="chev">›</span>` : `<span><span class="tk">${esc(lot.ticker)}</span> ${status} ${lot.demo ? '<span class="pill demo">Démo</span>' : ''}<br><small>${fmtDate(lot.date)} · ${qty(lot.qty)} à ${usd(lot.price)} · ${MOTIFS[lot.motif] || 'Autre'}</small></span>${sumRight}`}</summary>
     <div class="body">
       <dl class="kv">
@@ -1494,6 +1521,7 @@ function sheetBuy() {
       ${dec('stop', 'Stop initial ($)', d.stop)}
       <div class="fld"><label for="f-motif">Motif</label><select id="f-motif" name="motif">${Object.entries(MOTIFS).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></div>
       <div class="fld wide"><label for="f-note">Note</label><textarea id="f-note" name="note" placeholder="facultatif"></textarea></div>
+      <div class="fld wide"><label class="check"><input type="checkbox" name="auto" ${manualSet().has((d.ticker || '').toUpperCase()) ? '' : 'checked'}> Action US : cours automatiques Finnhub</label><p class="hint">Décochez pour une action hors USA : vous saisirez son cours à la main.</p></div>
       <div class="fld wide"><label for="f-img">Capture du graphique</label><input type="file" id="f-img" name="img" accept="image/*"><p class="hint">Facultatif. Compressée avant sauvegarde.</p></div>
     </div><div id="buyCheck" class="banner info"></div>`,
     onInput: form => {
@@ -1523,6 +1551,9 @@ function sheetBuy() {
         motif: F(form, 'motif'), note: F(form, 'note').trim(), imgId, planOk: null, planComment: '', events: [] });
       const lp = Core.lastPrice(S.prices, t);
       if (!lp || lp.date <= date) addPrice(t, date, p);
+      const man = manualSet();
+      if (!form.elements.auto.checked) man.add(t); else man.delete(t);
+      S.settings.manualTickers = [...man].sort();
       calcDraft = null; tab = 'pos'; openLots.add('p-' + id);
       save('Achat enregistré');
     }
@@ -1832,11 +1863,13 @@ document.addEventListener('click', e => {
     case 'quotes-manual': {
       const list = [...new Set(($('#q-manual').value || '').toUpperCase().split(/[\s,;]+/).filter(Boolean))];
       if (list.some(t => !/^[A-Z0-9.\-]{1,12}$/.test(t))) { toast('Tickers invalides : séparez-les par des virgules.'); break; }
-      S.settings.manualTickers = list;
-      // Retire les cours récupérés automatiquement pour ces actions (ils pouvaient venir d'une autre société).
-      let removed = 0;
-      for (const t of list) { delete Live.prices[t]; if (S.prices[t]) { const n = S.prices[t].length; S.prices[t] = S.prices[t].filter(x => x.src !== 'auto'); removed += n - S.prices[t].length; } }
-      save(list.length ? `Saisie manuelle : ${list.join(', ')}${removed ? ` · ${removed} cours automatique(s) retiré(s)` : ''}` : 'Toutes les actions passent par Finnhub');
+      setManual(list, list.length ? 'Saisie manuelle : ' + list.join(', ') : 'Toutes les actions passent par Finnhub');
+      break;
+    }
+    case 'quote-toggle': {
+      const t = b.dataset.t, cur = manualSet();
+      if (cur.has(t)) { cur.delete(t); setManual([...cur], t + ' : cours Finnhub'); refreshQuotes(); }
+      else { cur.add(t); setManual([...cur], t + ' : cours saisi à la main'); }
       break;
     }
     case 'quotes-on': {
@@ -1931,6 +1964,7 @@ document.addEventListener('toggle', e => {
   if (d.open) { openLots.add(d.dataset.key); loadThumbs(); } else openLots.delete(d.dataset.key);
 }, true);
 document.addEventListener('input', e => {
+  if (e.target.id === 'pos-q') { posQuery = e.target.value; applyPosQuery(); return; }
   const f = e.target.form;
   if (f && f.id === 'calcForm') {
     const el = e.target;
