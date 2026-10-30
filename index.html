@@ -235,6 +235,12 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 .filters{display:flex;gap:6px;flex-wrap:wrap}
 .filters button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent);border-color:transparent}
 /* Discipline */
+.ptiles{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));margin-bottom:12px}
+.ptile{display:grid;gap:2px;text-align:left;border:1.5px solid transparent;border-radius:12px;padding:9px 10px;background:var(--surface-2);color:inherit;font:inherit;cursor:pointer;min-width:0}
+.ptile span{font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+.ptile b{font:600 1.05rem var(--f-num)} .ptile b.pos{color:var(--gain)} .ptile b.neg{color:var(--loss)}
+.ptile small{font-size:.72rem;color:var(--muted);overflow-wrap:anywhere}
+.ptile[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
 .disc{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
 .disc div{border-radius:12px;padding:12px;background:var(--surface-2);display:grid;gap:2px}
 .disc b{font:600 1.35rem var(--f-num)}
@@ -299,7 +305,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.7.1 · licence MIT */
+/* Carnet de positions v1.8.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -641,7 +647,8 @@ const lotImgIds = l => [l.imgId, ...(l.events || []).map(e => e.imgId)].filter(B
 let S = defaultState();
 let tab = 'dash';
 const openLots = new Set();
-let journalFilter = 'closed';
+let journalFilter = 'closed', perfRange = 'itd';
+const PERIODS = [['day', 'Jour', 'dernière séance'], ['week', 'Semaine', 'semaine en cours'], ['month', 'Mois', 'mois en cours'], ['year', 'Année', 'année en cours'], ['itd', 'Max', 'depuis le début']];
 let calcDraft = null;
 
 // ---------- Stockage : copie sur l'appareil, synchronisée avec un Gist GitHub secret si connecté ----------
@@ -864,9 +871,11 @@ function perf() {
   const obs = Core.observations(S, today);
   const t = Core.twr(obs, S.flows);
   const pts = t.points;
-  const y = today.slice(0, 4), m = today.slice(0, 7);
+  const y = today.slice(0, 4), m = today.slice(0, 7), lastD = pts.length ? pts[pts.length - 1].date : today;
   return {
     obs, pts, broken: t.broken, brokenAt: t.brokenAt,
+    day: Core.periodReturn(pts, lastD, today),
+    week: Core.periodReturn(pts, weekKey(today), today),
     month: Core.periodReturn(pts, m + '-01', today),
     year: Core.periodReturn(pts, y + '-01-01', today),
     itd: pts.length > 1 ? { r: (pts[pts.length - 1].index - 1) * 100, from: pts[0].date, to: pts[pts.length - 1].date, est: pts.some(p => p.est) } : null,
@@ -1172,12 +1181,28 @@ function radarAlerts() {
     else if (a.near) out.push({ key: `${w.id}|${w.tf}${w.period}|near|${a.lastDate}`, w, a, lvl: 'near',
       txt: `<strong>${lab}</strong> : proche de la SMA, ${pct(a.dist, true)} (${usd(a.p)} contre ${usd(a.smaNow)})` });
   }
-  const seen = new Set(readSeen());
-  for (const x of out) x.seen = seen.has(x.key);
-  return out;
+  // Une alerte dont la bougie date de plus de 15 jours disparaît (le dernier croisement reste affiché sur la carte).
+  const seen = readSeen(), old = addDays(todayISO(), -ALERT_DAYS);
+  for (const x of out) x.seen = !!seen[x.key];
+  return out.filter(x => x.a.lastDate >= old);
 }
-function readSeen() { try { return JSON.parse(localStorage.getItem(SEEN_KEY) || '[]'); } catch (e) { return []; } }
-function markSeen(keys) { try { const s = new Set(readSeen()); keys.forEach(k => s.add(k)); localStorage.setItem(SEEN_KEY, JSON.stringify([...s].slice(-500))); } catch (e) {} }
+const ALERT_DAYS = 15;
+// Alertes vues : { clé: date où elle a été vue }, oubliées au bout de 60 jours. Ancien format : liste de clés.
+function readSeen() {
+  try {
+    const v = JSON.parse(localStorage.getItem(SEEN_KEY) || '{}');
+    if (Array.isArray(v)) { const o = {}, t = todayISO(); v.forEach(k => o[k] = t); return o; }
+    return v && typeof v === 'object' ? v : {};
+  } catch (e) { return {}; }
+}
+function markSeen(keys) {
+  try {
+    const s = readSeen(), t = todayISO(), lim = addDays(t, -60);
+    keys.forEach(k => s[k] = t);
+    for (const k in s) if (s[k] < lim) delete s[k];
+    localStorage.setItem(SEEN_KEY, JSON.stringify(s));
+  } catch (e) {}
+}
 function radarStatus(a) {
   if (!a) return ['', 'Historique en attente'];
   if (a.short) return ['', `Historique insuffisant (${a.have} bougies)`];
@@ -1214,7 +1239,10 @@ function viewRadar() {
     return { t, lines, ok, rank, dist, signal: lines.some(l => l.a && !l.a.short && (l.a.cross || l.a.pending)), watch: lines.some(l => l.a && !l.a.short && (l.a.cross || l.a.pending || l.a.near)) };
   }).sort((x, y) => x.rank - y.rank || x.dist - y.dist || (x.t < y.t ? -1 : 1));
   const shown = cards.filter(c => radarFilter === 'signal' ? c.signal : radarFilter === 'watch' ? c.watch : true);
-  const al = radarAlerts(), fresh = al.filter(x => !x.seen);
+  const al = radarAlerts(), fresh = al.filter(x => !x.seen), seenAl = al.filter(x => x.seen);
+  // Croisements d'abord (les plus récents en tête), puis les actions proches de leur SMA.
+  const alertOrder = (x, y) => (x.lvl === 'near') - (y.lvl === 'near') || (x.a.lastDate < y.a.lastDate ? 1 : x.a.lastDate > y.a.lastDate ? -1 : 0) || (x.w.ticker < y.w.ticker ? -1 : 1);
+  const alertRow = x => `<div class="alert ${x.lvl === 'up' ? 'ok up' : x.lvl === 'down' ? 'err' : 'warn'} ${x.seen ? 'seen' : ''}"><span>${x.seen ? '' : '<b class="new">Nouveau</b> '}${x.txt}</span>${x.seen ? '' : `<button class="btn sm" data-act="radar-seen" data-k="${esc(x.key)}">Vu</button>`}</div>`;
   const prog = Radar.busy ? `<div class="alert live on"><span>Historique : ${Radar.done} / ${Radar.todo} action(s)… (8 par minute, offre gratuite)</span></div>` : '';
   const errs = Object.keys(Radar.errs);
   const dd = d => fmtDate(d).replace(/ \d{4}$/, '');
@@ -1255,8 +1283,10 @@ function viewRadar() {
     <div class="row"><button class="btn sm" data-act="radar-import">Importer une liste</button><button class="btn sm" data-act="radar-settings">Réglages du radar</button></div>
   </section>
   ${al.length ? `<section class="card">
-    <div class="sec-head"><h2>Alertes</h2>${fresh.length ? `<button class="btn sm" data-act="radar-seen-all">Tout marquer comme vu</button>` : ''}</div>
-    <div class="alerts">${al.sort((x, y) => (x.seen - y.seen) || (x.lvl === 'near') - (y.lvl === 'near')).map(x => `<div class="alert ${x.lvl === 'up' ? 'ok up' : x.lvl === 'down' ? 'err' : 'warn'} ${x.seen ? 'seen' : ''}"><span>${x.seen ? '' : '<b class="new">Nouveau</b> '}${x.txt}</span>${x.seen ? '' : `<button class="btn sm" data-act="radar-seen" data-k="${esc(x.key)}">Vu</button>`}</div>`).join('')}</div>
+    <div class="sec-head"><h2>Alertes${fresh.length ? ` <span class="pill warn">${fresh.length} nouvelle(s)</span>` : ''}</h2>${fresh.length > 1 ? `<button class="btn sm" data-act="radar-seen-all">Tout marquer comme vu</button>` : ''}</div>
+    ${fresh.length ? `<div class="alerts">${fresh.sort(alertOrder).map(alertRow).join('')}</div>` : '<p class="hint">Aucune nouvelle alerte.</p>'}
+    ${seenAl.length ? `<details class="more" style="margin-top:10px"><summary>Déjà vues (${seenAl.length})</summary><div class="alerts">${seenAl.sort(alertOrder).map(alertRow).join('')}</div></details>` : ''}
+    <p class="hint">Une alerte disparaît ${ALERT_DAYS} jours après la clôture qui l’a déclenchée.</p>
   </section>` : ''}
   <section class="card">
     ${cards.length ? `<div class="search"><input type="search" id="radar-q" value="${esc(radarQuery)}" placeholder="Rechercher une action" autocomplete="off" autocapitalize="characters" aria-label="Rechercher une action"></div>
@@ -1424,8 +1454,10 @@ function viewDash() {
   const mUse = acc.equity > 0 ? acc.margin / acc.equity * 100 : null;
   const mCls = mUse == null ? '' : mUse >= 80 ? 'hi' : mUse >= 50 ? 'mid' : '';
   const hc = x => !isNum(x) || Math.abs(x) < 0.005 ? '' : x > 0 ? 'up' : 'down';
-  const perfCell = (label, p) => kv(label, p ? `<span class="${cls(p.r)}">${pct(p.r, true)}</span>` : 'Non calculable',
-    p ? `${fmtDate(p.from)} → ${fmtDate(p.to)}${p.est ? ' · estimation Modified Dietz' : ''}` : 'Pas assez d’observations');
+  // Courbe de la période choisie, repartant de 0 % au début de la période.
+  const sel = P[perfRange] || P.itd, rangePts = !sel ? P.pts : P.pts.filter(p => p.date >= sel.from && p.date <= sel.to).map((p, i, a) => Object.assign({}, p, { index: p.index / a[0].index }));
+  const DD = Core.maxDrawdown(rangePts);
+  const perfTile = (k, l, sub, p) => `<button type="button" class="ptile" data-act="perf-range" data-f="${k}" aria-pressed="${perfRange === k}"><span>${l}</span><b class="${p ? cls(p.r) : ''}">${p ? pct(p.r, true) : '—'}</b><small>${p ? (k === 'day' ? fmtDate(p.to).replace(/ \d{4}$/, '') + ' vs ' + fmtDate(p.from).replace(/ \d{4}$/, '') : 'depuis le ' + fmtDate(p.from).replace(/ \d{4}$/, '')) + (p.est ? ' · estimé' : '') : sub}</small></button>`;
   const method = P.estCount ? `Rendement pondéré dans le temps, ${P.estCount} sous-période(s) estimée(s) par Modified Dietz faute de valorisation à la date d’un flux.` : 'Rendement pondéré dans le temps (valorisations disponibles autour de chaque flux).';
   return `${demoBanner()}
   ${alertsStrip()}
@@ -1446,15 +1478,12 @@ function viewDash() {
   ${lb ? `<div class="banner info"><span>Courtier au ${fmtDate(lb.date)} : <strong class="num">${usd(lb.netValue)}</strong>${isNum(lb.marginAvail) ? `, marge disponible <span class="num">${usd(lb.marginAvail)}</span>` : ''}. ${gap}</span></div>` : ''}
   <section class="card">
     <div class="sec-head"><h2>Performance</h2>${P.itd ? `<strong class="num ${cls(P.itd.r)}" style="font-size:1.2rem">${pct(P.itd.r, true)}</strong>` : ''}</div>
-    <dl class="kv">
-      ${perfCell('Mois en cours', P.month)}
-      ${perfCell('Année en cours', P.year)}
-      ${perfCell('Depuis le début', P.itd)}
-      ${kv('Drawdown maximal', P.dd ? `<span class="${cls(P.dd.dd)}">${pct(P.dd.dd)}</span>` : 'Non calculable', P.dd && P.dd.dd < 0 ? `${fmtDate(P.dd.peak)} → ${fmtDate(P.dd.trough)}` : 'courbe corrigée des apports')}
-    </dl>
+    <div class="ptiles" role="group" aria-label="Période">${PERIODS.map(([k, l, sub]) => perfTile(k, l, sub, P[k])).join('')}</div>
     ${P.broken ? `<div class="banner err">Courbe interrompue au ${fmtDate(P.brokenAt)} : valeur de départ nulle ou négative.</div>` : ''}
     ${perfWhy(P)}
-    ${chartSVG(P.pts)}
+    ${rangePts.length > 1 ? `<p class="chart-t">${PERIODS.find(x => x[0] === perfRange)[1]} : ${fmtDate(rangePts[0].date)} → ${fmtDate(rangePts[rangePts.length - 1].date)}</p>` : ''}
+    ${chartSVG(rangePts)}
+    <dl class="kv" style="margin-top:10px">${kv('Drawdown maximal', DD ? `<span class="${cls(DD.dd)}">${pct(DD.dd)}</span>` : 'Non calculable', DD && DD.dd < 0 ? `${fmtDate(DD.peak)} → ${fmtDate(DD.trough)}` : 'sur la période affichée')}</dl>
     <details class="more"><summary>Comment c’est calculé</summary>
     <p class="hint">${method} Un dépôt n’est jamais compté comme un gain, un retrait jamais comme une perte. ${P.freq ? `${P.freq.count} observations, écart médian ${fmtNum(P.freq.medianGap, 1)} jour(s), écart maximal ${P.freq.maxGap} jours. Les baisses survenues entre deux observations (intrajournalières notamment) ne sont pas mesurées.` : ''}
     Une observation existe quand toutes les positions ouvertes ont un cours saisi le même jour, quand aucune position n’est ouverte, ou quand vous saisissez la valeur du courtier. ● calcul exact, ○ sous-période estimée, ● orange : valeur courtier.</p></details>
@@ -2259,6 +2288,7 @@ document.addEventListener('click', e => {
     case 'prices': sheetPrices(); break;
     case 'jfilter': journalFilter = b.dataset.f; render(); break;
     case 'psort': posSort = b.dataset.f; render(); break;
+    case 'perf-range': perfRange = b.dataset.f; render(); break;
     case 'go-radar': tab = 'radar'; render(); window.scrollTo(0, 0); break;
     case 'radar-add': sheetWatch(); break;
     case 'radar-add-sma': sheetWatch(null, b.dataset.t); break;
