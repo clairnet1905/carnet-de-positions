@@ -167,6 +167,16 @@ tr:last-child td{border-bottom:0}
 .pcard.danger{border-color:var(--loss)} .pcard.danger::before{background:var(--loss)}
 .pcard header{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
 .pcard .tk{font-size:1.15rem}
+.rlist{display:grid;gap:10px}
+.rrow{border:1px solid var(--line);border-radius:12px;padding:12px;display:grid;gap:8px;background:var(--surface);position:relative;overflow:hidden}
+.rrow::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:var(--line)}
+.rrow.win::before{background:var(--gain)} .rrow.loss::before{background:var(--loss)} .rrow.warn::before{background:var(--warn)} .rrow.open::before{background:var(--accent)}
+.rrow header{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.rrow header > div:first-child{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.rrow .pill{white-space:nowrap} .rstat{display:flex;flex-wrap:wrap;gap:6px;align-items:center} .rstat small{font-size:.74rem}
+.alert.up{background:var(--gain-bg);color:var(--gain);border-color:transparent} .alert.up::before{background:var(--gain)}
+.alert.seen{opacity:.6}
+.alert .new{font:700 .66rem var(--f-body);text-transform:uppercase;letter-spacing:.05em;background:currentColor;color:var(--surface);padding:1px 6px;border-radius:99px;margin-right:4px}
 .src{font:600 .66rem var(--f-body);letter-spacing:.03em;border:1px solid var(--line);background:var(--surface-2);color:var(--muted);border-radius:99px;padding:2px 8px;cursor:pointer;vertical-align:middle}
 .src.on{background:var(--gain-bg);color:var(--gain);border-color:transparent}
 .search{display:grid;gap:4px}
@@ -254,6 +264,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
       <button role="tab" id="tab-dash" data-tab="dash"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V10M10 19V5M16 19v-7M22 19H2"/></svg><span class="l">Tableau de bord</span><span class="s">Bord</span></button>
       <button role="tab" id="tab-calc" data-tab="calc"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg><span class="l">Nouvelle position</span><span class="s">Nouvelle</span></button>
       <button role="tab" id="tab-pos" data-tab="pos"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 15l3-3 3 2 4-5"/></svg><span class="l">Positions et journal</span><span class="s">Positions</span></button>
+      <button role="tab" id="tab-radar" data-tab="radar"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 12l6-6"/></svg><span class="l">Radar SMA</span><span class="s">Radar</span></button>
       <button role="tab" id="tab-set" data-tab="set"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><span class="l">Réglages</span><span class="s">Réglages</span></button>
     </nav>
   </div>
@@ -272,7 +283,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.4.1 · licence MIT */
+/* Carnet de positions v1.5.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -589,8 +600,8 @@ function defaultState() {
   return {
     app: 'carnet-positions', version: 1, updatedAt: 0,
     settings: { initialCapital: 1000, startDate: todayISO(), riskPct: 1, cap: 100, leverage: 5,
-      fees: { inFixed: 0, inPct: 0, outFixed: 0, outPct: 0 }, fractional: true, decimals: 4, staleDays: 4, refSource: 'auto', manualTickers: [] },
-    flows: [], lots: [], prices: {}, snapshots: []
+      fees: { inFixed: 0, inPct: 0, outFixed: 0, outPct: 0 }, fractional: true, decimals: 4, staleDays: 4, refSource: 'auto', manualTickers: [], nearPct: 2 },
+    flows: [], lots: [], prices: {}, snapshots: [], watch: []
   };
 }
 function normalize(st) {
@@ -599,7 +610,7 @@ function normalize(st) {
   const out = Object.assign({}, d, st);
   out.settings = Object.assign({}, d.settings, st.settings || {});
   out.settings.fees = Object.assign({}, d.settings.fees, (st.settings && st.settings.fees) || {});
-  for (const k of ['flows', 'lots', 'snapshots']) out[k] = Array.isArray(st[k]) ? st[k] : [];
+  for (const k of ['flows', 'lots', 'snapshots', 'watch']) out[k] = Array.isArray(st[k]) ? st[k] : [];
   out.prices = st.prices && typeof st.prices === 'object' ? st.prices : {};
   for (const l of out.lots) l.events = Array.isArray(l.events) ? l.events : [];
   return out;
@@ -882,7 +893,7 @@ async function refreshQuotes(manual) {
   const key = quoteKey();
   if (!key || Live.busy) return;
   const skip = manualSet();
-  const tickers = [...new Set(S.lots.filter(l => !Core.lotState(l).closed).map(l => l.ticker))].filter(t => !skip.has(t)).sort();
+  const tickers = [...new Set(S.lots.filter(l => !Core.lotState(l).closed).map(l => l.ticker).concat(S.watch.filter(w => !w.sym).map(w => w.ticker)))].filter(t => !skip.has(t)).sort();
   if (!tickers.length) return;
   Live.busy = true;
   if (manual) toast('Récupération des cours…');
@@ -946,6 +957,261 @@ function quotesPanel() {
   </section>`;
 }
 
+// ---------- Radar SMA : historique Twelve Data, SMA journalière / hebdo / mensuelle, alertes de clôture ----------
+// La liste suivie (S.watch) est synchronisée ; l'historique reste sur l'appareil (IndexedDB), une requête par action et par jour.
+const TD_KEY = 'carnet-positions:twelvedata', SEEN_KEY = 'carnet-positions:radar-vu';
+const TF_SHORT = { D: 'J', W: 'S', M: 'M' }, TF_LONG = { D: 'journalière', W: 'hebdo', M: 'mensuelle' };
+const Radar = { hist: {}, busy: false, done: 0, todo: 0, err: '', errs: {}, loaded: false };
+let radarQuery = '';
+const tdKey = () => { try { return localStorage.getItem(TD_KEY) || ''; } catch (e) { return ''; } };
+const symOf = w => (w.sym || w.ticker).toUpperCase();
+const HDB = {
+  p: null,
+  open() {
+    if (!this.p) this.p = new Promise((res, rej) => {
+      const r = indexedDB.open('carnet-historique', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('h');
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+    return this.p;
+  },
+  async run(mode, fn) {
+    try {
+      const db = await this.open();
+      return await new Promise(res => { const tx = db.transaction('h', mode); const q = fn(tx.objectStore('h')); tx.oncomplete = () => res(q && q.result); tx.onerror = () => res(null); });
+    } catch (e) { return null; }
+  },
+  get(k) { return this.run('readonly', s => s.get(k)); },
+  set(k, v) { return this.run('readwrite', s => s.put(v, k)); }
+};
+const wdOf = d => new Date(d + 'T12:00:00').getDay();
+function nextWeekday(d) { do { d = addDays(d, 1); } while (wdOf(d) === 0 || wdOf(d) === 6); return d; }
+// Dernière séance terminée à New York (jours fériés non gérés : la séance manquante est simplement absente des données).
+function lastSession(ms) {
+  const n = nyParts(ms); let d = n.date;
+  if (!(wdOf(d) >= 1 && wdOf(d) <= 5 && n.min >= 965)) { do { d = addDays(d, -1); } while (wdOf(d) === 0 || wdOf(d) === 6); }
+  return d;
+}
+function weekKey(d) { const t = new Date(d + 'T12:00:00'); t.setDate(t.getDate() - (t.getDay() + 6) % 7); return t.toLocaleDateString('sv-SE'); }
+const periodKey = (tf, d) => tf === 'M' ? d.slice(0, 7) : tf === 'W' ? weekKey(d) : d;
+// Nombre de clôtures journalières nécessaires pour une SMA, avec une marge pour retrouver le dernier croisement.
+function barsNeeded(w) { const n = w.period + 25; return Math.min(5000, w.tf === 'M' ? n * 22 : w.tf === 'W' ? n * 5 : n); }
+async function tdSeries(sym, n, key) {
+  const r = await fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=1day&outputsize=${n}&apikey=${encodeURIComponent(key)}`, { cache: 'no-store' });
+  const j = await r.json().catch(() => ({}));
+  if (j.status === 'error' || !Array.isArray(j.values)) throw Object.assign(new Error(j.message || 'erreur ' + r.status), { code: j.code || r.status });
+  return j.values.map(v => [String(v.datetime).slice(0, 10), +v.close]).filter(v => v[1] > 0).sort((a, b) => a[0] < b[0] ? -1 : 1);
+}
+async function loadRadarCache() {
+  for (const sym of new Set(S.watch.map(symOf))) if (!Radar.hist[sym]) { const h = await HDB.get(sym); if (h) Radar.hist[sym] = h; }
+  Radar.loaded = true;
+}
+// Met à jour l'historique des actions suivies : 8 requêtes par minute au plus (offre gratuite).
+async function refreshRadar(manual) {
+  const key = tdKey();
+  if (!key || Radar.busy || !S.watch.length) return;
+  Radar.busy = true; Radar.err = '';
+  await loadRadarCache();
+  const ls = lastSession(Date.now()), need = {};
+  for (const w of S.watch) { const s = symOf(w); need[s] = Math.max(need[s] || 0, barsNeeded(w)); }
+  const todo = Object.keys(need).filter(s => { const h = Radar.hist[s]; return !h || h.n < need[s] || (h.last < ls && h.ls !== ls); });
+  Radar.done = 0; Radar.todo = todo.length;
+  if (manual) toast(todo.length ? `Historique : ${todo.length} action(s) à mettre à jour` : 'Radar à jour');
+  if (tab === 'radar') render();
+  for (let i = 0; i < todo.length; i++) {
+    const s = todo[i];
+    if (i) await new Promise(r => setTimeout(r, 8000));
+    try {
+      let bars = await tdSeries(s, need[s], key).catch(async e => {
+        if (e.code === 429) { await new Promise(r => setTimeout(r, 61000)); return tdSeries(s, need[s], key); }
+        throw e;
+      });
+      bars = bars.filter(b => b[0] <= ls);
+      const h = { bars, n: need[s], last: bars.length ? bars[bars.length - 1][0] : '', ls, at: Date.now() };
+      Radar.hist[s] = h; await HDB.set(s, h); delete Radar.errs[s];
+    } catch (e) {
+      if (e.code === 401 || e.code === 403 && /key/i.test(e.message)) { Radar.err = 'clé Twelve Data refusée'; break; }
+      Radar.errs[s] = e.message;
+    }
+    Radar.done = i + 1;
+    if (tab === 'radar' || tab === 'dash') render();
+  }
+  Radar.busy = false;
+  if (tab !== 'calc') render();
+}
+function groupBars(daily, tf) {
+  const out = [];
+  for (const [d, c] of daily) {
+    const k = periodKey(tf, d), last = out[out.length - 1];
+    if (last && last.k === k) { last.c = c; last.d = d; } else out.push({ k, d, c });
+  }
+  return out;
+}
+function analyzeWatch(w) {
+  const h = Radar.hist[symOf(w)];
+  if (!h || !h.bars.length) return null;
+  const all = groupBars(h.bars, w.tf), ls = lastSession(Date.now());
+  // Bougie hebdo ou mensuelle pas encore terminée : elle sert de cours actuel, pas de clôture.
+  let done = all, forming = null;
+  const L = all[all.length - 1];
+  if (w.tf !== 'D' && L.k === periodKey(w.tf, ls) && periodKey(w.tf, nextWeekday(ls)) === L.k) { done = all.slice(0, -1); forming = L; }
+  const n = w.period, c = done.map(b => b.c);
+  if (c.length < n + 1) return { short: true, have: c.length };
+  const pre = [0]; for (const x of c) pre.push(pre[pre.length - 1] + x);
+  const sma = i => (pre[i + 1] - pre[i + 1 - n]) / n;
+  const i = c.length - 1, s1 = sma(i), above = c[i] > s1, wasAbove = c[i - 1] > sma(i - 1);
+  const cross = above !== wasAbove ? (above ? 'up' : 'down') : null;
+  let lastCross = null;
+  for (let k = i; k >= n; k--) { const a = c[k] > sma(k), b = c[k - 1] > sma(k - 1); if (a !== b) { lastCross = { dir: a ? 'up' : 'down', date: done[k].d }; break; } }
+  const live = Live.prices[w.ticker];
+  let p = c[i], src = 'clôture du ' + fmtDate(done[i].d).replace(/ \d{4}$/, ''), cur = false;
+  if (live && live.date > done[i].d) { p = live.price; src = 'direct ' + hhmm(live.at); cur = true; }
+  else if (forming) { p = forming.c; src = 'séance du ' + fmtDate(forming.d).replace(/ \d{4}$/, ''); cur = true; }
+  const smaNow = cur ? (pre[i + 1] - pre[i + 2 - n] + p) / n : s1;
+  const dist = (p - smaNow) / smaNow * 100;
+  const pending = cur && (p > smaNow) !== above ? (p > smaNow ? 'up' : 'down') : null;
+  const near = Math.abs(dist) <= (S.settings.nearPct || 2);
+  return { lastClose: c[i], lastDate: done[i].d, sma: s1, smaNow, p, src, dist, above, cross, pending, near, lastCross };
+}
+// Alertes : clôture au-dessus, clôture en dessous (à chaque croisement), et cours proche de la SMA (une fois par bougie).
+function radarAlerts() {
+  const out = [];
+  for (const w of S.watch) {
+    const a = analyzeWatch(w); if (!a || a.short) continue;
+    const lab = `${esc(w.ticker)} · SMA ${w.period} ${TF_SHORT[w.tf]}`;
+    if (a.cross) out.push({ key: `${w.id}|${w.tf}${w.period}|${a.cross}|${a.lastDate}`, w, a, lvl: a.cross === 'up' ? 'up' : 'down',
+      txt: `<strong>${lab}</strong> : ${a.cross === 'up' ? 'clôture au-dessus' : 'clôture en dessous'} de la SMA (${usd(a.lastClose)} contre ${usd(a.sma)}, bougie du ${fmtDate(a.lastDate)})` });
+    else if (a.near) out.push({ key: `${w.id}|${w.tf}${w.period}|near|${a.lastDate}`, w, a, lvl: 'near',
+      txt: `<strong>${lab}</strong> : proche de la SMA, ${pct(a.dist, true)} (${usd(a.p)} contre ${usd(a.smaNow)})` });
+  }
+  const seen = new Set(readSeen());
+  for (const x of out) x.seen = seen.has(x.key);
+  return out;
+}
+function readSeen() { try { return JSON.parse(localStorage.getItem(SEEN_KEY) || '[]'); } catch (e) { return []; } }
+function markSeen(keys) { try { const s = new Set(readSeen()); keys.forEach(k => s.add(k)); localStorage.setItem(SEEN_KEY, JSON.stringify([...s].slice(-500))); } catch (e) {} }
+function radarStatus(a) {
+  if (!a) return ['', 'Historique en attente'];
+  if (a.short) return ['', `Historique insuffisant (${a.have} bougies)`];
+  if (a.cross === 'up') return ['win', 'Clôture au-dessus'];
+  if (a.cross === 'down') return ['loss', 'Clôture en dessous'];
+  if (a.pending === 'up') return ['open', 'Passe au-dessus · bougie en cours'];
+  if (a.pending === 'down') return ['warn', 'Passe en dessous · bougie en cours'];
+  if (a.near) return ['warn', 'Proche de la SMA'];
+  return a.above ? ['', 'Au-dessus'] : ['', 'En dessous'];
+}
+function radarRank(a) { if (!a || a.short) return 9; if (a.cross) return 0; if (a.pending) return 1; if (a.near) return 2; return a.above ? 3 : 4; }
+function viewRadar() {
+  const key = tdKey();
+  if (!Radar.loaded && S.watch.length) loadRadarCache().then(() => { if (tab === 'radar') render(); });
+  const setup = `<section class="card">
+    <div class="sec-head"><h2>Radar SMA</h2></div>
+    <p class="lead">Le radar calcule la SMA de chaque action que vous suivez (journalière, hebdo ou mensuelle) et vous alerte quand le cours s’en approche, clôture au-dessus, ou clôture en dessous. Il faut une clé gratuite Twelve Data pour l’historique des cours.</p>
+    <ol class="lead" style="padding-left:18px;margin:0;display:grid;gap:6px">
+      <li>Créez un compte gratuit sur <a href="https://twelvedata.com/register" target="_blank" rel="noopener">twelvedata.com</a>.</li>
+      <li>Dans votre espace Twelve Data, copiez la clé API (« API Keys »).</li>
+      <li>Collez-la ci-dessous et touchez Enregistrer. À faire sur chaque appareil.</li></ol>
+    <div class="fields"><div class="fld wide"><label for="td-key">Clé API Twelve Data</label><input id="td-key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false"></div></div>
+    <div class="row"><button class="btn primary sm" data-act="td-on">Enregistrer et tester</button></div>
+    <p class="hint">La clé reste sur cet appareil : elle n’est ni synchronisée ni exportée.</p>
+  </section>`;
+  const rows = S.watch.map(w => ({ w, a: analyzeWatch(w) }));
+  rows.sort((x, y) => radarRank(x.a) - radarRank(y.a) || (x.a && !x.a.short && y.a && !y.a.short ? Math.abs(x.a.dist) - Math.abs(y.a.dist) : 0) || (x.w.ticker < y.w.ticker ? -1 : 1));
+  const al = radarAlerts(), fresh = al.filter(x => !x.seen);
+  const prog = Radar.busy ? `<div class="alert live on"><span>Historique : ${Radar.done} / ${Radar.todo} action(s)… (8 par minute, offre gratuite)</span></div>` : '';
+  const errs = Object.keys(Radar.errs);
+  const row = ({ w, a }) => {
+    const [pc, st] = radarStatus(a), lot = S.lots.find(l => l.ticker === w.ticker && !Core.lotState(l).closed);
+    const ok = a && !a.short;
+    const stopBtn = lot && ok && Math.abs((lot.stopCurrent || 0) - a.sma) >= 0.005
+      ? `<button class="btn sm" data-act="radar-stop" data-id="${w.id}">Stop → ${usd(a.sma)}</button>` : '';
+    const calcBtn = !lot && ok && a.cross !== 'down' && (a.above || a.pending === 'up') ? `<button class="btn sm primary" data-act="radar-calc" data-id="${w.id}">Calculer la taille</button>` : '';
+    return `<article class="rrow ${pc}" data-q="${esc((w.ticker + ' ' + (w.note || '')).toLowerCase())}">
+      <header><div><span class="tk">${esc(w.ticker)}</span> <span class="pill">SMA ${w.period} · ${TF_SHORT[w.tf]}</span></div>
+        ${ok ? `<div class="pl ${cls(a.dist)}">${pct(a.dist, true)}<small>${usd(a.p)}</small></div>` : ''}</header>
+      <div class="rstat"><span class="pill ${pc}">${st}</span>${lot ? '<span class="pill open">Position ouverte</span>' : ''}${ok ? `<small class="muted">${a.src}</small>` : ''}</div>
+      ${ok ? `<div class="rail-leg"><span>SMA ${usd(a.smaNow)}${Math.abs(a.smaNow - a.sma) > 0.005 ? ` (clôture : ${usd(a.sma)})` : ''}</span><span>${a.lastCross ? `Dernier croisement : ${a.lastCross.dir === 'up' ? '↑ au-dessus' : '↓ en dessous'} le ${fmtDate(a.lastCross.date)}` : ''}</span>${lot ? `<span>Stop actuel ${isNum(lot.stopCurrent) ? usd(lot.stopCurrent) : '—'}</span>` : ''}</div>` : Radar.errs[symOf(w)] ? `<p class="hint neg">Twelve Data : ${esc(Radar.errs[symOf(w)])}${w.sym ? '' : ' · essayez un autre symbole (Modifier)'}</p>` : ''}
+      ${w.note ? `<p class="hint">${esc(w.note)}</p>` : ''}
+      <div class="row">${calcBtn}${stopBtn}<button class="btn sm" data-act="radar-edit" data-id="${w.id}">Modifier</button><button class="btn sm danger" data-act="radar-del" data-id="${w.id}">Retirer</button></div>
+    </article>`;
+  };
+  return `${key ? '' : setup}
+  <section class="card">
+    <div class="sec-head"><h2>Radar SMA</h2><div class="row"><button class="btn sm" data-act="radar-refresh" ${key && S.watch.length ? '' : 'disabled'}>Actualiser</button><button class="btn sm primary" data-act="radar-add">+ Ajouter</button></div></div>
+    <p class="lead">${S.watch.length} action(s) suivie(s). Alerte « proche » à ${fmtNum(S.settings.nearPct || 2)} % de la SMA. Les clôtures sont celles de New York ; la bougie en cours est recalculée avec le cours en direct.</p>
+    ${prog}${Radar.err ? `<div class="banner err">${esc(Radar.err)}</div>` : ''}
+    ${errs.length ? `<p class="hint">Sans historique : ${errs.map(esc).join(', ')}.</p>` : ''}
+    <div class="row"><button class="btn sm" data-act="radar-import">Importer une liste</button><button class="btn sm" data-act="radar-settings">Réglages du radar</button></div>
+  </section>
+  ${al.length ? `<section class="card">
+    <div class="sec-head"><h2>Alertes</h2>${fresh.length ? `<button class="btn sm" data-act="radar-seen-all">Tout marquer comme vu</button>` : ''}</div>
+    <div class="alerts">${al.sort((x, y) => (x.seen - y.seen) || (x.lvl === 'near') - (y.lvl === 'near')).map(x => `<div class="alert ${x.lvl === 'up' ? 'ok up' : x.lvl === 'down' ? 'err' : 'warn'} ${x.seen ? 'seen' : ''}"><span>${x.seen ? '' : '<b class="new">Nouveau</b> '}${x.txt}</span>${x.seen ? '' : `<button class="btn sm" data-act="radar-seen" data-k="${esc(x.key)}">Vu</button>`}</div>`).join('')}</div>
+  </section>` : ''}
+  <section class="card">
+    ${S.watch.length ? `<div class="search"><input type="search" id="radar-q" value="${esc(radarQuery)}" placeholder="Rechercher une action" autocomplete="off" autocapitalize="characters" aria-label="Rechercher une action"></div>
+      <div class="rlist">${rows.map(row).join('')}</div>`
+      : '<p class="lead">Aucune action suivie. Touchez « + Ajouter » pour saisir une action et sa SMA, ou « Importer une liste » pour en coller plusieurs d’un coup.</p>'}
+  </section>`;
+}
+function applyRadarQuery() {
+  const q = radarQuery.trim().toLowerCase();
+  for (const el of document.querySelectorAll('.rrow[data-q]')) el.hidden = !!q && !el.dataset.q.includes(q);
+}
+function sheetWatch(w) {
+  const isNew = !w; w = w || { ticker: '', period: '', tf: 'D', sym: '', note: '' };
+  openSheet({
+    title: isNew ? 'Suivre une action' : 'Modifier ' + w.ticker, ok: 'Enregistrer',
+    body: `<div class="fields">
+      ${inp('ticker', 'Ticker', w.ticker, 'autocapitalize="characters" required')}
+      ${inp('period', 'Période de la SMA', w.period, 'inputmode="numeric" placeholder="ex. 89"')}
+      <div class="fld"><label for="f-tf">Unité</label><select id="f-tf" name="tf">${Object.keys(TF_LONG).map(k => `<option value="${k}" ${w.tf === k ? 'selected' : ''}>${TF_SHORT[k]} · ${TF_LONG[k]}</option>`).join('')}</select></div>
+      ${inp('sym', 'Symbole Twelve Data (si différent)', w.sym || '', 'autocapitalize="characters" placeholder="facultatif"', 'Pour une action hors USA ou un symbole différent chez Twelve Data.')}
+      <div class="fld wide"><label for="f-note">Note</label><input id="f-note" name="note" value="${esc(w.note || '')}" placeholder="facultatif"></div></div>`,
+    onSubmit: form => {
+      const t = F(form, 'ticker').trim().toUpperCase(), n = num(F(form, 'period')), tf = F(form, 'tf'), sym = F(form, 'sym').trim().toUpperCase();
+      need(/^[A-Z0-9.\-]{1,12}$/.test(t), 'Ticker invalide.');
+      need(Number.isInteger(n) && n >= 2 && n <= 400, 'Période entre 2 et 400.');
+      need(!sym || /^[A-Z0-9.:\-\/]{1,20}$/.test(sym), 'Symbole invalide.');
+      need(!S.watch.some(x => x !== w && x.ticker === t && x.tf === tf && x.period === n), 'Cette action est déjà suivie avec cette SMA.');
+      Object.assign(w, { ticker: t, period: n, tf, sym: sym && sym !== t ? sym : '', note: F(form, 'note').trim() });
+      if (isNew) { w.id = uid(); S.watch.push(w); }
+      save(isNew ? t + ' ajoutée au radar' : 'Radar mis à jour');
+      refreshRadar();
+    }
+  });
+}
+function sheetWatchImport() {
+  openSheet({
+    title: 'Importer une liste', ok: 'Importer',
+    body: `<p class="lead">Une action par ligne : ticker, période, unité (J, S ou M). Exemple :</p>
+      <pre class="hint" style="margin:0">ABBV;8;J\nACN;89;S\nTROW;55;M</pre>
+      <div class="fields"><div class="fld wide"><label for="f-list">Liste</label><textarea id="f-list" name="list" rows="8" autocapitalize="characters"></textarea></div></div>`,
+    onSubmit: form => {
+      const map = { J: 'D', D: 'D', S: 'W', W: 'W', M: 'M' };
+      let add = 0; const bad = [];
+      for (const line of F(form, 'list').split(/\n/)) {
+        const l = line.trim(); if (!l) continue;
+        const [t, p, u] = l.split(/[;,\t ]+/).map(x => x.trim().toUpperCase());
+        const n = parseInt(p, 10), tf = map[u || 'J'];
+        if (!/^[A-Z0-9.\-]{1,12}$/.test(t || '') || !(n >= 2 && n <= 400) || !tf) { bad.push(l); continue; }
+        if (S.watch.some(x => x.ticker === t && x.tf === tf && x.period === n)) continue;
+        S.watch.push({ id: uid(), ticker: t, period: n, tf, sym: '', note: '' }); add++;
+      }
+      need(add || !bad.length, 'Lignes non reconnues : ' + bad.slice(0, 3).join(' | '));
+      save(`${add} action(s) ajoutée(s)${bad.length ? ` · ${bad.length} ligne(s) ignorée(s)` : ''}`);
+      refreshRadar();
+    }
+  });
+}
+function sheetRadarSettings() {
+  openSheet({
+    title: 'Réglages du radar', ok: 'Enregistrer',
+    body: `<div class="fields">${dec('nearPct', 'Alerte « proche » à (% de la SMA)', S.settings.nearPct || 2)}</div>
+      ${tdKey() ? '<div class="row"><button type="button" class="btn sm danger" data-act="td-off">Retirer la clé Twelve Data</button></div>' : ''}`,
+    onSubmit: form => { const v = num(F(form, 'nearPct')); need(v > 0 && v <= 20, 'Entre 0 et 20 %.'); S.settings.nearPct = v; save('Réglages du radar enregistrés'); }
+  });
+}
+
 // ---------- Rendu ----------
 function render() {
   document.querySelectorAll('nav.tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === tab ? 'true' : 'false'));
@@ -955,6 +1221,7 @@ function render() {
     if (tab === 'dash') v.innerHTML = viewDash();
     else if (tab === 'calc') { v.innerHTML = viewCalc(); updateCalc(); }
     else if (tab === 'pos') { v.innerHTML = viewPos(); applyPosQuery(); loadThumbs(); }
+    else if (tab === 'radar') { v.innerHTML = viewRadar(); applyRadarQuery(); }
     else v.innerHTML = viewSettings();
   } finally { S.prices = saved; }
 }
@@ -987,6 +1254,8 @@ function alertsList() {
 }
 function alertsStrip() {
   const a = alertsList();
+  const ra = S.watch.length ? radarAlerts().filter(x => !x.seen) : [];
+  if (ra.length) a.unshift({ lvl: ra.some(x => x.lvl !== 'near') ? 'err' : 'warn', txt: `<strong>Radar SMA</strong> : ${ra.length} nouvelle(s) alerte(s) · ${ra.slice(0, 3).map(x => esc(x.w.ticker) + (x.lvl === 'up' ? ' ↑' : x.lvl === 'down' ? ' ↓' : ' ≈')).join(', ')}${ra.length > 3 ? '…' : ''}`, act: 'go-radar', btn: 'Voir' });
   if (!a.length) return S.lots.some(l => !Core.lotState(l).closed) ? '<div class="alerts"><div class="alert ok"><span>Aucune alerte : stops en place, cours à jour, marge correcte.</span></div></div>' : '';
   const row = x => `<div class="alert ${x.lvl}"><span>${x.txt}</span>${x.act ? `<button class="btn sm" data-act="${x.act}">${x.btn}</button>` : x.lot ? `<button class="btn sm" data-act="open-lot" data-lot="${x.lot}">Voir</button>` : ''}</div>`;
   a.sort((p, q) => (p.lvl === 'err' ? 0 : 1) - (q.lvl === 'err' ? 0 : 1));
@@ -1868,6 +2137,39 @@ document.addEventListener('click', e => {
     case 'prices': sheetPrices(); break;
     case 'jfilter': journalFilter = b.dataset.f; render(); break;
     case 'psort': posSort = b.dataset.f; render(); break;
+    case 'go-radar': tab = 'radar'; render(); window.scrollTo(0, 0); break;
+    case 'radar-add': sheetWatch(); break;
+    case 'radar-import': sheetWatchImport(); break;
+    case 'radar-settings': sheetRadarSettings(); break;
+    case 'radar-refresh': refreshQuotes(); refreshRadar(true); break;
+    case 'radar-edit': sheetWatch(S.watch.find(x => x.id === b.dataset.id)); break;
+    case 'radar-del': { const w = S.watch.find(x => x.id === b.dataset.id);
+      confirmSheet('Retirer ' + esc(w.ticker) + ' du radar ?', `SMA ${w.period} ${TF_LONG[w.tf]}. Vos positions ne sont pas touchées.`, 'Retirer', () => { S.watch = S.watch.filter(x => x !== w); save('Retirée du radar'); }); break; }
+    case 'radar-seen': markSeen([b.dataset.k]); render(); break;
+    case 'radar-seen-all': markSeen(radarAlerts().map(x => x.key)); render(); break;
+    case 'radar-calc': {
+      const w = S.watch.find(x => x.id === b.dataset.id), a = analyzeWatch(w);
+      calcDraft = Object.assign(freshDraft(), { ticker: w.ticker, entry: String(Core.roundTo(a.p, 2)), stop: String(Core.roundTo(a.smaNow, 2)), example: false });
+      tab = 'calc'; render(); window.scrollTo(0, 0); toast('Entrée au cours actuel, stop sur la SMA : ajustez si besoin'); break;
+    }
+    case 'radar-stop': {
+      const w = S.watch.find(x => x.id === b.dataset.id), a = analyzeWatch(w), l = S.lots.find(x => x.ticker === w.ticker && !Core.lotState(x).closed);
+      sheetStop(l); const el = document.querySelector('#sheetForm [name="stop"]'); if (el) el.value = String(Core.roundTo(a.sma, 2)).replace('.', ',');
+      break;
+    }
+    case 'td-on': {
+      const k = ($('#td-key').value || '').trim();
+      if (!/^[A-Za-z0-9]{16,}$/.test(k)) { toast('Collez la clé API Twelve Data (lettres et chiffres).'); break; }
+      b.disabled = true;
+      tdSeries('AAPL', 5, k).then(v => {
+        if (!v.length) throw new Error('réponse vide');
+        try { localStorage.setItem(TD_KEY, k); } catch (e) {}
+        toast('Clé Twelve Data enregistrée'); render(); refreshRadar(true);
+      }).catch(e => { b.disabled = false; toast('Clé non valide : ' + (e instanceof TypeError ? 'pas de réseau' : e.message)); });
+      break;
+    }
+    case 'td-off': closeSheet(); confirmSheet('Retirer la clé Twelve Data ?', 'Le radar ne mettra plus son historique à jour sur cet appareil. Votre liste reste.', 'Retirer', () => {
+      try { localStorage.removeItem(TD_KEY); } catch (e) {} render(); toast('Clé retirée'); }); break;
     case 'quotes-now': refreshQuotes(true); break;
     case 'quotes-manual': {
       const list = [...new Set(($('#q-manual').value || '').toUpperCase().split(/[\s,;]+/).filter(Boolean))];
@@ -1974,6 +2276,7 @@ document.addEventListener('toggle', e => {
 }, true);
 document.addEventListener('input', e => {
   if (e.target.id === 'pos-q') { posQuery = e.target.value; applyPosQuery(); return; }
+  if (e.target.id === 'radar-q') { radarQuery = e.target.value; applyRadarQuery(); return; }
   if (e.target.id === 'price-q') {
     const q = e.target.value.trim().toLowerCase();
     for (const r of document.querySelectorAll('#sheet .pr')) r.hidden = !!q && !r.dataset.t.includes(q);
@@ -2027,7 +2330,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet
 (function boot() {
   const local = readLocal();
   if (local) S = normalize(local);
-  try { const h = location.hash.slice(1); if (['dash', 'calc', 'pos', 'set'].includes(h)) tab = h; } catch (e) {}
+  try { const h = location.hash.slice(1); if (['dash', 'calc', 'pos', 'radar', 'set'].includes(h)) tab = h; } catch (e) {}
   Store.cfg = readJSON(SYNC_KEY, null);
   if (!local) { loadDemo(); S.updatedAt = 0; writeLocal(); }
   render();
@@ -2035,7 +2338,8 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   // Cours automatiques : à l'ouverture, au retour sur l'app, puis toutes les 2 minutes pendant la séance.
   refreshQuotes();
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - Live.at > 60000) refreshQuotes(); });
+  loadRadarCache().then(() => { render(); refreshRadar(); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { if (Date.now() - Live.at > 60000) refreshQuotes(); refreshRadar(); } });
   setInterval(() => { if (document.visibilityState === 'visible' && tab !== 'calc' && marketOpen(Date.now())) refreshQuotes(); }, 120000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Store.cfg) scheduleSync(200); });
   window.addEventListener('online', () => { if (Store.cfg) scheduleSync(200); });
