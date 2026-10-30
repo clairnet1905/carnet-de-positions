@@ -283,7 +283,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.5.1 · licence MIT */
+/* Carnet de positions v1.6.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -889,11 +889,15 @@ async function fetchQuote(sym, key) {
   if (!r.ok) throw new Error('erreur Finnhub ' + r.status);
   return r.json();
 }
-async function refreshQuotes(manual) {
+// hotOnly : pendant la séance, entre deux mises à jour complètes, seulement les positions ouvertes
+// et les actions du radar proches de leur SMA (limite gratuite Finnhub : 60 requêtes par minute).
+async function refreshQuotes(manual, hotOnly) {
   const key = quoteKey();
   if (!key || Live.busy) return;
   const skip = manualSet();
-  const tickers = [...new Set(S.lots.filter(l => !Core.lotState(l).closed).map(l => l.ticker).concat(S.watch.filter(w => !w.sym).map(w => w.ticker)))].filter(t => !skip.has(t)).sort();
+  const openT = new Set(S.lots.filter(l => !Core.lotState(l).closed).map(l => l.ticker));
+  let tickers = [...new Set([...openT].concat(S.watch.filter(w => !w.sym).map(w => w.ticker)))].filter(t => !skip.has(t)).sort();
+  if (hotOnly) { const hot = hotTickers(); tickers = tickers.filter(t => openT.has(t) || hot.has(t)); }
   if (!tickers.length) return;
   Live.busy = true;
   if (manual) toast('Récupération des cours…');
@@ -902,9 +906,12 @@ async function refreshQuotes(manual) {
     const idle = async () => { while (Store.busy) await new Promise(r => setTimeout(r, 200)); };
     await idle(); await syncNow(); await idle();
   }
-  const ny = nyParts(Date.now()), got = {}, miss = [];
-  let saved = 0, err = '';
-  for (const t of tickers) {
+  if (S.watch.length) await loadRadarCache();
+  const ny = nyParts(Date.now()), got = {}, miss = [], pace = tickers.length > 50 ? 1100 : 0;
+  let saved = 0, appended = 0, err = '';
+  for (let i = 0; i < tickers.length; i++) {
+    const t = tickers[i];
+    if (pace && i) await new Promise(r => setTimeout(r, pace));
     try {
       const q = await fetchQuote(t, key);
       if (!(q && q.c > 0 && q.t > 0)) { miss.push(t); continue; }
@@ -912,12 +919,16 @@ async function refreshQuotes(manual) {
       got[t] = { date: d, price: q.c, live: true, at: q.t * 1000, dp: q.dp };
       // Séance terminée (16 h 05 à New York passé, ou jour suivant) : le dernier cours est la clôture.
       if (ny.date > d || ny.min >= 965) {
-        const ex = (S.prices[t] || []).find(x => x.date === d);
-        if (!ex || (ex.src === 'auto' && ex.price !== q.c)) { addPrice(t, d, q.c, false, 'auto'); saved++; }
+        if (openT.has(t)) {
+          const ex = (S.prices[t] || []).find(x => x.date === d);
+          if (!ex || (ex.src === 'auto' && ex.price !== q.c)) { addPrice(t, d, q.c, false, 'auto'); saved++; }
+        }
+        if (await appendClose(t, d, q.c)) appended++;
       }
     } catch (e) { err = e.message; if (e.stop) break; }
   }
-  Object.assign(Live, { prices: got, at: Date.now(), miss, err, busy: false });
+  Object.assign(Live, { prices: Object.assign(hotOnly ? Live.prices : {}, got), at: Date.now(), err, busy: false });
+  if (!hotOnly) { Live.miss = miss; Live.fullAt = Date.now(); }
   if (saved) save(manual ? `Cours mis à jour · ${saved} clôture(s) enregistrée(s)` : '');
   else { if (tab !== 'calc') render(); if (manual) toast(err ? 'Cours : ' + err : 'Cours mis à jour'); }
 }
@@ -986,6 +997,26 @@ const HDB = {
 };
 const wdOf = d => new Date(d + 'T12:00:00').getDay();
 function nextWeekday(d) { do { d = addDays(d, 1); } while (wdOf(d) === 0 || wdOf(d) === 6); return d; }
+function prevWeekday(d) { do { d = addDays(d, -1); } while (wdOf(d) === 0 || wdOf(d) === 6); return d; }
+// Action du radar dont Finnhub fournit la clôture du jour (symbole US, cours automatique).
+const finnhubCovers = sym => !!quoteKey() && !manualSet().has(sym) && S.watch.some(w => !w.sym && w.ticker === sym);
+// Ajoute la clôture du jour (Finnhub) à l'historique gardé sur l'appareil, si elle suit directement la dernière clôture connue.
+async function appendClose(sym, d, c) {
+  const h = Radar.hist[sym];
+  if (!h || !h.bars.length || !finnhubCovers(sym)) return false;
+  const last = h.bars[h.bars.length - 1];
+  if (d < last[0]) return false;
+  if (d === last[0]) { if (last[1] === c) return false; last[1] = c; }
+  else { if (last[0] < prevWeekday(d)) return false; h.bars.push([d, c]); h.last = d; }
+  await HDB.set(sym, h);
+  return true;
+}
+// Actions du radar à suivre en direct pendant la séance : proches de leur SMA ou en train de la croiser.
+function hotTickers() {
+  const out = new Set(), lim = 2 * (S.settings.nearPct || 2);
+  for (const w of S.watch) { if (w.sym) continue; const a = analyzeWatch(w); if (!a || a.short || a.pending || Math.abs(a.dist) <= lim) out.add(w.ticker); }
+  return out;
+}
 // Dernière séance terminée à New York (jours fériés non gérés : la séance manquante est simplement absente des données).
 function lastSession(ms) {
   const n = nyParts(ms); let d = n.date;
@@ -1014,7 +1045,17 @@ async function refreshRadar(manual) {
   await loadRadarCache();
   const ls = lastSession(Date.now()), need = {};
   for (const w of S.watch) { const s = symOf(w); need[s] = Math.max(need[s] || 0, barsNeeded(w)); }
-  const todo = Object.keys(need).filter(s => { const h = Radar.hist[s]; return !h || h.n < need[s] || (h.last < ls && h.ls !== ls); });
+  // Twelve Data : premier chargement, historique trop court, ou trou que Finnhub ne peut pas combler (app non ouverte plusieurs jours).
+  // Sinon, une vérification complète par semaine et par action (division d'actions, jour manqué), 15 actions au plus par ouverture.
+  const prev = prevWeekday(ls), WEEK = 7 * 864e5, must = [], resync = [];
+  for (const s of Object.keys(need)) {
+    const h = Radar.hist[s];
+    if (!h || h.n < need[s]) must.push(s);
+    else if (h.last < ls && h.ls !== ls && !(finnhubCovers(s) && h.last >= prev)) must.push(s);
+    else if (Date.now() - (h.full || 0) > WEEK) resync.push(s);
+  }
+  resync.sort((a, b) => (Radar.hist[a].full || 0) - (Radar.hist[b].full || 0));
+  const todo = must.concat(resync.slice(0, 15));
   Radar.done = 0; Radar.todo = todo.length;
   if (manual) toast(todo.length ? `Historique : ${todo.length} action(s) à mettre à jour` : 'Radar à jour');
   if (tab === 'radar') render();
@@ -1027,7 +1068,7 @@ async function refreshRadar(manual) {
         throw e;
       });
       bars = bars.filter(b => b[0] <= ls);
-      const h = { bars, n: need[s], last: bars.length ? bars[bars.length - 1][0] : '', ls, at: Date.now() };
+      const h = { bars, n: need[s], last: bars.length ? bars[bars.length - 1][0] : '', ls, at: Date.now(), full: Date.now() };
       Radar.hist[s] = h; await HDB.set(s, h); delete Radar.errs[s];
     } catch (e) {
       if (e.code === 401 || e.code === 403 && /key/i.test(e.message)) { Radar.err = 'clé Twelve Data refusée'; break; }
@@ -1138,7 +1179,7 @@ function viewRadar() {
   return `${key ? '' : setup}
   <section class="card">
     <div class="sec-head"><h2>Radar SMA</h2><div class="row"><button class="btn sm" data-act="radar-refresh" ${key && S.watch.length ? '' : 'disabled'}>Actualiser</button><button class="btn sm primary" data-act="radar-add">+ Ajouter</button></div></div>
-    <p class="lead">${S.watch.length} action(s) suivie(s). Alerte « proche » à ${fmtNum(S.settings.nearPct || 2)} % de la SMA. Les clôtures sont celles de New York ; la bougie en cours est recalculée avec le cours en direct.</p>
+    <p class="lead">${S.watch.length} SMA suivie(s). Alerte « proche » à ${fmtNum(S.settings.nearPct || 2)} % de la SMA. ${quoteKey() ? 'Historique Twelve Data (une fois, puis vérifié chaque semaine) complété chaque soir par la clôture Finnhub.' : 'Sans clé Finnhub sur cet appareil, l’historique est retéléchargé chaque jour sur Twelve Data (plus lent).'}</p>
     ${prog}${Radar.err ? `<div class="banner err">${esc(Radar.err)}</div>` : ''}
     ${errs.length ? `<p class="hint">Sans historique : ${errs.map(esc).join(', ')}.</p>` : ''}
     <div class="row"><button class="btn sm" data-act="radar-import">Importer une liste</button><button class="btn sm" data-act="radar-settings">Réglages du radar</button></div>
@@ -2350,7 +2391,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet
   refreshQuotes();
   loadRadarCache().then(() => { render(); refreshRadar(); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { if (Date.now() - Live.at > 60000) refreshQuotes(); refreshRadar(); } });
-  setInterval(() => { if (document.visibilityState === 'visible' && tab !== 'calc' && marketOpen(Date.now())) refreshQuotes(); }, 120000);
+  setInterval(() => { if (document.visibilityState === 'visible' && tab !== 'calc' && marketOpen(Date.now())) refreshQuotes(false, Date.now() - (Live.fullAt || 0) < 600000); }, 120000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Store.cfg) scheduleSync(200); });
   window.addEventListener('online', () => { if (Store.cfg) scheduleSync(200); });
   setInterval(() => { if (Store.cfg && document.visibilityState === 'visible') syncNow(); }, 60000);
