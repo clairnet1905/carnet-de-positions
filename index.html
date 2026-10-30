@@ -283,7 +283,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.5.0 · licence MIT */
+/* Carnet de positions v1.5.1 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -1183,22 +1183,32 @@ function sheetWatch(w) {
 function sheetWatchImport() {
   openSheet({
     title: 'Importer une liste', ok: 'Importer',
-    body: `<p class="lead">Une action par ligne : ticker, période, unité (J, S ou M). Exemple :</p>
-      <pre class="hint" style="margin:0">ABBV;8;J\nACN;89;S\nTROW;55;M</pre>
+    body: `<p class="lead">Une action par ligne : le ticker, puis une ou plusieurs SMA (unité J, S ou M et période). Exemples :</p>
+      <pre class="hint" style="margin:0">AAPL J 233 S 55 M 13\nABBV J 8\nACN;89;S</pre>
       <div class="fields"><div class="fld wide"><label for="f-list">Liste</label><textarea id="f-list" name="list" rows="8" autocapitalize="characters"></textarea></div></div>`,
     onSubmit: form => {
       const map = { J: 'D', D: 'D', S: 'W', W: 'W', M: 'M' };
       let add = 0; const bad = [];
       for (const line of F(form, 'list').split(/\n/)) {
         const l = line.trim(); if (!l) continue;
-        const [t, p, u] = l.split(/[;,\t ]+/).map(x => x.trim().toUpperCase());
-        const n = parseInt(p, 10), tf = map[u || 'J'];
-        if (!/^[A-Z0-9.\-]{1,12}$/.test(t || '') || !(n >= 2 && n <= 400) || !tf) { bad.push(l); continue; }
-        if (S.watch.some(x => x.ticker === t && x.tf === tf && x.period === n)) continue;
-        S.watch.push({ id: uid(), ticker: t, period: n, tf, sym: '', note: '' }); add++;
+        const [t, ...rest] = l.split(/[;,\t ]+/).map(x => x.trim().toUpperCase()).filter(Boolean);
+        // Paires « unité période » ou « période unité » ; une période seule est journalière.
+        const pairs = []; let ok = /^[A-Z0-9.\-]{1,12}$/.test(t || '') && rest.length > 0;
+        for (let i = 0; ok && i < rest.length; i++) {
+          const a = rest[i], b = rest[i + 1];
+          if (map[a] && /^\d+$/.test(b || '')) { pairs.push([map[a], +b]); i++; }
+          else if (/^\d+$/.test(a) && map[b]) { pairs.push([map[b], +a]); i++; }
+          else if (/^\d+$/.test(a)) pairs.push(['D', +a]);
+          else ok = false;
+        }
+        if (!ok || pairs.some(([, n]) => !(n >= 2 && n <= 400))) { bad.push(l); continue; }
+        for (const [tf, n] of pairs) {
+          if (S.watch.some(x => x.ticker === t && x.tf === tf && x.period === n)) continue;
+          S.watch.push({ id: uid(), ticker: t, period: n, tf, sym: '', note: '' }); add++;
+        }
       }
       need(add || !bad.length, 'Lignes non reconnues : ' + bad.slice(0, 3).join(' | '));
-      save(`${add} action(s) ajoutée(s)${bad.length ? ` · ${bad.length} ligne(s) ignorée(s)` : ''}`);
+      save(`${add} SMA ajoutée(s)${bad.length ? ` · ${bad.length} ligne(s) ignorée(s)` : ''}`);
       refreshRadar();
     }
   });
