@@ -306,7 +306,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.8.1 · licence MIT */
+/* Carnet de positions v1.9.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -629,7 +629,7 @@ function defaultState() {
     app: 'carnet-positions', version: 1, updatedAt: 0,
     settings: { initialCapital: 1000, startDate: todayISO(), riskPct: 1, cap: 100, leverage: 5,
       fees: { inFixed: 0, inPct: 0, outFixed: 0, outPct: 0 }, fractional: true, decimals: 4, staleDays: 4, refSource: 'auto', manualTickers: [], nearPct: 2 },
-    flows: [], lots: [], prices: {}, snapshots: [], watch: []
+    flows: [], lots: [], prices: {}, snapshots: [], watch: [], seen: {}
   };
 }
 function normalize(st) {
@@ -640,6 +640,7 @@ function normalize(st) {
   out.settings.fees = Object.assign({}, d.settings.fees, (st.settings && st.settings.fees) || {});
   for (const k of ['flows', 'lots', 'snapshots', 'watch']) out[k] = Array.isArray(st[k]) ? st[k] : [];
   out.prices = st.prices && typeof st.prices === 'object' ? st.prices : {};
+  out.seen = st.seen && typeof st.seen === 'object' && !Array.isArray(st.seen) ? st.seen : {};
   for (const l of out.lots) l.events = Array.isArray(l.events) ? l.events : [];
   return out;
 }
@@ -653,7 +654,7 @@ const PERIODS = [['day', 'Jour', 'dernière séance'], ['week', 'Semaine', 'sema
 let calcDraft = null;
 
 // ---------- Stockage : copie sur l'appareil, synchronisée avec un Gist GitHub secret si connecté ----------
-const SYNC_KEY = 'carnet-positions:sync', PENDING_KEY = 'carnet-positions:img-pending', CONFLICT_KEY = 'carnet-positions:conflit', EXPORT_KEY = 'carnet-positions:dernier-export';
+const SYNC_KEY = 'carnet-positions:sync', PENDING_KEY = 'carnet-positions:img-pending', CONFLICT_KEY = 'carnet-positions:conflit', EXPORT_KEY = 'carnet-positions:dernier-export', BASE_KEY = 'carnet-positions:base';
 const STATE_FILE = 'carnet-positions.json';
 const Store = { cfg: null, busy: false, again: false, timer: null, files: {}, lastOk: 0 };
 function readLocal() { try { const t = localStorage.getItem(LS_KEY); return t ? JSON.parse(t) : null; } catch (e) { return null; } }
@@ -745,8 +746,8 @@ async function fetchRemote() {
   return normalize(JSON.parse(text));
 }
 async function pushRemote() {
-  const sent = S.updatedAt;
-  const files = { [STATE_FILE]: { content: JSON.stringify(S) } };
+  const sent = S.updatedAt, body = JSON.stringify(S);
+  const files = { [STATE_FILE]: { content: body } };
   const pend = readJSON(PENDING_KEY, {});
   for (const id in pend) {
     if (pend[id] === 'del') { if (Store.files['img-' + id + '.txt']) files['img-' + id + '.txt'] = null; }
@@ -758,10 +759,42 @@ async function pushRemote() {
   for (const id in pend) if (now[id] === pend[id]) delete now[id];
   writeJSON(PENDING_KEY, now);
   Store.cfg.syncedRev = sent; Store.cfg.dirty = S.updatedAt !== sent; writeJSON(SYNC_KEY, Store.cfg);
+  writeBase(body);
+}
+// Dernière version commune aux deux appareils : sert à savoir qui a ajouté, modifié ou supprimé quoi.
+function writeBase(text) { try { localStorage.setItem(BASE_KEY, text); } catch (e) {} }
+function readBase() { try { const t = localStorage.getItem(BASE_KEY); return t ? normalize(JSON.parse(t)) : null; } catch (e) { return null; } }
+// Fusion à trois : chaque élément (position, flux, valeur courtier, SMA suivie, cours, réglage) garde le changement fait d'un côté ;
+// seul un élément modifié des deux côtés prend la version de l'appareil modifié le plus récemment.
+function mergeState(base, loc, rem) {
+  const J = JSON.stringify, locWins = loc.updatedAt > rem.updatedAt;
+  const pick = (b, l, r) => J(l) === J(r) ? r : b !== undefined && J(b) === J(l) ? r : b !== undefined && J(b) === J(r) ? l : locWins ? l : r;
+  const list = (B, L, R, key) => {
+    const mb = new Map((B || []).map(x => [key(x), x])), ml = new Map(L.map(x => [key(x), x])), mr = new Map(R.map(x => [key(x), x])), out = [];
+    for (const k of new Set([...mr.keys(), ...ml.keys()])) {
+      const b = mb.get(k), l = ml.get(k), r = mr.get(k);
+      if (l && r) out.push(pick(b, l, r));
+      else if (l || r) { const x = l || r; if (!b || J(b) !== J(x)) out.push(x); }  // ajouté d'un côté (gardé), ou supprimé de l'autre sans y avoir été modifié (retiré)
+    }
+    return out;
+  };
+  const out = Object.assign({}, locWins ? loc : rem), id = x => x.id;
+  for (const k of ['lots', 'flows', 'snapshots', 'watch']) out[k] = list(base && base[k], loc[k], rem[k], id);
+  out.prices = {};
+  for (const t of new Set([...Object.keys(rem.prices), ...Object.keys(loc.prices)])) {
+    const v = list(base && base.prices[t], loc.prices[t] || [], rem.prices[t] || [], x => x.date).sort((a, b) => a.date < b.date ? -1 : 1);
+    if (v.length) out.prices[t] = v;
+  }
+  out.settings = {};
+  for (const k of new Set([...Object.keys(rem.settings), ...Object.keys(loc.settings)])) out.settings[k] = pick(base ? base.settings[k] : undefined, loc.settings[k], rem.settings[k]);
+  out.seen = Object.assign({}, rem.seen);
+  for (const k in loc.seen) if (!out.seen[k] || loc.seen[k] > out.seen[k]) out.seen[k] = loc.seen[k];
+  out.updatedAt = Math.max(loc.updatedAt, rem.updatedAt) + 1;
+  return normalize(out);
 }
 const hasRealData = st => st && (st.lots.some(l => !l.demo) || st.flows.some(f => !f.demo) || st.snapshots.some(s => !s.demo));
 function scheduleSync(ms) { clearTimeout(Store.timer); Store.timer = setTimeout(syncNow, ms || 0); }
-// Synchronisation : la version modifiée depuis la dernière synchro gagne ; si les deux ont changé, la plus récente gagne et l'autre est mise de côté.
+// Synchronisation : la version modifiée depuis la dernière synchro gagne ; si les deux ont changé, les deux sont fusionnées (voir mergeState).
 // « Modifié » se lit avec un indicateur et un numéro de version, jamais en comparant les horloges des appareils.
 async function syncNow() {
   if (!Store.cfg) return;
@@ -775,8 +808,11 @@ async function syncNow() {
     else if (remoteChanged && !localChanged) adoptRemote(remote);
     else if (remoteChanged && localChanged) {
       if (remote.updatedAt === S.updatedAt) { Store.cfg.syncedRev = S.updatedAt; Store.cfg.dirty = false; writeJSON(SYNC_KEY, Store.cfg); }
-      else if (S.updatedAt > remote.updatedAt) { writeJSON(CONFLICT_KEY, { at: Date.now(), from: 'en ligne', state: remote }); await pushRemote(); toast('Modifications faites sur deux appareils : la plus récente est gardée, l’autre est mise de côté (Réglages).'); }
-      else { writeJSON(CONFLICT_KEY, { at: Date.now(), from: 'cet appareil', state: S }); adoptRemote(remote); toast('Modifications faites sur deux appareils : la plus récente est gardée, l’autre est mise de côté (Réglages).'); }
+      else {
+        writeJSON(CONFLICT_KEY, { at: Date.now(), from: 'cet appareil, avant fusion', state: S });
+        S = mergeState(readBase(), S, remote); writeLocal(); calcDraft = null; render();
+        await pushRemote();
+      }
     } else if (localChanged || pend) await pushRemote();
     Store.lastOk = Date.now(); setSync('synced');
     if (tab === 'set') render();
@@ -788,7 +824,7 @@ async function syncNow() {
   }
 }
 function adoptRemote(remote) {
-  S = remote; writeLocal();
+  S = remote; writeLocal(); writeBase(JSON.stringify(remote));
   Store.cfg.syncedRev = remote.updatedAt; Store.cfg.dirty = false; writeJSON(SYNC_KEY, Store.cfg);
   calcDraft = null; render();
 }
@@ -1188,21 +1224,23 @@ function radarAlerts() {
   return out.filter(x => x.a.lastDate >= old);
 }
 const ALERT_DAYS = 15;
-// Alertes vues : { clé: date où elle a été vue }, oubliées au bout de 60 jours. Ancien format : liste de clés.
-function readSeen() {
+// Alertes vues : { clé: date où elle a été vue }, synchronisées entre appareils, oubliées au bout de 60 jours.
+// Ancienne version : gardées sur l'appareil (liste de clés, puis objet), reprises une fois.
+function migrateSeen() {
   try {
-    const v = JSON.parse(localStorage.getItem(SEEN_KEY) || '{}');
-    if (Array.isArray(v)) { const o = {}, t = todayISO(); v.forEach(k => o[k] = t); return o; }
-    return v && typeof v === 'object' ? v : {};
-  } catch (e) { return {}; }
-}
-function markSeen(keys) {
-  try {
-    const s = readSeen(), t = todayISO(), lim = addDays(t, -60);
-    keys.forEach(k => s[k] = t);
-    for (const k in s) if (s[k] < lim) delete s[k];
-    localStorage.setItem(SEEN_KEY, JSON.stringify(s));
+    const v = JSON.parse(localStorage.getItem(SEEN_KEY) || 'null');
+    if (!v) return;
+    const t = todayISO(), o = Array.isArray(v) ? Object.fromEntries(v.map(k => [k, t])) : v;
+    for (const k in o) if (!S.seen[k]) S.seen[k] = o[k];
+    localStorage.removeItem(SEEN_KEY); save();
   } catch (e) {}
+}
+const readSeen = () => S.seen;
+function markSeen(keys) {
+  const s = readSeen(), t = todayISO(), lim = addDays(t, -60);
+  keys.forEach(k => s[k] = t);
+  for (const k in s) if (s[k] < lim) delete s[k];
+  save();
 }
 function radarStatus(a) {
   if (!a) return ['', 'Historique en attente'];
@@ -1244,7 +1282,9 @@ function viewRadar() {
   // Croisements d'abord (les plus récents en tête), puis les actions proches de leur SMA.
   const alertOrder = (x, y) => (x.lvl === 'near') - (y.lvl === 'near') || (x.a.lastDate < y.a.lastDate ? 1 : x.a.lastDate > y.a.lastDate ? -1 : 0) || (x.w.ticker < y.w.ticker ? -1 : 1);
   const alertRow = x => `<div class="alert ${x.lvl === 'up' ? 'ok up' : x.lvl === 'down' ? 'err' : 'warn'} ${x.seen ? 'seen' : ''}"><span>${x.seen ? '' : '<b class="new">Nouveau</b> '}${x.txt}</span>${x.seen ? '' : `<button class="btn sm" data-act="radar-seen" data-k="${esc(x.key)}">Vu</button>`}</div>`;
-  const prog = Radar.busy ? `<div class="alert live on"><span>Historique : ${Radar.done} / ${Radar.todo} action(s)… (8 par minute, offre gratuite)</span></div>` : '';
+  const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
+  const prog = Radar.busy ? `<div class="alert live on"><span>Historique : ${Radar.done} / ${Radar.todo} action(s)… (8 par minute, offre gratuite). Gardez l’app ouverte : le chargement s’arrête quand elle passe en arrière-plan.</span></div>`
+    : key && Radar.loaded && nHave < nSym.size ? `<div class="alert warn"><span>Historique présent sur cet appareil pour ${nHave} action(s) sur ${nSym.size}. Il se télécharge sur chaque appareil, app ouverte.</span><button class="btn sm" data-act="radar-refresh">Continuer</button></div>` : '';
   const errs = Object.keys(Radar.errs);
   const dd = d => fmtDate(d).replace(/ \d{4}$/, '');
   const line = ({ w, a }, lot, gap) => {
@@ -2488,6 +2528,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet
   try { const h = location.hash.slice(1); if (['dash', 'calc', 'pos', 'radar', 'set'].includes(h)) tab = h; } catch (e) {}
   Store.cfg = readJSON(SYNC_KEY, null);
   if (!local) { loadDemo(); S.updatedAt = 0; writeLocal(); }
+  migrateSeen();
   render();
   if (Store.cfg) { setSync('saving'); syncNow(); } else setSync('local');
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
@@ -2498,7 +2539,8 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet
   setInterval(() => { if (document.visibilityState === 'visible' && tab !== 'calc' && marketOpen(Date.now())) refreshQuotes(false, Date.now() - (Live.fullAt || 0) < 600000); }, 120000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Store.cfg) scheduleSync(200); });
   window.addEventListener('online', () => { if (Store.cfg) scheduleSync(200); });
-  setInterval(() => { if (Store.cfg && document.visibilityState === 'visible') syncNow(); }, 60000);
+  window.addEventListener('pageshow', e => { if (e.persisted && Store.cfg) scheduleSync(200); });
+  setInterval(() => { if (Store.cfg && document.visibilityState === 'visible') syncNow(); }, 30000);
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     const hadCtrl = !!navigator.serviceWorker.controller;
     navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadCtrl && $('#sheet').hidden) location.reload(); });
