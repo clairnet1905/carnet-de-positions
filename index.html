@@ -168,12 +168,28 @@ tr:last-child td{border-bottom:0}
 .pcard header{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
 .pcard .tk{font-size:1.15rem}
 .rlist{display:grid;gap:10px}
-.rrow{border:1px solid var(--line);border-radius:12px;padding:12px;display:grid;gap:8px;background:var(--surface);position:relative;overflow:hidden}
+.rrow{min-width:0;border:1px solid var(--line);border-radius:12px;padding:12px;display:grid;gap:8px;background:var(--surface);position:relative;overflow:hidden}
 .rrow::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:var(--line)}
 .rrow.win::before{background:var(--gain)} .rrow.loss::before{background:var(--loss)} .rrow.warn::before{background:var(--warn)} .rrow.open::before{background:var(--accent)}
 .rrow header{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
 .rrow header > div:first-child{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .rrow .pill{white-space:nowrap} .rstat{display:flex;flex-wrap:wrap;gap:6px;align-items:center} .rstat small{font-size:.74rem}
+.rlines{display:grid;gap:6px}
+.rline{min-width:0;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:4px 10px;align-items:center;background:var(--surface-2);border-radius:10px;padding:8px 10px;border-left:3px solid var(--line)}
+.rline.win{border-left-color:var(--gain)} .rline.loss{border-left-color:var(--loss)} .rline.warn{border-left-color:var(--warn)} .rline.open{border-left-color:var(--accent)}
+.rline .tf{font:700 .8rem var(--f-num);min-width:48px}
+.rline .pill{justify-self:start;white-space:normal;max-width:100%}
+.rline > b{font-size:.95rem;text-align:right;white-space:nowrap}
+.rbot{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap}
+.rline .meta{font:500 .74rem var(--f-num);color:var(--muted)}
+.rline .acts{display:flex;gap:4px;margin-left:auto}
+.btn.icon{padding:4px 8px;min-width:30px;justify-content:center}
+.rfoot{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.rfoot details{flex:1;min-width:0}
+.hist{display:grid;gap:8px;font-size:.8rem}
+.hline{display:grid;grid-template-columns:64px 1fr;gap:8px}
+.hline .tf{font:700 .78rem var(--f-num)}
+.rlist{grid-template-columns:repeat(auto-fill,minmax(min(100%,520px),1fr))}
 .alert.up{background:var(--gain-bg);color:var(--gain);border-color:transparent} .alert.up::before{background:var(--gain)}
 .alert.seen{opacity:.6}
 .alert .new{font:700 .66rem var(--f-body);text-transform:uppercase;letter-spacing:.05em;background:currentColor;color:var(--surface);padding:1px 6px;border-radius:99px;margin-right:4px}
@@ -283,7 +299,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.6.0 · licence MIT */
+/* Carnet de positions v1.7.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -973,7 +989,7 @@ function quotesPanel() {
 const TD_KEY = 'carnet-positions:twelvedata', SEEN_KEY = 'carnet-positions:radar-vu';
 const TF_SHORT = { D: 'J', W: 'S', M: 'M' }, TF_LONG = { D: 'journalière', W: 'hebdo', M: 'mensuelle' };
 const Radar = { hist: {}, busy: false, done: 0, todo: 0, err: '', errs: {}, loaded: false };
-let radarQuery = '';
+let radarQuery = '', radarFilter = 'all';
 const tdKey = () => { try { return localStorage.getItem(TD_KEY) || ''; } catch (e) { return ''; } };
 const symOf = w => (w.sym || w.ticker).toUpperCase();
 const HDB = {
@@ -1102,8 +1118,9 @@ function analyzeWatch(w) {
   const sma = i => (pre[i + 1] - pre[i + 1 - n]) / n;
   const i = c.length - 1, s1 = sma(i), above = c[i] > s1, wasAbove = c[i - 1] > sma(i - 1);
   const cross = above !== wasAbove ? (above ? 'up' : 'down') : null;
-  let lastCross = null;
-  for (let k = i; k >= n; k--) { const a = c[k] > sma(k), b = c[k - 1] > sma(k - 1); if (a !== b) { lastCross = { dir: a ? 'up' : 'down', date: done[k].d }; break; } }
+  const crosses = [];
+  for (let k = i; k >= n && crosses.length < 5; k--) { const sk = sma(k), a = c[k] > sk, b = c[k - 1] > sma(k - 1); if (a !== b) crosses.push({ dir: a ? 'up' : 'down', date: done[k].d, close: c[k], sma: sk }); }
+  const lastCross = crosses[0] || null;
   const live = Live.prices[w.ticker];
   let p = c[i], src = 'clôture du ' + fmtDate(done[i].d).replace(/ \d{4}$/, ''), cur = false;
   if (live && live.date > done[i].d) { p = live.price; src = 'direct ' + hhmm(live.at); cur = true; }
@@ -1112,7 +1129,7 @@ function analyzeWatch(w) {
   const dist = (p - smaNow) / smaNow * 100;
   const pending = cur && (p > smaNow) !== above ? (p > smaNow ? 'up' : 'down') : null;
   const near = Math.abs(dist) <= (S.settings.nearPct || 2);
-  return { lastClose: c[i], lastDate: done[i].d, sma: s1, smaNow, p, src, dist, above, cross, pending, near, lastCross };
+  return { lastClose: c[i], lastDate: done[i].d, sma: s1, smaNow, p, src, dist, above, cross, pending, near, lastCross, crosses };
 }
 // Alertes : clôture au-dessus, clôture en dessous (à chaque croisement), et cours proche de la SMA (une fois par bougie).
 function radarAlerts() {
@@ -1136,8 +1153,8 @@ function radarStatus(a) {
   if (a.short) return ['', `Historique insuffisant (${a.have} bougies)`];
   if (a.cross === 'up') return ['win', 'Clôture au-dessus'];
   if (a.cross === 'down') return ['loss', 'Clôture en dessous'];
-  if (a.pending === 'up') return ['open', 'Passe au-dessus · bougie en cours'];
-  if (a.pending === 'down') return ['warn', 'Passe en dessous · bougie en cours'];
+  if (a.pending === 'up') return ['open', 'Passe au-dessus (en cours)'];
+  if (a.pending === 'down') return ['warn', 'Passe en dessous (en cours)'];
   if (a.near) return ['warn', 'Proche de la SMA'];
   return a.above ? ['', 'Au-dessus'] : ['', 'En dessous'];
 }
@@ -1156,30 +1173,53 @@ function viewRadar() {
     <div class="row"><button class="btn primary sm" data-act="td-on">Enregistrer et tester</button></div>
     <p class="hint">La clé reste sur cet appareil : elle n’est ni synchronisée ni exportée.</p>
   </section>`;
-  const rows = S.watch.map(w => ({ w, a: analyzeWatch(w) }));
-  rows.sort((x, y) => radarRank(x.a) - radarRank(y.a) || (x.a && !x.a.short && y.a && !y.a.short ? Math.abs(x.a.dist) - Math.abs(y.a.dist) : 0) || (x.w.ticker < y.w.ticker ? -1 : 1));
+  // Une carte par action, avec ses SMA (J, S, M) en lignes ; la carte prend le statut le plus urgent de ses SMA.
+  const tfOrder = { D: 0, W: 1, M: 2 }, groups = {};
+  for (const w of S.watch) (groups[w.ticker] = groups[w.ticker] || []).push({ w, a: analyzeWatch(w) });
+  const cards = Object.keys(groups).map(t => {
+    const lines = groups[t].sort((x, y) => tfOrder[x.w.tf] - tfOrder[y.w.tf] || x.w.period - y.w.period);
+    const ok = lines.filter(l => l.a && !l.a.short);
+    const rank = Math.min(...lines.map(l => radarRank(l.a)));
+    const dist = ok.length ? Math.min(...ok.map(l => Math.abs(l.a.dist))) : 1e9;
+    return { t, lines, ok, rank, dist, signal: lines.some(l => l.a && !l.a.short && (l.a.cross || l.a.pending)), watch: lines.some(l => l.a && !l.a.short && (l.a.cross || l.a.pending || l.a.near)) };
+  }).sort((x, y) => x.rank - y.rank || x.dist - y.dist || (x.t < y.t ? -1 : 1));
+  const shown = cards.filter(c => radarFilter === 'signal' ? c.signal : radarFilter === 'watch' ? c.watch : true);
   const al = radarAlerts(), fresh = al.filter(x => !x.seen);
   const prog = Radar.busy ? `<div class="alert live on"><span>Historique : ${Radar.done} / ${Radar.todo} action(s)… (8 par minute, offre gratuite)</span></div>` : '';
   const errs = Object.keys(Radar.errs);
-  const row = ({ w, a }) => {
-    const [pc, st] = radarStatus(a), lot = S.lots.find(l => l.ticker === w.ticker && !Core.lotState(l).closed);
-    const ok = a && !a.short;
-    const stopBtn = lot && ok && Math.abs((lot.stopCurrent || 0) - a.sma) >= 0.005
-      ? `<button class="btn sm" data-act="radar-stop" data-id="${w.id}">Stop → ${usd(a.sma)}</button>` : '';
-    const calcBtn = !lot && ok && a.cross !== 'down' && (a.above || a.pending === 'up') ? `<button class="btn sm primary" data-act="radar-calc" data-id="${w.id}">Calculer la taille</button>` : '';
-    return `<article class="rrow ${pc}" data-q="${esc((w.ticker + ' ' + (w.note || '')).toLowerCase())}">
-      <header><div><span class="tk">${esc(w.ticker)}</span> <span class="pill">SMA ${w.period} · ${TF_SHORT[w.tf]}</span></div>
-        ${ok ? `<div class="pl ${cls(a.dist)}">${pct(a.dist, true)}<small>${usd(a.p)}</small></div>` : ''}</header>
-      <div class="rstat"><span class="pill ${pc}">${st}</span>${lot ? '<span class="pill open">Position ouverte</span>' : ''}${ok ? `<small class="muted">${a.src}</small>` : ''}</div>
-      ${ok ? `<div class="rail-leg"><span>SMA ${usd(a.smaNow)}${Math.abs(a.smaNow - a.sma) > 0.005 ? ` (clôture : ${usd(a.sma)})` : ''}</span><span>${a.lastCross ? `Dernier croisement : ${a.lastCross.dir === 'up' ? '↑ au-dessus' : '↓ en dessous'} le ${fmtDate(a.lastCross.date)}` : ''}</span>${lot ? `<span>Stop actuel ${isNum(lot.stopCurrent) ? usd(lot.stopCurrent) : '—'}</span>` : ''}</div>` : Radar.errs[symOf(w)] ? `<p class="hint neg">Twelve Data : ${esc(Radar.errs[symOf(w)])}${w.sym ? '' : ' · essayez un autre symbole (Modifier)'}</p>` : ''}
-      ${w.note ? `<p class="hint">${esc(w.note)}</p>` : ''}
-      <div class="row">${calcBtn}${stopBtn}<button class="btn sm" data-act="radar-edit" data-id="${w.id}">Modifier</button><button class="btn sm danger" data-act="radar-del" data-id="${w.id}">Retirer</button></div>
+  const dd = d => fmtDate(d).replace(/ \d{4}$/, '');
+  const line = ({ w, a }, lot) => {
+    const [pc, st] = radarStatus(a), ok = a && !a.short;
+    const calc = !lot && ok && a.cross !== 'down' && (a.above || a.pending === 'up') ? `<button class="btn sm primary" data-act="radar-calc" data-id="${w.id}">Taille</button>` : '';
+    const stop = lot && ok && Math.abs((lot.stopCurrent || 0) - a.sma) >= 0.005 ? `<button class="btn sm" data-act="radar-stop" data-id="${w.id}" title="Mettre le stop sur la SMA">Stop ${usd(a.sma)}</button>` : '';
+    return `<div class="rline ${pc}">
+      <span class="tf">${TF_SHORT[w.tf]} ${w.period}</span>
+      <span class="pill ${pc}">${st}</span>
+      <b class="num ${ok ? cls(a.dist) : ''}">${ok ? pct(a.dist, true) : ''}</b>
+      <div class="rbot"><span class="meta">${ok ? `SMA ${usd(a.smaNow)}${a.lastCross ? ` · ${a.lastCross.dir === 'up' ? '↑' : '↓'} ${dd(a.lastCross.date)}` : ''}` : Radar.errs[symOf(w)] ? `<span class="neg">${esc(Radar.errs[symOf(w)])}</span>` : ''}</span>
+      <span class="acts">${calc}${stop}<button class="btn sm icon" data-act="radar-edit" data-id="${w.id}" aria-label="Modifier la SMA ${w.period} ${TF_LONG[w.tf]}">✎</button><button class="btn sm icon" data-act="radar-del" data-id="${w.id}" aria-label="Retirer la SMA ${w.period} ${TF_LONG[w.tf]}">✕</button></span></div>
+    </div>`;
+  };
+  const card = c => {
+    const lot = S.lots.find(l => l.ticker === c.t && !Core.lotState(l).closed);
+    const a0 = c.ok[0] && c.ok[0].a, [pc] = radarStatus(c.lines.slice().sort((x, y) => radarRank(x.a) - radarRank(y.a))[0].a);
+    const notes = [...new Set(c.lines.map(l => l.w.note).filter(Boolean))];
+    const hist = c.ok.filter(l => l.a.crosses.length).map(l => `<div class="hline"><span class="tf">${TF_SHORT[l.w.tf]} ${l.w.period}</span><span>${l.a.crosses.map(x =>
+      `<span class="${x.dir === 'up' ? 'pos' : 'neg'}">${x.dir === 'up' ? '↑' : '↓'} ${fmtDate(x.date)}</span> <small class="muted">(${usd(x.close)} / SMA ${usd(x.sma)})</small>`).join('<br>')}</span></div>`).join('');
+    return `<article class="rrow ${pc}" data-q="${esc((c.t + ' ' + notes.join(' ')).toLowerCase())}">
+      <header><div><span class="tk">${esc(c.t)}</span>${lot ? ` <span class="pill open">Position${isNum(lot.stopCurrent) ? ' · stop ' + usd(lot.stopCurrent) : ''}</span>` : ''}</div>
+        ${a0 ? `<div class="pl">${usd(a0.p)}<small>${a0.src}</small></div>` : ''}</header>
+      <div class="rlines">${c.lines.map(l => line(l, lot)).join('')}</div>
+      ${notes.length ? `<p class="hint">${notes.map(esc).join(' · ')}</p>` : ''}
+      <div class="rfoot">${hist ? `<details class="more"><summary>Historique des croisements</summary><div class="hist">${hist}</div></details>` : '<span></span>'}
+        <button class="btn sm" data-act="radar-add-sma" data-t="${esc(c.t)}">+ SMA</button></div>
     </article>`;
   };
+  const fBtn = (k, l, n) => `<button class="btn sm" data-act="radar-filter" data-f="${k}" aria-pressed="${radarFilter === k}">${l} (${n})</button>`;
   return `${key ? '' : setup}
   <section class="card">
     <div class="sec-head"><h2>Radar SMA</h2><div class="row"><button class="btn sm" data-act="radar-refresh" ${key && S.watch.length ? '' : 'disabled'}>Actualiser</button><button class="btn sm primary" data-act="radar-add">+ Ajouter</button></div></div>
-    <p class="lead">${S.watch.length} SMA suivie(s). Alerte « proche » à ${fmtNum(S.settings.nearPct || 2)} % de la SMA. ${quoteKey() ? 'Historique Twelve Data (une fois, puis vérifié chaque semaine) complété chaque soir par la clôture Finnhub.' : 'Sans clé Finnhub sur cet appareil, l’historique est retéléchargé chaque jour sur Twelve Data (plus lent).'}</p>
+    <p class="lead">${cards.length} action(s), ${S.watch.length} SMA. Alerte « proche » à ${fmtNum(S.settings.nearPct || 2)} % de la SMA. ${quoteKey() ? 'Historique Twelve Data (une fois, puis vérifié chaque semaine) complété chaque soir par la clôture Finnhub.' : 'Sans clé Finnhub sur cet appareil, l’historique est retéléchargé chaque jour sur Twelve Data (plus lent).'}</p>
     ${prog}${Radar.err ? `<div class="banner err">${esc(Radar.err)}</div>` : ''}
     ${errs.length ? `<p class="hint">Sans historique : ${errs.map(esc).join(', ')}.</p>` : ''}
     <div class="row"><button class="btn sm" data-act="radar-import">Importer une liste</button><button class="btn sm" data-act="radar-settings">Réglages du radar</button></div>
@@ -1189,8 +1229,9 @@ function viewRadar() {
     <div class="alerts">${al.sort((x, y) => (x.seen - y.seen) || (x.lvl === 'near') - (y.lvl === 'near')).map(x => `<div class="alert ${x.lvl === 'up' ? 'ok up' : x.lvl === 'down' ? 'err' : 'warn'} ${x.seen ? 'seen' : ''}"><span>${x.seen ? '' : '<b class="new">Nouveau</b> '}${x.txt}</span>${x.seen ? '' : `<button class="btn sm" data-act="radar-seen" data-k="${esc(x.key)}">Vu</button>`}</div>`).join('')}</div>
   </section>` : ''}
   <section class="card">
-    ${S.watch.length ? `<div class="search"><input type="search" id="radar-q" value="${esc(radarQuery)}" placeholder="Rechercher une action" autocomplete="off" autocapitalize="characters" aria-label="Rechercher une action"></div>
-      <div class="rlist">${rows.map(row).join('')}</div>`
+    ${cards.length ? `<div class="search"><input type="search" id="radar-q" value="${esc(radarQuery)}" placeholder="Rechercher une action" autocomplete="off" autocapitalize="characters" aria-label="Rechercher une action"></div>
+      <div class="filters">${fBtn('all', 'Toutes', cards.length)}${fBtn('signal', 'Signaux', cards.filter(c => c.signal).length)}${fBtn('watch', 'À surveiller', cards.filter(c => c.watch).length)}</div>
+      <div class="rlist">${shown.length ? shown.map(card).join('') : '<p class="lead">Aucune action pour ce filtre.</p>'}</div>`
       : '<p class="lead">Aucune action suivie. Touchez « + Ajouter » pour saisir une action et sa SMA, ou « Importer une liste » pour en coller plusieurs d’un coup.</p>'}
   </section>`;
 }
@@ -1198,8 +1239,8 @@ function applyRadarQuery() {
   const q = radarQuery.trim().toLowerCase();
   for (const el of document.querySelectorAll('.rrow[data-q]')) el.hidden = !!q && !el.dataset.q.includes(q);
 }
-function sheetWatch(w) {
-  const isNew = !w; w = w || { ticker: '', period: '', tf: 'D', sym: '', note: '' };
+function sheetWatch(w, preset) {
+  const isNew = !w; w = w || { ticker: preset || '', period: '', tf: 'D', sym: '', note: '' };
   openSheet({
     title: isNew ? 'Suivre une action' : 'Modifier ' + w.ticker, ok: 'Enregistrer',
     body: `<div class="fields">
@@ -2190,6 +2231,8 @@ document.addEventListener('click', e => {
     case 'psort': posSort = b.dataset.f; render(); break;
     case 'go-radar': tab = 'radar'; render(); window.scrollTo(0, 0); break;
     case 'radar-add': sheetWatch(); break;
+    case 'radar-add-sma': sheetWatch(null, b.dataset.t); break;
+    case 'radar-filter': radarFilter = b.dataset.f; render(); break;
     case 'radar-import': sheetWatchImport(); break;
     case 'radar-settings': sheetRadarSettings(); break;
     case 'radar-refresh': refreshQuotes(); refreshRadar(true); break;
