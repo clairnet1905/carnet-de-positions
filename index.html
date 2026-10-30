@@ -272,7 +272,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.4.0 · licence MIT */
+/* Carnet de positions v1.4.1 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -1687,8 +1687,17 @@ function sheetPrices() {
     title: 'Mettre à jour les cours', ok: 'Enregistrer les cours',
     body: `<p class="lead">Cours de clôture lus dans MT5. Saisir tous les tickers à la même date crée une observation exacte pour la performance.</p>
       <div class="fields">${dateInp('date', 'Date des cours', todayISO())}</div>
-      <div class="plist">${tickers.map(t => { const lp = Core.lastPrice(S.prices, t);
-        return `<label class="pr" for="f-p_${esc(t)}"><span class="tk">${esc(t)}</span><small>${lp ? usd(lp.price) + ' · ' + fmtDate(lp.date).replace(/ \d{4}$/, '') : 'aucun cours'}</small><input id="f-p_${esc(t)}" name="p_${esc(t)}" inputmode="decimal" autocomplete="off" placeholder="${lp ? fmtNum(lp.price, 4) : ''}"></label>`; }).join('')}</div>
+      <div class="search"><input type="search" id="price-q" placeholder="Rechercher une action" autocomplete="off" autocapitalize="characters" aria-label="Rechercher une action"></div>
+      ${(() => {
+        // Avec Finnhub, les actions en saisie manuelle passent en premier : ce sont les seules à taper chaque soir.
+        const auto = quoteKey(), man = manualSet();
+        const row = t => { const lp = Core.lastPrice(S.prices, t);
+          return `<label class="pr" data-t="${esc(t.toLowerCase())}" for="f-p_${esc(t)}"><span class="tk">${esc(t)}</span><small>${lp ? usd(lp.price) + ' · ' + fmtDate(lp.date).replace(/ \d{4}$/, '') : 'aucun cours'}</small><input id="f-p_${esc(t)}" name="p_${esc(t)}" inputmode="decimal" autocomplete="off" placeholder="${lp ? fmtNum(lp.price, 4) : ''}"></label>`; };
+        if (!auto) return `<div class="plist">${tickers.map(row).join('')}</div>`;
+        const m = tickers.filter(t => man.has(t)), a = tickers.filter(t => !man.has(t));
+        return `${m.length ? `<h3 class="chart-t">À saisir à la main (${m.length})</h3><div class="plist">${m.map(row).join('')}</div>` : ''}
+          <details class="more" ${m.length ? '' : 'open'}><summary>Cours automatiques Finnhub (${a.length})</summary><p class="hint" style="margin-bottom:8px">Enregistrés tout seuls à la clôture. À remplir seulement pour corriger.</p><div class="plist">${a.map(row).join('')}</div></details>`;
+      })()}
       <p class="hint">Case vide : le cours n’est pas modifié.</p>`,
     onSubmit: form => {
       const date = F(form, 'date'); need(date, 'Date requise.'); need(date <= todayISO(), 'Date dans le futur.');
@@ -1965,6 +1974,12 @@ document.addEventListener('toggle', e => {
 }, true);
 document.addEventListener('input', e => {
   if (e.target.id === 'pos-q') { posQuery = e.target.value; applyPosQuery(); return; }
+  if (e.target.id === 'price-q') {
+    const q = e.target.value.trim().toLowerCase();
+    for (const r of document.querySelectorAll('#sheet .pr')) r.hidden = !!q && !r.dataset.t.includes(q);
+    if (q) for (const d of document.querySelectorAll('#sheet details.more')) d.open = true;
+    return;
+  }
   const f = e.target.form;
   if (f && f.id === 'calcForm') {
     const el = e.target;
