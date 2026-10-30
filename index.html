@@ -175,6 +175,7 @@ tr:last-child td{border-bottom:0}
 .rrow header > div:first-child{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .rrow .pill{white-space:nowrap} .rstat{display:flex;flex-wrap:wrap;gap:6px;align-items:center} .rstat small{font-size:.74rem}
 .rlines{display:grid;gap:6px}
+.rline.tfgap{margin-top:8px}
 .rline{min-width:0;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:4px 10px;align-items:center;background:var(--surface-2);border-radius:10px;padding:8px 10px;border-left:3px solid var(--line)}
 .rline.win{border-left-color:var(--gain)} .rline.loss{border-left-color:var(--loss)} .rline.warn{border-left-color:var(--warn)} .rline.open{border-left-color:var(--accent)}
 .rline .tf{font:700 .8rem var(--f-num);min-width:48px}
@@ -305,7 +306,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.8.0 · licence MIT */
+/* Carnet de positions v1.8.1 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -1232,7 +1233,7 @@ function viewRadar() {
   const tfOrder = { D: 0, W: 1, M: 2 }, groups = {};
   for (const w of S.watch) (groups[w.ticker] = groups[w.ticker] || []).push({ w, a: analyzeWatch(w) });
   const cards = Object.keys(groups).map(t => {
-    const lines = groups[t].sort((x, y) => tfOrder[x.w.tf] - tfOrder[y.w.tf] || x.w.period - y.w.period);
+    const lines = groups[t].sort((x, y) => tfOrder[x.w.tf] - tfOrder[y.w.tf] || y.w.period - x.w.period);  // J, puis S, puis M ; période décroissante
     const ok = lines.filter(l => l.a && !l.a.short);
     const rank = Math.min(...lines.map(l => radarRank(l.a)));
     const dist = ok.length ? Math.min(...ok.map(l => Math.abs(l.a.dist))) : 1e9;
@@ -1246,11 +1247,11 @@ function viewRadar() {
   const prog = Radar.busy ? `<div class="alert live on"><span>Historique : ${Radar.done} / ${Radar.todo} action(s)… (8 par minute, offre gratuite)</span></div>` : '';
   const errs = Object.keys(Radar.errs);
   const dd = d => fmtDate(d).replace(/ \d{4}$/, '');
-  const line = ({ w, a }, lot) => {
+  const line = ({ w, a }, lot, gap) => {
     const [pc, st] = radarStatus(a), ok = a && !a.short;
     const calc = !lot && ok && a.cross !== 'down' && (a.above || a.pending === 'up') ? `<button class="btn sm primary" data-act="radar-calc" data-id="${w.id}">Taille</button>` : '';
     const stop = lot && ok && Math.abs((lot.stopCurrent || 0) - a.sma) >= 0.005 ? `<button class="btn sm" data-act="radar-stop" data-id="${w.id}" title="Mettre le stop sur la SMA">Stop ${usd(a.sma)}</button>` : '';
-    return `<div class="rline ${pc}">
+    return `<div class="rline ${pc}${gap ? ' tfgap' : ''}">
       <span class="tf">${TF_SHORT[w.tf]} ${w.period}</span>
       <span class="pill ${pc}">${st}</span>
       <b class="num ${ok ? cls(a.dist) : ''}">${ok ? pct(a.dist, true) : ''}</b>
@@ -1267,7 +1268,7 @@ function viewRadar() {
     return `<article class="rrow ${pc}" data-q="${esc((c.t + ' ' + notes.join(' ')).toLowerCase())}">
       <header><div><span class="tk">${esc(c.t)}</span>${lot ? ` <span class="pill open">Position${isNum(lot.stopCurrent) ? ' · stop ' + usd(lot.stopCurrent) : ''}</span>` : ''}</div>
         ${a0 ? `<div class="pl">${usd(a0.p)}<small>${a0.src}</small></div>` : ''}</header>
-      <div class="rlines">${c.lines.map(l => line(l, lot)).join('')}</div>
+      <div class="rlines">${c.lines.map((l, i) => line(l, lot, i > 0 && l.w.tf !== c.lines[i - 1].w.tf)).join('')}</div>
       ${notes.length ? `<p class="hint">${notes.map(esc).join(' · ')}</p>` : ''}
       <div class="rfoot">${hist ? `<details class="more"><summary>Historique des croisements</summary><div class="hist">${hist}</div></details>` : '<span></span>'}
         <button class="btn sm" data-act="radar-add-sma" data-t="${esc(c.t)}">+ SMA</button></div>
