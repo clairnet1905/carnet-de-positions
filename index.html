@@ -299,7 +299,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.7.0 · licence MIT */
+/* Carnet de positions v1.7.1 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -601,8 +601,13 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&a
 const { usd, pct, qty, num, numOr, isNum } = Core;
 const LS_KEY = 'carnet-positions:v1';
 const todayISO = () => new Date().toLocaleDateString('sv-SE');
-function addDays(d, n) { const t = new Date(d + 'T12:00:00'); t.setDate(t.getDate() + n); return t.toLocaleDateString('sv-SE'); }
-const fmtDate = d => d ? new Date(d + 'T12:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+// Les conversions de dates sont lentes et répétées des milliers de fois par le radar : résultats gardés en mémoire.
+const memo = fn => { const m = new Map(); return k => { let v = m.get(k); if (v === undefined) { v = fn(k); m.set(k, v); } return v; }; };
+const addDaysM = memo(k => { const [d, n] = k.split('|'), t = new Date(d + 'T12:00:00'); t.setDate(t.getDate() + +n); return t.toLocaleDateString('sv-SE'); });
+const addDays = (d, n) => addDaysM(d + '|' + n);
+const fmtDateL = new Intl.DateTimeFormat('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
+const fmtDateM = memo(d => fmtDateL.format(new Date(d + 'T12:00:00')));
+const fmtDate = d => d ? fmtDateM(d) : '—';
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const cls = x => !isNum(x) || Math.abs(x) < 0.005 ? '' : (x > 0 ? 'pos' : 'neg');
 const fmtNum = (x, d = 2) => isNum(x) ? new Intl.NumberFormat('fr-FR', { maximumFractionDigits: d }).format(x).replace('-', '−') : '';
@@ -886,9 +891,10 @@ function setManual(list, msg) {
 }
 const quoteKey = () => { try { return localStorage.getItem(QUOTE_KEY) || ''; } catch (e) { return ''; } };
 const hhmm = t => new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+const NY_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 function nyParts(ms) {
   const p = {};
-  for (const x of new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(ms))) p[x.type] = x.value;
+  for (const x of NY_FMT.formatToParts(new Date(ms))) p[x.type] = x.value;
   return { date: `${p.year}-${p.month}-${p.day}`, min: +p.hour * 60 + +p.minute };
 }
 // Séance régulière NYSE / Nasdaq : 9 h 30 – 16 h à New York, du lundi au vendredi (jours fériés non gérés).
@@ -1011,7 +1017,7 @@ const HDB = {
   get(k) { return this.run('readonly', s => s.get(k)); },
   set(k, v) { return this.run('readwrite', s => s.put(v, k)); }
 };
-const wdOf = d => new Date(d + 'T12:00:00').getDay();
+const wdOf = memo(d => new Date(d + 'T12:00:00').getDay());
 function nextWeekday(d) { do { d = addDays(d, 1); } while (wdOf(d) === 0 || wdOf(d) === 6); return d; }
 function prevWeekday(d) { do { d = addDays(d, -1); } while (wdOf(d) === 0 || wdOf(d) === 6); return d; }
 // Action du radar dont Finnhub fournit la clôture du jour (symbole US, cours automatique).
@@ -1034,12 +1040,16 @@ function hotTickers() {
   return out;
 }
 // Dernière séance terminée à New York (jours fériés non gérés : la séance manquante est simplement absente des données).
+const lsMemo = { min: -1, d: '' };
 function lastSession(ms) {
+  const m = Math.floor(ms / 60000);
+  if (m === lsMemo.min) return lsMemo.d;
   const n = nyParts(ms); let d = n.date;
   if (!(wdOf(d) >= 1 && wdOf(d) <= 5 && n.min >= 965)) { do { d = addDays(d, -1); } while (wdOf(d) === 0 || wdOf(d) === 6); }
+  lsMemo.min = m; lsMemo.d = d;
   return d;
 }
-function weekKey(d) { const t = new Date(d + 'T12:00:00'); t.setDate(t.getDate() - (t.getDay() + 6) % 7); return t.toLocaleDateString('sv-SE'); }
+const weekKey = memo(d => addDays(d, -((wdOf(d) + 6) % 7)));
 const periodKey = (tf, d) => tf === 'M' ? d.slice(0, 7) : tf === 'W' ? weekKey(d) : d;
 // Nombre de clôtures journalières nécessaires pour une SMA, avec une marge pour retrouver le dernier croisement.
 function barsNeeded(w) { const n = w.period + 25; return Math.min(5000, w.tf === 'M' ? n * 22 : w.tf === 'W' ? n * 5 : n); }
@@ -1050,7 +1060,11 @@ async function tdSeries(sym, n, key) {
   return j.values.map(v => [String(v.datetime).slice(0, 10), +v.close]).filter(v => v[1] > 0).sort((a, b) => a[0] < b[0] ? -1 : 1);
 }
 async function loadRadarCache() {
-  for (const sym of new Set(S.watch.map(symOf))) if (!Radar.hist[sym]) { const h = await HDB.get(sym); if (h) Radar.hist[sym] = h; }
+  const miss = [...new Set(S.watch.map(symOf))].filter(s => !Radar.hist[s]);
+  if (miss.length) {
+    const got = await HDB.run('readonly', st => { const out = {}; for (const s of miss) { const r = st.get(s); r.onsuccess = () => { if (r.result) out[s] = r.result; }; } return { result: out }; });
+    Object.assign(Radar.hist, got || {});
+  }
   Radar.loaded = true;
 }
 // Met à jour l'historique des actions suivies : 8 requêtes par minute au plus (offre gratuite).
@@ -1096,17 +1110,33 @@ async function refreshRadar(manual) {
   Radar.busy = false;
   if (tab !== 'calc') render();
 }
+const groupMemo = new WeakMap();
 function groupBars(daily, tf) {
+  const L = daily[daily.length - 1], sig = tf + daily.length + L[0] + L[1];
+  let g = groupMemo.get(daily); if (!g) groupMemo.set(daily, g = {});
+  if (g[tf] && g[tf].sig === sig) return g[tf].out;
   const out = [];
+  if (tf === 'D') { for (const [d, c] of daily) out.push({ k: d, d, c }); g[tf] = { sig, out }; return out; }
   for (const [d, c] of daily) {
     const k = periodKey(tf, d), last = out[out.length - 1];
     if (last && last.k === k) { last.c = c; last.d = d; } else out.push({ k, d, c });
   }
+  g[tf] = { sig, out };
   return out;
 }
+const anaMemo = new Map();
 function analyzeWatch(w) {
   const h = Radar.hist[symOf(w)];
   if (!h || !h.bars.length) return null;
+  const B = h.bars[h.bars.length - 1], live = Live.prices[w.ticker];
+  const sig = [w.tf, w.period, h.bars.length, B[0], B[1], live ? live.price + '@' + live.at : '', lastSession(Date.now()), S.settings.nearPct].join('|');
+  const m = anaMemo.get(w.id);
+  if (m && m.h === h && m.sig === sig) return m.a;
+  const a = analyzeRaw(w, h);
+  anaMemo.set(w.id, { h, sig, a });
+  return a;
+}
+function analyzeRaw(w, h) {
   const all = groupBars(h.bars, w.tf), ls = lastSession(Date.now());
   // Bougie hebdo ou mensuelle pas encore terminée : elle sert de cours actuel, pas de clôture.
   let done = all, forming = null;
