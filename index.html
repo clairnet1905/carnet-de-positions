@@ -258,6 +258,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 .chart .dd{fill:var(--loss);opacity:.22} .chart .ddl{fill:none;stroke:var(--loss);stroke-width:1.5}
 .chart .dot{fill:var(--accent)} .chart .dot.est{fill:var(--surface);stroke:var(--accent);stroke-width:1.5} .chart .dot.br{fill:var(--warn)}
 .chart .bw{fill:var(--gain)} .chart .bl{fill:var(--loss)} .chart .rref{stroke:var(--muted);stroke-width:1;stroke-dasharray:2 4;opacity:.7}
+table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.months td{padding:8px 5px;white-space:nowrap} table.months tbody tr{cursor:pointer} table.months tbody tr.sel td{background:var(--accent-soft)} table.months tfoot th{border-top:2px solid var(--line)}
 .dist{display:grid;gap:6px;margin-top:10px}
 .dist-row{display:grid;grid-template-columns:84px 1fr 28px;gap:8px;align-items:center;font-size:.82rem}
 .dist-row span{color:var(--muted)} .dist-row b{text-align:right}
@@ -312,7 +313,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.12.0 · licence MIT */
+/* Carnet de positions v1.13.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -659,7 +660,7 @@ const lotImgIds = l => [l.imgId, ...(l.events || []).map(e => e.imgId)].filter(B
 let S = defaultState();
 let tab = 'dash';
 const openLots = new Set();
-let journalFilter = 'closed', perfRange = 'itd';
+let journalFilter = 'closed', perfRange = 'itd', tradeYear = 'all', tradeMonth = 'all';  // période des positions clôturées (date de clôture)
 const PERIODS = [['day', 'Jour', 'dernière séance'], ['week', 'Semaine', 'semaine en cours'], ['month', 'Mois', 'mois en cours'], ['year', 'Année', 'année en cours'], ['itd', 'Max', 'depuis le début']];
 let calcDraft = null;
 
@@ -1754,20 +1755,7 @@ function viewDash() {
     <p class="hint">${method} Un dépôt n’est jamais compté comme un gain, un retrait jamais comme une perte. ${P.freq ? `${P.freq.count} observations, écart médian ${fmtNum(P.freq.medianGap, 1)} jour(s), écart maximal ${P.freq.maxGap} jours. Les baisses survenues entre deux observations (intrajournalières notamment) ne sont pas mesurées.` : ''}
     Une observation existe quand toutes les positions ouvertes ont un cours saisi le même jour, quand aucune position n’est ouverte, ou quand vous saisissez la valeur du courtier. ● calcul exact, ○ sous-période estimée, ● orange : valeur courtier.</p></details>
   </section>
-  <section class="card">
-    <div class="sec-head"><h2>Positions clôturées</h2><small>sorties partielles regroupées avec leur achat</small></div>
-    <dl class="kv">
-      ${kv('Positions clôturées', String(T.count))}
-      ${kv('Taux de réussite', T.winRate == null ? 'Non calculable' : pct(T.winRate), T.count ? `${T.wins} gagnante(s), ${T.losses} perdante(s)` : '')}
-      ${kv('Gain moyen', T.avgWin == null ? 'Non calculable' : usd(T.avgWin, true), '', 'pos')}
-      ${kv('Perte moyenne', T.avgLoss == null ? 'Non calculable' : usd(T.avgLoss, true), '', 'neg')}
-      ${kv('Profit factor', T.profitFactor == null ? 'Non calculable' : fmtNum(T.profitFactor, 2), 'gains bruts ÷ pertes brutes')}
-      ${kv('Espérance par trade', T.avgR == null ? 'Non calculable' : fmtR(T.avgR), '1 R = ' + fmtNum(S.settings.riskPct, 2) + ' % du capital à l’achat' + (T.rCount < T.count ? ` · ${T.rCount} sur ${T.count}` : ''), T.avgR == null ? '' : cls(T.avgR))}
-      ${kv('Gain moyen en R', T.avgWinR == null ? '—' : fmtR(T.avgWinR), '', 'pos')}
-      ${kv('Perte moyenne en R', T.avgLossR == null ? '—' : fmtR(T.avgLossR), T.avgLossR != null && T.avgLossR < -1.2 ? 'au-delà de −1 R : stop ou taille hors plan' : '', 'neg')}
-    </dl>
-    ${rCharts(T)}
-  </section>
+  ${closedCard()}
   ${disciplineCard(T)}
   <section class="card">
     <details class="more"><summary>Détail du calcul de la valeur nette</summary>
@@ -1783,6 +1771,52 @@ function viewDash() {
       ${kv('Marge estimée utilisée', usd(acc.margin), 'exposition ÷ levier, indicatif')}
       ${kv('Marge disponible saisie', lb && isNum(lb.marginAvail) ? usd(lb.marginAvail) : 'Non saisie', lb && isNum(lb.marginAvail) ? fmtDate(lb.date) : 'Réglages › Valeurs courtier')}
     </dl></details>
+  </section>`;
+}
+const MOIS = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
+const MOIS_C = ['Janv.', 'Févr.', 'Mars', 'Avr.', 'Mai', 'Juin', 'Juil.', 'Août', 'Sept.', 'Oct.', 'Nov.', 'Déc.'];
+// Positions clôturées : statistiques, histogramme et répartition pour la période choisie (toutes, une année, ou un mois),
+// avec le bilan mois par mois de l'année choisie. Une position compte dans le mois de sa clôture.
+function closedCard() {
+  const all = Core.tradeStats(S, planR).closed;
+  const years = [...new Set(all.map(c => c.date.slice(0, 4)))].sort().reverse();
+  if (tradeYear !== 'all' && !years.includes(tradeYear)) { tradeYear = 'all'; tradeMonth = 'all'; }
+  const inP = c => (tradeYear === 'all' || c.date.slice(0, 4) === tradeYear) && (tradeMonth === 'all' || c.date.slice(5, 7) === tradeMonth);
+  const ids = new Set(all.filter(inP).map(c => c.lot.id));
+  const T = Core.tradeStats({ lots: S.lots.filter(l => ids.has(l.id)) }, planR);
+  const yb = ['all'].concat(years).map(y => `<button class="btn sm" data-act="trade-year" data-f="${y}" aria-pressed="${tradeYear === y}">${y === 'all' ? 'Tout' : y}</button>`).join('');
+  let months = '', table = '';
+  if (tradeYear !== 'all') {
+    const rows = MOIS.map((m, i) => {
+      const k = String(i + 1).padStart(2, '0'), cs = all.filter(c => c.date.slice(0, 7) === tradeYear + '-' + k);
+      const net = cs.reduce((a, c) => a + c.net, 0), r = cs.reduce((a, c) => a + (c.R || 0), 0);
+      return { k, m, cs, net, r, w: cs.filter(c => c.net > 0.0049).length, l: cs.filter(c => c.net < -0.0049).length };
+    });
+    months = `<div class="filters" style="margin-top:6px"><button class="btn sm" data-act="trade-month" data-f="all" aria-pressed="${tradeMonth === 'all'}">Année entière</button>${rows.map(x => `<button class="btn sm" data-act="trade-month" data-f="${x.k}" aria-pressed="${tradeMonth === x.k}" ${x.cs.length ? '' : 'disabled'}>${MOIS_C[+x.k - 1]}</button>`).join('')}</div>`;
+    const used = rows.filter(x => x.cs.length), tot = used.reduce((a, x) => ({ n: a.n + x.cs.length, w: a.w + x.w, l: a.l + x.l, net: a.net + x.net, r: a.r + x.r }), { n: 0, w: 0, l: 0, net: 0, r: 0 });
+    table = used.length ? `<p class="chart-t" style="margin-top:14px">Mois par mois · ${tradeYear}</p>
+      <div class="tbl"><table class="months"><thead><tr><th>Mois</th><th class="n">Trades</th><th class="n">G / P</th><th class="n">Net</th><th class="n">R</th></tr></thead><tbody>
+      ${used.map(x => `<tr class="${tradeMonth === x.k ? 'sel' : ''}" data-act="trade-month" data-f="${x.k}"><td>${MOIS_C[+x.k - 1]}</td><td class="n">${x.cs.length}</td><td class="n">${x.w} / ${x.l}</td><td class="n ${cls(x.net)}">${usd(x.net, true)}</td><td class="n ${cls(x.r)}">${fmtR(x.r)}</td></tr>`).join('')}
+      </tbody><tfoot><tr><th>Total</th><th class="n">${tot.n}</th><th class="n">${tot.w} / ${tot.l}</th><th class="n ${cls(tot.net)}">${usd(tot.net, true)}</th><th class="n ${cls(tot.r)}">${fmtR(tot.r)}</th></tr></tfoot></table></div>
+      <p class="hint">Touchez un mois pour voir son détail ci-dessus. Une position compte dans le mois de sa clôture.</p>` : '';
+  }
+  const label = tradeYear === 'all' ? 'depuis le début' : tradeMonth === 'all' ? 'année ' + tradeYear : MOIS[+tradeMonth - 1].toLowerCase() + ' ' + tradeYear;
+  const net = T.closed.reduce((a, c) => a + c.net, 0);
+  return `<section class="card">
+    <div class="sec-head"><h2>Positions clôturées <small>· ${label}</small></h2>${T.count ? `<strong class="num ${cls(net)}" style="font-size:1.2rem">${usd(net, true)}</strong>` : ''}</div>
+    <div class="filters">${yb}</div>${months}
+    ${T.count ? `<dl class="kv" style="margin-top:10px">
+      ${kv('Positions clôturées', String(T.count), 'sorties partielles regroupées avec leur achat')}
+            ${kv('Taux de réussite', T.winRate == null ? 'Non calculable' : pct(T.winRate), T.count ? `${T.wins} gagnante(s), ${T.losses} perdante(s)` : '')}
+      ${kv('Gain moyen', T.avgWin == null ? 'Non calculable' : usd(T.avgWin, true), '', 'pos')}
+      ${kv('Perte moyenne', T.avgLoss == null ? 'Non calculable' : usd(T.avgLoss, true), '', 'neg')}
+      ${kv('Profit factor', T.profitFactor == null ? 'Non calculable' : fmtNum(T.profitFactor, 2), 'gains bruts ÷ pertes brutes')}
+      ${kv('Espérance par trade', T.avgR == null ? 'Non calculable' : fmtR(T.avgR), '1 R = ' + fmtNum(S.settings.riskPct, 2) + ' % du capital à l’achat' + (T.rCount < T.count ? ` · ${T.rCount} sur ${T.count}` : ''), T.avgR == null ? '' : cls(T.avgR))}
+      ${kv('Gain moyen en R', T.avgWinR == null ? '—' : fmtR(T.avgWinR), '', 'pos')}
+      ${kv('Perte moyenne en R', T.avgLossR == null ? '—' : fmtR(T.avgLossR), T.avgLossR != null && T.avgLossR < -1.2 ? 'au-delà de −1 R : stop ou taille hors plan' : '', 'neg')}
+    </dl>
+    ${rCharts(T)}` : '<p class="lead" style="margin-top:10px">Aucune position clôturée sur cette période.</p>'}
+    ${table}
   </section>`;
 }
 // Résultats des trades clôturés en R : une barre par trade (ordre de clôture), puis leur répartition.
@@ -2177,7 +2211,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.12.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.13.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
@@ -2604,6 +2638,8 @@ document.addEventListener('click', e => {
     case 'jfilter': journalFilter = b.dataset.f; render(); break;
     case 'psort': posSort = b.dataset.f; render(); break;
     case 'perf-range': perfRange = b.dataset.f; render(); break;
+    case 'trade-year': tradeYear = b.dataset.f; tradeMonth = 'all'; render(); break;
+    case 'trade-month': tradeMonth = b.dataset.f; render(); break;
     case 'go-radar': tab = 'radar'; render(); window.scrollTo(0, 0); break;
     case 'radar-add': sheetWatch(); break;
     case 'radar-add-sma': sheetWatch(null, b.dataset.t); break;
