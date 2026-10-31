@@ -257,6 +257,12 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 .chart .area{fill:url(#gArea)}
 .chart .dd{fill:var(--loss);opacity:.22} .chart .ddl{fill:none;stroke:var(--loss);stroke-width:1.5}
 .chart .dot{fill:var(--accent)} .chart .dot.est{fill:var(--surface);stroke:var(--accent);stroke-width:1.5} .chart .dot.br{fill:var(--warn)}
+.chart .bw{fill:var(--gain)} .chart .bl{fill:var(--loss)} .chart .rref{stroke:var(--muted);stroke-width:1;stroke-dasharray:2 4;opacity:.7}
+.dist{display:grid;gap:6px;margin-top:10px}
+.dist-row{display:grid;grid-template-columns:84px 1fr 28px;gap:8px;align-items:center;font-size:.82rem}
+.dist-row span{color:var(--muted)} .dist-row b{text-align:right}
+.dist-bar{height:12px;background:var(--surface-2);border-radius:6px;overflow:hidden}
+.dist-bar i{display:block;height:100%;border-radius:6px} .dist-bar i.bw{background:var(--gain)} .dist-bar i.bl{background:var(--loss)}
 .chart-t{font-size:.76rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin:4px 0 -6px}
 /* Liste des cours */
 .plist{display:grid;gap:6px}
@@ -306,7 +312,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.11.0 · licence MIT */
+/* Carnet de positions v1.12.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -560,11 +566,12 @@ const Core = (() => {
   }
 
   // ---------- 4. Statistiques des positions clôturées ----------
-  function tradeStats(st) {
+  // rUnit(lot) : valeur de 1 R en dollars (par défaut le risque initial réel au stop).
+  function tradeStats(st, rUnit) {
     const closed = [];
     for (const lot of st.lots) {
-      const ls = lotState(lot);
-      if (ls.closed) closed.push({ lot, net: ls.netRealized, R: lot.riskInitial > 0 ? ls.netRealized / lot.riskInitial : null });
+      const ls = lotState(lot), u = rUnit ? rUnit(lot) : lot.riskInitial;
+      if (ls.closed) closed.push({ lot, net: ls.netRealized, date: ls.closeDate, R: u > 0 ? ls.netRealized / u : null });
     }
     const wins = closed.filter(c => c.net > 0.0049), losses = closed.filter(c => c.net < -0.0049);
     const sumW = wins.reduce((a, c) => a + c.net, 0), sumL = losses.reduce((a, c) => a + c.net, 0);
@@ -577,6 +584,8 @@ const Core = (() => {
       avgLoss: losses.length ? sumL / losses.length : null,
       profitFactor: sumL < 0 ? sumW / -sumL : null,
       avgR: withR.length ? withR.reduce((a, c) => a + c.R, 0) / withR.length : null,
+      avgWinR: (x => x.length ? x.reduce((a, c) => a + c.R, 0) / x.length : null)(withR.filter(c => c.net > 0.0049)),
+      avgLossR: (x => x.length ? x.reduce((a, c) => a + c.R, 0) / x.length : null)(withR.filter(c => c.net < -0.0049)),
       rCount: withR.length,
       planRate: planned.length ? planned.filter(l => l.planOk).length / planned.length * 100 : null,
       planCount: planned.length, closed
@@ -1038,6 +1047,11 @@ function readImageFile(file) {
 }
 
 // ---------- Données dérivées ----------
+// 1 R = le risque prévu par le plan : « risque par position » (%) du capital de référence au moment de l'achat.
+// Ainsi un R vaut la même chose pour tous les trades, et un risque réel trop grand ou trop petit se voit à part.
+const planR = lot => lot.riskPlan > 0 ? lot.riskPlan : lot.refCapital > 0 ? lot.refCapital * (S.settings.riskPct || 1) / 100 : null;
+const lotR = (lot, ls) => { const u = planR(lot); return ls.closed && u > 0 ? ls.netRealized / u : null; };
+const fmtR = r => (r > 0 ? '+' : '') + fmtNum(r, 2) + ' R';
 const fees = () => Core.normFees(S.settings.fees);
 function latestBroker() { return [...S.snapshots].sort((a, b) => a.date < b.date ? 1 : -1)[0] || null; }
 function lastEventDate() {
@@ -1690,7 +1704,7 @@ function disciplineCard(T) {
 
 // ----- Tableau de bord -----
 function viewDash() {
-  const ref = referenceCapital(), acc = ref.acc, lb = latestBroker(), P = perf(), T = Core.tradeStats(S);
+  const ref = referenceCapital(), acc = ref.acc, lb = latestBroker(), P = perf(), T = Core.tradeStats(S, planR);
   let gap = '';
   if (lb) {
     const atDate = Core.accountState(S, lb.date, 'exact');
@@ -1748,8 +1762,11 @@ function viewDash() {
       ${kv('Gain moyen', T.avgWin == null ? 'Non calculable' : usd(T.avgWin, true), '', 'pos')}
       ${kv('Perte moyenne', T.avgLoss == null ? 'Non calculable' : usd(T.avgLoss, true), '', 'neg')}
       ${kv('Profit factor', T.profitFactor == null ? 'Non calculable' : fmtNum(T.profitFactor, 2), 'gains bruts ÷ pertes brutes')}
-      ${kv('Résultat moyen en R', T.avgR == null ? 'Non calculable' : (T.avgR > 0 ? '+' : '') + fmtNum(T.avgR, 2) + ' R', T.rCount < T.count ? `${T.rCount} sur ${T.count} ont un risque initial` : 'R = résultat net ÷ risque initial')}
+      ${kv('Espérance par trade', T.avgR == null ? 'Non calculable' : fmtR(T.avgR), '1 R = ' + fmtNum(S.settings.riskPct, 2) + ' % du capital à l’achat' + (T.rCount < T.count ? ` · ${T.rCount} sur ${T.count}` : ''), T.avgR == null ? '' : cls(T.avgR))}
+      ${kv('Gain moyen en R', T.avgWinR == null ? '—' : fmtR(T.avgWinR), '', 'pos')}
+      ${kv('Perte moyenne en R', T.avgLossR == null ? '—' : fmtR(T.avgLossR), T.avgLossR != null && T.avgLossR < -1.2 ? 'au-delà de −1 R : stop ou taille hors plan' : '', 'neg')}
     </dl>
+    ${rCharts(T)}
   </section>
   ${disciplineCard(T)}
   <section class="card">
@@ -1767,6 +1784,34 @@ function viewDash() {
       ${kv('Marge disponible saisie', lb && isNum(lb.marginAvail) ? usd(lb.marginAvail) : 'Non saisie', lb && isNum(lb.marginAvail) ? fmtDate(lb.date) : 'Réglages › Valeurs courtier')}
     </dl></details>
   </section>`;
+}
+// Résultats des trades clôturés en R : une barre par trade (ordre de clôture), puis leur répartition.
+function rCharts(T) {
+  const tr = T.closed.filter(c => c.R != null).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  if (!tr.length) return '<p class="hint">Les graphiques en R apparaîtront après la première position clôturée.</p>';
+  const vw = (document.querySelector('#view') || {}).clientWidth || 700;
+  const W = Math.round(Math.max(300, Math.min(700, vw - 38))), H = W < 500 ? 190 : 230, L = 38, Rm = 8, Tp = 10, B = 24;
+  const lo = Math.min(-1.5, ...tr.map(c => c.R)), hi = Math.max(1.5, ...tr.map(c => c.R));
+  const step = hi - lo > 12 ? 4 : hi - lo > 6 ? 2 : 1, a = Math.floor(lo / step) * step, b = Math.ceil(hi / step) * step;
+  const y = v => Tp + (b - v) / (b - a) * (H - Tp - B);
+  const slot = (W - L - Rm) / tr.length, bw = Math.max(2, Math.min(28, slot * 0.7));
+  let g = '';
+  for (let v = a; v <= b + 1e-9; v += step) g += `<line class="grid" x1="${L}" x2="${W - Rm}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/><text x="${L - 6}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${v > 0 ? '+' : ''}${v} R</text>`;
+  const bars = tr.map((c, i) => {
+    const x = L + slot * i + (slot - bw) / 2, y0 = y(0), y1 = y(c.R);
+    return `<rect class="${c.R >= 0 ? 'bw' : 'bl'}" x="${x.toFixed(1)}" y="${Math.min(y0, y1).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1, Math.abs(y1 - y0)).toFixed(1)}" rx="2"><title>${esc(c.lot.ticker)} · ${fmtDate(c.date)} · ${fmtR(c.R)} (${usd(c.net, true)})</title></rect>`;
+  }).join('');
+  const ref = [-1, 1].map(v => `<line class="rref" x1="${L}" x2="${W - Rm}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/>`).join('');
+  const lab = `<text x="${L}" y="${H - 6}">${fmtDate(tr[0].date)}</text><text x="${W - Rm}" y="${H - 6}" text-anchor="end">${fmtDate(tr[tr.length - 1].date)}</text>`;
+  const svg = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Résultat de chaque position clôturée, en R">${g}${ref}<line class="zero" x1="${L}" x2="${W - Rm}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}"/>${bars}${lab}</svg>`;
+  // Répartition : en suivi de tendance, on cherche beaucoup de petites pertes vers −1 R et quelques gros gains.
+  const BK = [['≤ −2 R', r => r <= -2], ['−2 à −1 R', r => r > -2 && r <= -1], ['−1 à 0 R', r => r > -1 && r < 0], ['0 à +1 R', r => r >= 0 && r < 1], ['+1 à +2 R', r => r >= 1 && r < 2], ['+2 à +3 R', r => r >= 2 && r < 3], ['≥ +3 R', r => r >= 3]];
+  const cnt = BK.map(([l, f], i) => ({ l, n: tr.filter(c => f(c.R)).length, neg: i < 3 })), mx = Math.max(...cnt.map(c => c.n));
+  const dist = cnt.map(c => `<div class="dist-row"><span>${c.l}</span><div class="dist-bar"><i class="${c.neg ? 'bl' : 'bw'}" style="width:${mx ? (c.n / mx * 100).toFixed(1) : 0}%"></i></div><b class="num">${c.n}</b></div>`).join('');
+  const best = tr.reduce((m, c) => c.R > m.R ? c : m), worst = tr.reduce((m, c) => c.R < m.R ? c : m);
+  return `<p class="chart-t" style="margin-top:14px">Chaque position clôturée, en R</p>${svg}
+    <p class="hint">Lignes pointillées : −1 R et +1 R. Meilleure : ${esc(best.lot.ticker)} ${fmtR(best.R)} · pire : ${esc(worst.lot.ticker)} ${fmtR(worst.R)}. Touchez une barre pour le détail.</p>
+    <p class="chart-t" style="margin-top:12px">Répartition</p><div class="dist">${dist}</div>`;
 }
 // Explique ce qui manque quand la performance n'est pas calculable.
 function perfWhy(P) {
@@ -2003,7 +2048,7 @@ function viewPos() {
 }
 function lotDetails(v, inJournal, compact) {
   const { lot, ls, last, sa, unreal } = v;
-  const R = ls.closed && lot.riskInitial > 0 ? ls.netRealized / lot.riskInitial : null;
+  const R = lotR(lot, ls), u = planR(lot), xPlan = u > 0 && lot.riskInitial > 0 ? lot.riskInitial / u : null;
   const status = ls.closed ? (ls.netRealized > 0.0049 ? '<span class="pill win">Gagnante</span>' : ls.netRealized < -0.0049 ? '<span class="pill loss">Perdante</span>' : '<span class="pill">Neutre</span>') : '<span class="pill open">Ouverte</span>';
   const key = (inJournal ? 'j-' : 'p-') + lot.id;
   const evRows = lot.events.slice().sort((a, b) => a.date < b.date ? -1 : 1).map(e => {
@@ -2017,7 +2062,7 @@ function lotDetails(v, inJournal, compact) {
     return `<tr><td>${fmtDate(e.date)}</td><td>${lab}</td><td>${detail}</td><td class="n">${amt}</td><td>${photo}<button class="btn sm" data-act="del-event" data-lot="${lot.id}" data-ev="${e.id}" aria-label="Supprimer ce mouvement">Suppr.</button></td></tr>`;
   }).join('');
   const sumRight = ls.closed
-    ? `<span class="num ${cls(ls.netRealized)}">${usd(ls.netRealized, true)}${R != null ? ' · ' + (R > 0 ? '+' : '') + fmtNum(R, 2) + ' R' : ''}</span>`
+    ? `<span class="num ${cls(ls.netRealized)}">${usd(ls.netRealized, true)}${R != null ? ' · ' + fmtR(R) : ''}</span>`
     : `<span class="num ${cls(unreal)}">${usd(unreal, true)}</span>`;
   return `<details class="lot" data-key="${key}" ${inJournal ? `data-q="${esc((lot.ticker + ' ' + (lot.note || '')).toLowerCase())}"` : ''} ${openLots.has(key) ? 'open' : ''}>
     <summary>${compact ? `<span>Détails et actions <small>· achat du ${fmtDate(lot.date)} à ${usd(lot.price)}</small></span><span class="chev">›</span>` : `<span><span class="tk">${esc(lot.ticker)}</span> ${status} ${lot.demo ? '<span class="pill demo">Démo</span>' : ''}<br><small>${fmtDate(lot.date)} · ${qty(lot.qty)} à ${usd(lot.price)} · ${MOTIFS[lot.motif] || 'Autre'}</small></span>${sumRight}`}</summary>
@@ -2027,7 +2072,7 @@ function lotDetails(v, inJournal, compact) {
         ${kv('Exposition à l’entrée', usd(lot.qty * lot.price), `levier ×${fmtNum(lot.leverage)}`)}
         ${kv('Stop initial', isNum(lot.stopInitial) ? usd(lot.stopInitial) : 'Non saisi')}
         ${kv('Stop actuel', isNum(lot.stopCurrent) && lot.stopCurrent > 0 ? usd(lot.stopCurrent) : 'Manquant', '', isNum(lot.stopCurrent) && lot.stopCurrent > 0 ? '' : 'neg')}
-        ${kv('Risque initial', isNum(lot.riskInitial) ? usd(lot.riskInitial) : 'Non calculable', isNum(lot.riskInitialPct) ? pct(lot.riskInitialPct) + ' de ' + usd(lot.refCapital) : '')}
+        ${kv('Risque initial', isNum(lot.riskInitial) ? usd(lot.riskInitial) : 'Non calculable', (isNum(lot.riskInitialPct) ? pct(lot.riskInitialPct) + ' de ' + usd(lot.refCapital) : '') + (xPlan != null ? ` · ${fmtNum(xPlan, 1)} × le plan (1 R = ${usd(u)})` : ''), xPlan > 1.2 ? 'neg' : '')}
         ${kv('Frais payés', usd(ls.txFees), `entrée ${usd(ls.entryFee)} · sortie ${usd(ls.exitFees)}`)}
         ${kv('Financement', usd(ls.funding))}
         ${ls.divs ? kv('Dividendes / ajust.', usd(ls.divs, true)) : ''}
@@ -2036,7 +2081,7 @@ function lotDetails(v, inJournal, compact) {
         ${!ls.closed && sa && !sa.missing ? kv('Si stop actuel exécuté', usd(sa.vsEntry, true), 'partie restante vs entrée, frais de sortie estimés', cls(sa.vsEntry)) : ''}
         ${!ls.closed && sa && !sa.missing ? kv('Résultat total si stop', usd(sa.totalIfStop, true), 'y compris réalisé et frais payés', cls(sa.totalIfStop)) : ''}
         ${!ls.closed && sa && !sa.missing ? kv('Recul cours → stop', sa.pullback == null ? 'Non calculable' : usd(-sa.pullback), sa.belowStop ? 'cours sous le stop !' : (last ? 'depuis ' + usd(last.price) : ''), sa.belowStop ? 'neg' : '') : ''}
-        ${ls.closed && R != null ? kv('Résultat en R', (R > 0 ? '+' : '') + fmtNum(R, 2) + ' R', '', cls(R)) : ''}
+        ${ls.closed && R != null ? kv('Résultat en R', fmtR(R), `1 R = ${usd(u)} (${fmtNum(S.settings.riskPct, 2)} % du capital à l’achat)`, cls(R)) : ''}
         ${kv('Plan respecté', lot.planOk === true ? 'Oui' : lot.planOk === false ? 'Non' : 'Non renseigné', esc(lot.planComment || ''))}
       </dl>
       ${!ls.closed && sa && sa.missing ? '<div class="banner err">Stop manquant : risque non borné.</div>' : ''}
@@ -2132,7 +2177,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.11.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.12.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
@@ -2237,7 +2282,7 @@ function sheetBuy() {
       const estExitFee = Core.feeOut(q, st, f);
       const risk = q * (p - st) + fe + estExitFee;
       S.lots.push({ id, ticker: t, date, price: p, qty: q, leverage: lv, entryFee: fe, estExitFee, stopInitial: st, stopCurrent: st,
-        refCapital: ref.value, refDate: ref.date, riskInitial: risk, riskInitialPct: risk / ref.value * 100,
+        refCapital: ref.value, refDate: ref.date, riskInitial: risk, riskInitialPct: risk / ref.value * 100, riskPlan: ref.value * S.settings.riskPct / 100,
         motif: F(form, 'motif'), note: F(form, 'note').trim(), imgId, planOk: null, planComment: '', events: [] });
       const lp = Core.lastPrice(S.prices, t);
       if (!lp || lp.date <= date) addPrice(t, date, p);
@@ -2434,10 +2479,10 @@ function sheetSnap() {
 // ---------- Exports et restauration ----------
 const csvCell = v => { const s = typeof v === 'number' ? String(Core.roundTo(v, 6)).replace('.', ',') : String(v == null ? '' : v); return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
 function buildCSV() {
-  const head = ['id_position', 'ticker', 'mouvement', 'date', 'quantite', 'prix', 'frais', 'montant', 'levier', 'stop_initial', 'stop_actuel', 'capital_reference', 'risque_initial', 'risque_initial_pct', 'motif', 'plan_respecte', 'commentaire_plan', 'note', 'resultat_net_position', 'R', 'statut'];
+  const head = ['id_position', 'ticker', 'mouvement', 'date', 'quantite', 'prix', 'frais', 'montant', 'levier', 'stop_initial', 'stop_actuel', 'capital_reference', 'risque_initial', 'risque_initial_pct', 'motif', 'plan_respecte', 'commentaire_plan', 'note', 'resultat_net_position', 'R_plan', 'statut'];
   const rows = [head];
   for (const lot of S.lots.slice().sort((a, b) => a.date < b.date ? -1 : 1)) {
-    const ls = Core.lotState(lot), R = ls.closed && lot.riskInitial > 0 ? ls.netRealized / lot.riskInitial : '';
+    const ls = Core.lotState(lot), R = lotR(lot, ls) == null ? '' : lotR(lot, ls);
     const plan = lot.planOk === true ? 'oui' : lot.planOk === false ? 'non' : '';
     rows.push([lot.id, lot.ticker, 'achat', lot.date, lot.qty, lot.price, lot.entryFee, -lot.qty * lot.price, lot.leverage, lot.stopInitial, lot.stopCurrent == null ? '' : lot.stopCurrent, lot.refCapital, lot.riskInitial, lot.riskInitialPct, MOTIFS[lot.motif] || '', plan, lot.planComment || '', lot.note || '', ls.netRealized, R, ls.closed ? 'clôturée' : 'ouverte']);
     for (const e of lot.events.slice().sort((a, b) => a.date < b.date ? -1 : 1)) {
