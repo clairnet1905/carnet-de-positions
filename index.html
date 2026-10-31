@@ -306,7 +306,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.9.0 · licence MIT */
+/* Carnet de positions v1.9.1 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -903,11 +903,32 @@ function referenceCapital() {
   return Object.assign({}, ref, { age, stale, notes, acc });
 }
 function hasDemo() { return S.lots.some(l => l.demo) || S.flows.some(f => f.demo) || S.snapshots.some(s => s.demo); }
+// Courbe : un cours manquant un jour (action en saisie manuelle, cours non récupéré) est remplacé par le dernier cours connu
+// de moins de « staleDays » jours, pour que chaque séance compte. Les points concernés sont marqués estimés.
+function perfPrices() {
+  const all = new Set(), lim = S.settings.staleDays || 4, out = {}, carry = new Set();
+  for (const t in S.prices) for (const x of S.prices[t]) all.add(x.date);
+  const days = [...all].sort();
+  for (const t in S.prices) {
+    const own = [...S.prices[t]].sort((a, b) => a.date < b.date ? -1 : 1), have = new Set(own.map(x => x.date)), add = [];
+    let j = -1;
+    for (const d of days) {
+      while (j + 1 < own.length && own[j + 1].date < d) j++;
+      if (have.has(d) || j < 0 || Core.days(own[j].date, d) > lim) continue;
+      add.push({ date: d, price: own[j].price, carry: true }); carry.add(d + '|' + t);
+    }
+    out[t] = add.length ? own.concat(add).sort((a, b) => a.date < b.date ? -1 : 1) : own;
+  }
+  return { prices: out, carry };
+}
 function perf() {
-  const today = todayISO();
-  const obs = Core.observations(S, today);
+  const today = todayISO(), pp = perfPrices();
+  const obs = Core.observations(Object.assign({}, S, { prices: pp.prices }), today);
+  // Un point n'est estimé que si une position ouverte ce jour-là a utilisé un cours reporté.
+  const openOn = d => S.lots.filter(l => l.date <= d && !Core.lotState(l).closed || l.date <= d && l.events.some(e => e.type === 'sell' && e.date > d)).map(l => l.ticker);
+  const estD = new Set(obs.filter(o => o.source === 'app' && openOn(o.date).some(t => pp.carry.has(o.date + '|' + t))).map(o => o.date));
   const t = Core.twr(obs, S.flows);
-  const pts = t.points;
+  const pts = t.points.map(p => estD.has(p.date) ? Object.assign({}, p, { est: true }) : p);
   const y = today.slice(0, 4), m = today.slice(0, 7), lastD = pts.length ? pts[pts.length - 1].date : today;
   return {
     obs, pts, broken: t.broken, brokenAt: t.brokenAt,
@@ -964,7 +985,7 @@ async function refreshQuotes(manual, hotOnly) {
   if (!key || Live.busy) return;
   const skip = manualSet();
   const openT = new Set(S.lots.filter(l => !Core.lotState(l).closed).map(l => l.ticker));
-  let tickers = [...new Set([...openT].concat(S.watch.filter(w => !w.sym).map(w => w.ticker)))].filter(t => !skip.has(t)).sort();
+  let tickers = [...new Set([...[...openT].sort()].concat(S.watch.filter(w => !w.sym).map(w => w.ticker).sort()))].filter(t => !skip.has(t));  // positions ouvertes d'abord
   if (hotOnly) { const hot = hotTickers(); tickers = tickers.filter(t => openT.has(t) || hot.has(t)); }
   if (!tickers.length) return;
   Live.busy = true;
@@ -981,7 +1002,11 @@ async function refreshQuotes(manual, hotOnly) {
     const t = tickers[i];
     if (pace && i) await new Promise(r => setTimeout(r, pace));
     try {
-      const q = await fetchQuote(t, key);
+      const q = await fetchQuote(t, key).catch(async e => {
+        if (!/limite/.test(e.message)) throw e;
+        Live.err = 'limite gratuite atteinte : reprise dans une minute'; if (tab === 'dash') render();
+        await new Promise(r => setTimeout(r, 61000)); return fetchQuote(t, key);
+      });
       if (!(q && q.c > 0 && q.t > 0)) { miss.push(t); continue; }
       const d = nyParts(q.t * 1000).date;
       got[t] = { date: d, price: q.c, live: true, at: q.t * 1000, dp: q.dp };
@@ -1207,21 +1232,38 @@ function analyzeRaw(w, h) {
   const near = Math.abs(dist) <= (S.settings.nearPct || 2);
   return { lastClose: c[i], lastDate: done[i].d, sma: s1, smaNow, p, src, dist, above, cross, pending, near, lastCross, crosses };
 }
-// Alertes : clôture au-dessus, clôture en dessous (à chaque croisement), et cours proche de la SMA (une fois par bougie).
+// Alertes : chaque croisement (clôture au-dessus ou en dessous) reste affiché 15 jours après sa bougie ; « proche » tant que le cours est proche.
+// « Vu » est retrouvé par action, SMA, sens et bougie (semaine ou mois entier pour S et M) : une bougie complétée plus tard,
+// ou un historique un peu différent sur l'autre appareil, ne fait pas revenir une alerte déjà vue.
+const seenIdx = { ref: null, n: -1, m: null };
+function seenIndex() {
+  const s = S.seen, n = Object.keys(s).length;
+  if (seenIdx.ref !== s || seenIdx.n !== n) {
+    const m = new Map();
+    for (const k in s) { const i = k.lastIndexOf('|'), p = k.slice(0, i); if (!m.has(p)) m.set(p, []); m.get(p).push(k.slice(i + 1)); }
+    Object.assign(seenIdx, { ref: s, n, m });
+  }
+  return seenIdx.m;
+}
 function radarAlerts() {
-  const out = [];
+  const out = [], idx = seenIndex(), lim = addDays(todayISO(), -ALERT_DAYS);
   for (const w of S.watch) {
     const a = analyzeWatch(w); if (!a || a.short) continue;
-    const lab = `${esc(w.ticker)} · SMA ${w.period} ${TF_SHORT[w.tf]}`;
-    if (a.cross) out.push({ key: `${w.id}|${w.tf}${w.period}|${a.cross}|${a.lastDate}`, w, a, lvl: a.cross === 'up' ? 'up' : 'down',
-      txt: `<strong>${lab}</strong> : ${a.cross === 'up' ? 'clôture au-dessus' : 'clôture en dessous'} de la SMA (${usd(a.lastClose)} contre ${usd(a.sma)}, bougie du ${fmtDate(a.lastDate)})` });
-    else if (a.near) out.push({ key: `${w.id}|${w.tf}${w.period}|near|${a.lastDate}`, w, a, lvl: 'near',
-      txt: `<strong>${lab}</strong> : proche de la SMA, ${pct(a.dist, true)} (${usd(a.p)} contre ${usd(a.smaNow)})` });
+    const lab = `${esc(w.ticker)} · SMA ${w.period} ${TF_SHORT[w.tf]}`, id = `${w.id}|${w.tf}${w.period}`;
+    for (const x of a.crosses) {
+      if (x.date < lim) break;
+      const pre = `${id}|${x.dir}`, pk = periodKey(w.tf, x.date);
+      out.push({ key: `${pre}|${x.date}`, w, a, date: x.date, lvl: x.dir, seen: (idx.get(pre) || []).some(d => periodKey(w.tf, d) === pk),
+        txt: `<strong>${lab}</strong> : ${x.dir === 'up' ? 'clôture au-dessus' : 'clôture en dessous'} de la SMA (${usd(x.close)} contre ${usd(x.sma)}, bougie du ${fmtDate(x.date)})` });
+    }
+    // « Proche » vue : reste vue jusqu'au prochain croisement, et au plus 15 jours.
+    if (a.near) {
+      const pre = `${id}|near`, since = a.lastCross && a.lastCross.date > lim ? a.lastCross.date : lim;
+      out.push({ key: `${pre}|${a.lastDate}`, w, a, date: a.lastDate, lvl: 'near', seen: (idx.get(pre) || []).some(d => d >= since),
+        txt: `<strong>${lab}</strong> : proche de la SMA, ${pct(a.dist, true)} (${usd(a.p)} contre ${usd(a.smaNow)})` });
+    }
   }
-  // Une alerte dont la bougie date de plus de 15 jours disparaît (le dernier croisement reste affiché sur la carte).
-  const seen = readSeen(), old = addDays(todayISO(), -ALERT_DAYS);
-  for (const x of out) x.seen = !!seen[x.key];
-  return out.filter(x => x.a.lastDate >= old);
+  return out;
 }
 const ALERT_DAYS = 15;
 // Alertes vues : { clé: date où elle a été vue }, synchronisées entre appareils, oubliées au bout de 60 jours.
@@ -1280,7 +1322,7 @@ function viewRadar() {
   const shown = cards.filter(c => radarFilter === 'signal' ? c.signal : radarFilter === 'watch' ? c.watch : true);
   const al = radarAlerts(), fresh = al.filter(x => !x.seen), seenAl = al.filter(x => x.seen);
   // Croisements d'abord (les plus récents en tête), puis les actions proches de leur SMA.
-  const alertOrder = (x, y) => (x.lvl === 'near') - (y.lvl === 'near') || (x.a.lastDate < y.a.lastDate ? 1 : x.a.lastDate > y.a.lastDate ? -1 : 0) || (x.w.ticker < y.w.ticker ? -1 : 1);
+  const alertOrder = (x, y) => (x.lvl === 'near') - (y.lvl === 'near') || (x.date < y.date ? 1 : x.date > y.date ? -1 : 0) || (x.w.ticker < y.w.ticker ? -1 : 1);
   const alertRow = x => `<div class="alert ${x.lvl === 'up' ? 'ok up' : x.lvl === 'down' ? 'err' : 'warn'} ${x.seen ? 'seen' : ''}"><span>${x.seen ? '' : '<b class="new">Nouveau</b> '}${x.txt}</span>${x.seen ? '' : `<button class="btn sm" data-act="radar-seen" data-k="${esc(x.key)}">Vu</button>`}</div>`;
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const prog = Radar.busy ? `<div class="alert live on"><span>Historique : ${Radar.done} / ${Radar.todo} action(s)… (8 par minute, offre gratuite). Gardez l’app ouverte : le chargement s’arrête quand elle passe en arrière-plan.</span></div>`
@@ -1518,7 +1560,8 @@ function viewDash() {
   ${ref.stale ? `<div class="banner warn"><span>Valorisation datée de ${ref.age} jours (${fmtDate(ref.date)}). Mettez à jour les cours ou saisissez la valeur du courtier.</span><button class="btn sm" data-act="prices">Mettre à jour</button></div>` : ''}
   ${lb ? `<div class="banner info"><span>Courtier au ${fmtDate(lb.date)} : <strong class="num">${usd(lb.netValue)}</strong>${isNum(lb.marginAvail) ? `, marge disponible <span class="num">${usd(lb.marginAvail)}</span>` : ''}. ${gap}</span></div>` : ''}
   <section class="card">
-    <div class="sec-head"><h2>Performance</h2>${P.itd ? `<strong class="num ${cls(P.itd.r)}" style="font-size:1.2rem">${pct(P.itd.r, true)}</strong>` : ''}</div>
+    <div class="sec-head"><h2>Performance <small>· ${PERIODS.find(x => x[0] === perfRange)[2]}</small></h2>${P[perfRange] ? `<strong class="num ${cls(P[perfRange].r)}" style="font-size:1.2rem">${pct(P[perfRange].r, true)}</strong>` : ''}</div>
+    <p class="hint" style="margin:0 0 8px">Touchez une période pour afficher sa courbe. Rendement du compte hors dépôts et retraits ; le « +x % » de la valeur nette, lui, compare à la somme apportée.</p>
     <div class="ptiles" role="group" aria-label="Période">${PERIODS.map(([k, l, sub]) => perfTile(k, l, sub, P[k])).join('')}</div>
     ${P.broken ? `<div class="banner err">Courbe interrompue au ${fmtDate(P.brokenAt)} : valeur de départ nulle ou négative.</div>` : ''}
     ${perfWhy(P)}
@@ -1907,7 +1950,9 @@ function syncPanel() {
   const conflict = readJSON(CONFLICT_KEY, null);
   const lastExp = readJSON(EXPORT_KEY, null);
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
-  const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>`;
+  const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
+  const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
+    <p class="hint"><strong>Cet appareil</strong> : version 1.9.1 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
