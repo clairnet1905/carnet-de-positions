@@ -1,0 +1,42 @@
+name: Radar SMA (historique et notifications)
+
+on:
+  schedule:
+    # Après la clôture de Wall Street (16 h à New York), du lundi au vendredi. Le second passage rattrape un retard de GitHub.
+    - cron: '20 21 * * 1-5'
+    - cron: '45 22 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      test:
+        description: 'Envoyer une notification de test'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: radar
+  cancel-in-progress: false
+
+jobs:
+  radar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Bibliothèque d'envoi des notifications
+        working-directory: robot
+        run: npm install --no-save --no-audit --no-fund web-push@3.6.7
+      - name: Historique et notifications
+        working-directory: robot
+        run: node radar.mjs
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          TWELVEDATA_KEY: ${{ secrets.TWELVEDATA_KEY }}
+          FINNHUB_KEY: ${{ secrets.FINNHUB_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          TEST_PUSH: ${{ github.event_name == 'workflow_dispatch' && inputs.test }}
