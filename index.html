@@ -306,7 +306,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.9.1 · licence MIT */
+/* Carnet de positions v1.10.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -816,6 +816,7 @@ async function syncNow() {
     } else if (localChanged || pend) await pushRemote();
     Store.lastOk = Date.now(); setSync('synced');
     if (tab === 'set') render();
+    if (!Store.backupTried) { Store.backupTried = true; setTimeout(() => backupNow().catch(() => {}), 3000); }
   } catch (e) {
     if (e instanceof TypeError || !navigator.onLine) setSync('offline'); else setSync('error', e.message);
   } finally {
@@ -848,6 +849,51 @@ async function connectGist(token) {
     if (!hasRealData(S)) { adoptRemote(remote); Store.lastOk = Date.now(); setSync('synced'); return 'pulled'; }
     return { choose: remote };
   } catch (e) { Store.cfg = null; writeJSON(SYNC_KEY, null); throw e; }
+}
+
+// ----- Sauvegardes automatiques : une copie datée par semaine, dans un second Gist secret (les 8 dernières) -----
+// Gist séparé : la synchronisation, qui lit son Gist toutes les 30 secondes, ne télécharge pas les sauvegardes.
+const BACKUP_README = 'carnet-sauvegardes-lisezmoi.md', BACKUP_KEEP = 8, BACKUP_EVERY = 7 * 864e5;
+const isBackup = n => /^sauvegarde-\d{4}-\d{2}-\d{2}\.json$/.test(n);
+async function backupGist(create) {
+  if (Store.cfg.backupId) return Store.cfg.backupId;
+  for (let page = 1; page <= 10; page++) {
+    const list = await gh('/gists?per_page=100&page=' + page);
+    const g = list.find(x => x.files && x.files[BACKUP_README]);
+    if (g) { Store.cfg.backupId = g.id; writeJSON(SYNC_KEY, Store.cfg); return g.id; }
+    if (list.length < 100) break;
+  }
+  if (!create) return null;
+  const g = await gh('/gists', { method: 'POST', body: JSON.stringify({ description: 'Carnet de positions : sauvegardes hebdomadaires (gist secret, ne pas rendre public)', public: false,
+    files: { [BACKUP_README]: { content: 'Sauvegardes automatiques du Carnet de positions : une par semaine, les ' + BACKUP_KEEP + ' dernières. Restauration depuis l’app, Réglages › Synchronisation et sauvegarde.' } } }) });
+  Store.cfg.backupId = g.id; writeJSON(SYNC_KEY, Store.cfg);
+  return g.id;
+}
+async function listBackups() {
+  const id = await backupGist(false);
+  if (!id) return [];
+  const g = await gh('/gists/' + id);
+  return Object.keys(g.files || {}).filter(isBackup).sort().reverse().map(n => ({ name: n, date: n.slice(11, 21), file: g.files[n] }));
+}
+async function readBackup(b) {
+  const f = b.file, text = f.truncated || f.content == null ? await (await fetch(f.raw_url, { cache: 'no-store' })).text() : f.content;
+  return normalize(JSON.parse(text));
+}
+// force : bouton « Sauvegarder maintenant ». Sinon, au plus une fois par semaine (toutes appareils confondus).
+async function backupNow(force) {
+  if (!Store.cfg || !hasRealData(S)) return false;
+  if (!force && Date.now() - (Store.cfg.lastBackup || 0) < BACKUP_EVERY) return false;
+  const id = await backupGist(true);
+  const names = Object.keys((await gh('/gists/' + id)).files || {}).filter(isBackup).sort();
+  const latest = names.length ? Date.parse(names[names.length - 1].slice(11, 21) + 'T12:00:00') : 0;
+  if (!force && Date.now() - latest < BACKUP_EVERY) { Store.cfg.lastBackup = latest; writeJSON(SYNC_KEY, Store.cfg); return false; }
+  const name = 'sauvegarde-' + todayISO() + '.json', files = { [name]: { content: JSON.stringify(S) } };
+  const all = [...new Set(names.concat(name))].sort();
+  for (const n of all.slice(0, Math.max(0, all.length - BACKUP_KEEP))) files[n] = null;
+  await gh('/gists/' + id, { method: 'PATCH', body: JSON.stringify({ files }) });
+  Store.cfg.lastBackup = Date.now(); writeJSON(SYNC_KEY, Store.cfg);
+  if (tab === 'set') render();
+  return true;
 }
 function readImageFile(file) {
   return new Promise((res, rej) => {
@@ -1952,12 +1998,15 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.9.1 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.10.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
       <a class="btn" href="https://gist.github.com/${esc(Store.cfg.gistId)}/revisions" target="_blank" rel="noopener">Historique des versions</a>
-      <button class="btn danger" data-act="sync-off">Déconnecter cet appareil</button></div>${conf}${exp}`;
+      <button class="btn danger" data-act="sync-off">Déconnecter cet appareil</button></div>
+    <div class="banner info"><span><strong>Sauvegarde automatique</strong> chaque semaine dans un second Gist secret, les ${BACKUP_KEEP} dernières gardées (positions, flux, cours, radar ; les captures restent dans le Gist principal).
+      ${Store.cfg.lastBackup ? 'Dernière : ' + new Date(Store.cfg.lastBackup).toLocaleDateString('fr-FR') + '.' : 'Première sauvegarde à la prochaine synchronisation.'}</span></div>
+    <div class="row"><button class="btn" data-act="backup-now">Sauvegarder maintenant</button><button class="btn" data-act="backup-list">Restaurer une sauvegarde…</button></div>${conf}${exp}`;
   return `<div class="banner warn"><span><strong>Données conservées uniquement sur cet appareil.</strong> Connectez GitHub pour synchroniser Mac et iPhone, ou exportez régulièrement en JSON.</span></div>
     <details class="lot"><summary><span><span class="tk">Activer la synchronisation</span><br><small>Gratuit, avec votre compte GitHub. Environ 2 minutes, une fois par appareil.</small></span><span class="pill open">Guide</span></summary>
     <div class="body">
@@ -2497,6 +2546,25 @@ document.addEventListener('click', e => {
       writeJSON(CONFLICT_KEY, { at: Date.now(), from: 'avant restauration', state: S });
       S = normalize(c.state); calcDraft = null; save('Version restaurée'); }); break;
     case 'drop-conflict': writeJSON(CONFLICT_KEY, null); render(); break;
+    case 'backup-now': b.disabled = true; toast('Sauvegarde en cours…');
+      backupNow(true).then(ok => toast(ok ? 'Sauvegarde du ' + fmtDate(todayISO()) + ' enregistrée' : 'Rien à sauvegarder'), e => { toast('Sauvegarde impossible : ' + (e instanceof TypeError ? 'pas de réseau' : e.message)); b.disabled = false; }); break;
+    case 'backup-list': b.disabled = true;
+      listBackups().then(async list => {
+        b.disabled = false;
+        if (!list.length) { toast('Aucune sauvegarde pour le moment'); return; }
+        const data = await Promise.all(list.map(x => readBackup(x).catch(() => null)));
+        const opts = list.map((x, i) => data[i] ? `<option value="${i}">${fmtDate(x.date)} · ${data[i].lots.length} position(s), ${data[i].watch.length} SMA</option>` : '').join('');
+        openSheet({ title: 'Restaurer une sauvegarde', ok: 'Restaurer',
+          body: `<p class="lead">Les données choisies remplaceront les données actuelles sur tous vos appareils. Les données actuelles sont mises de côté et restent restaurables (Réglages).</p>
+            <p class="lead">Actuellement : ${S.lots.length} position(s), ${S.watch.length} SMA.</p>
+            <div class="fields"><div class="fld wide"><label for="f-bk">Sauvegarde</label><select id="f-bk" name="bk">${opts}</select></div></div>`,
+          onSubmit: form => {
+            const i = +F(form, 'bk'), st = data[i];
+            need(st, 'Sauvegarde illisible.');
+            writeJSON(CONFLICT_KEY, { at: Date.now(), from: 'avant restauration de la sauvegarde du ' + fmtDate(list[i].date), state: S });
+            S = normalize(JSON.parse(JSON.stringify(st))); calcDraft = null; save('Sauvegarde du ' + fmtDate(list[i].date) + ' restaurée');
+          } });
+      }, e => { b.disabled = false; toast('Lecture impossible : ' + (e instanceof TypeError ? 'pas de réseau' : e.message)); }); break;
     case 'import-json': sheetImport(); break;
     case 'load-demo': loadDemo(); save('Données de démonstration chargées'); break;
     case 'clear-demo': confirmSheet('Effacer la démonstration ?', 'Seules les données marquées « Démo » sont supprimées. Vos propres saisies restent.', 'Effacer la démo', () => { clearDemo(); save('Démonstration effacée'); }); break;
