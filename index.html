@@ -306,7 +306,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.10.0 · licence MIT */
+/* Carnet de positions v1.11.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -628,8 +628,8 @@ function defaultState() {
   return {
     app: 'carnet-positions', version: 1, updatedAt: 0,
     settings: { initialCapital: 1000, startDate: todayISO(), riskPct: 1, cap: 100, leverage: 5,
-      fees: { inFixed: 0, inPct: 0, outFixed: 0, outPct: 0 }, fractional: true, decimals: 4, staleDays: 4, refSource: 'auto', manualTickers: [], nearPct: 2 },
-    flows: [], lots: [], prices: {}, snapshots: [], watch: [], seen: {}
+      fees: { inFixed: 0, inPct: 0, outFixed: 0, outPct: 0 }, fractional: true, decimals: 4, staleDays: 4, refSource: 'auto', manualTickers: [], nearPct: 2, marginMin: 150 },
+    flows: [], lots: [], prices: {}, snapshots: [], watch: [], seen: {}, push: { vapid: '', subs: [] }
   };
 }
 function normalize(st) {
@@ -641,6 +641,7 @@ function normalize(st) {
   for (const k of ['flows', 'lots', 'snapshots', 'watch']) out[k] = Array.isArray(st[k]) ? st[k] : [];
   out.prices = st.prices && typeof st.prices === 'object' ? st.prices : {};
   out.seen = st.seen && typeof st.seen === 'object' && !Array.isArray(st.seen) ? st.seen : {};
+  out.push = { vapid: (st.push && st.push.vapid) || '', subs: st.push && Array.isArray(st.push.subs) ? st.push.subs : [] };
   for (const l of out.lots) l.events = Array.isArray(l.events) ? l.events : [];
   return out;
 }
@@ -787,6 +788,7 @@ function mergeState(base, loc, rem) {
   }
   out.settings = {};
   for (const k of new Set([...Object.keys(rem.settings), ...Object.keys(loc.settings)])) out.settings[k] = pick(base ? base.settings[k] : undefined, loc.settings[k], rem.settings[k]);
+  out.push = { vapid: pick(base ? base.push.vapid : undefined, loc.push.vapid, rem.push.vapid), subs: list(base && base.push.subs, loc.push.subs, rem.push.subs, id) };
   out.seen = Object.assign({}, rem.seen);
   for (const k in loc.seen) if (!out.seen[k] || loc.seen[k] > out.seen[k]) out.seen[k] = loc.seen[k];
   out.updatedAt = Math.max(loc.updatedAt, rem.updatedAt) + 1;
@@ -894,6 +896,121 @@ async function backupNow(force) {
   Store.cfg.lastBackup = Date.now(); writeJSON(SYNC_KEY, Store.cfg);
   if (tab === 'set') render();
   return true;
+}
+
+// ----- Historique du radar tenu par le robot GitHub (Gist « carnet-radar.json ») -----
+// Le robot télécharge une fois par soir l'historique de toutes les actions suivies ; chaque appareil le récupère
+// en un seul fichier au lieu d'interroger Twelve Data action par action.
+const RADAR_FILE = 'carnet-radar.json', RADAR_META = 'carnet-positions:radar-robot';
+function unpackHist(p) {
+  const bars = []; let d = p.s;
+  for (let i = 0; i < p.c.length; i++) { if (i) d = addDays(d, p.o[i]); bars.push([d, p.c[i]]); }
+  return { bars, n: p.n, full: p.full || 0, last: bars.length ? bars[bars.length - 1][0] : '' };
+}
+function robotFresh(meta) { return !!meta && meta.ls >= prevWeekday(lastSession(Date.now())); }
+// throttle : au plus une vérification toutes les 10 minutes (une petite requête ; le fichier n'est téléchargé que s'il a changé).
+async function pullSharedRadar(throttle) {
+  if (!Store.cfg || Store.radarBusy) return;
+  if (!Radar.robot) { Radar.robot = readJSON(RADAR_META, null); Radar.shared = robotFresh(Radar.robot); }
+  if (throttle && Date.now() - (Store.radarCheck || 0) < 600000) return;
+  Store.radarBusy = true; Store.radarCheck = Date.now();
+  try {
+    if (!Store.cfg.radarId) {
+      for (let page = 1; page <= 10 && !Store.cfg.radarId; page++) {
+        const list = await gh('/gists?per_page=100&page=' + page);
+        const g = list.find(x => x.files && x.files[RADAR_FILE]);
+        if (g) { Store.cfg.radarId = g.id; writeJSON(SYNC_KEY, Store.cfg); }
+        if (list.length < 100) break;
+      }
+      if (!Store.cfg.radarId) return;
+    }
+    const c = await gh('/gists/' + Store.cfg.radarId + '/commits?per_page=1');
+    const ver = c && c[0] && c[0].version;
+    if (Radar.robot && Radar.robot.ver === ver) return;
+    const g = await gh('/gists/' + Store.cfg.radarId), f = g.files[RADAR_FILE];
+    const R = JSON.parse(f.truncated || f.content == null ? await (await fetch(f.raw_url, { cache: 'no-store' })).text() : f.content);
+    await loadRadarCache();
+    const upd = {};
+    for (const s in R.hist) {
+      const h = unpackHist(R.hist[s]), loc = Radar.hist[s];
+      if (!h.bars.length) continue;
+      if (!loc || h.last > loc.last || (h.last === loc.last && (h.full || 0) >= (loc.full || 0)) || h.n > (loc.n || 0)) upd[s] = Object.assign(h, { ls: R.ls, at: R.at });
+    }
+    Object.assign(Radar.hist, upd);
+    await HDB.run('readwrite', st => { for (const s in upd) st.put(upd[s], s); return null; });
+    Radar.robot = { ver, ls: R.ls, at: R.at, n: Object.keys(R.hist).length, run: (R.log || [])[0] || null, dead: R.deadSubs || [], errors: Object.keys(R.errors || {}).length };
+    writeJSON(RADAR_META, Radar.robot);
+    Radar.shared = robotFresh(Radar.robot);
+    if (tab !== 'calc') render();
+  } finally { Store.radarBusy = false; }
+}
+
+// ----- Notifications push -----
+const VAPID_PRIV = 'carnet-positions:vapid-prive', PUSH_ID = 'carnet-positions:push-id';
+const b64u = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64u = t => Uint8Array.from(atob(t.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((t.length + 3) % 4)), ch => ch.charCodeAt(0));
+function repoInfo() {
+  const own = /\.github\.io$/.test(location.hostname) ? location.hostname.split('.')[0] : 'clairnet1905';
+  const rep = /\.github\.io$/.test(location.hostname) ? location.pathname.split('/')[1] : 'carnet-de-positions';
+  return 'https://github.com/' + own + '/' + rep;
+}
+async function makeVapid() {
+  const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  return { pub: b64u(await crypto.subtle.exportKey('raw', kp.publicKey)), priv: (await crypto.subtle.exportKey('jwk', kp.privateKey)).d };
+}
+const deviceLabel = () => { const u = navigator.userAgent; return /iPhone/.test(u) ? 'iPhone' : /iPad/.test(u) ? 'iPad' : /Android/.test(u) ? 'Android' : /Mac/.test(u) ? 'Mac' : /Windows/.test(u) ? 'PC Windows' : 'Appareil'; };
+async function pushOn() {
+  if (!S.push.vapid) throw new Error('Créez d’abord les clés de notification.');
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') throw new Error('Notifications refusées. Autorisez-les dans les réglages de l’appareil, puis réessayez.');
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (sub && sub.options && sub.options.applicationServerKey && b64u(sub.options.applicationServerKey) !== S.push.vapid) { await sub.unsubscribe(); sub = null; }
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: unb64u(S.push.vapid) });
+  const j = sub.toJSON(), id = b64u(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(j.endpoint))).slice(0, 16);
+  writeJSON(PUSH_ID, id);
+  S.push.subs = S.push.subs.filter(x => x.id !== id).concat([{ id, endpoint: j.endpoint, keys: j.keys, label: deviceLabel(), at: todayISO() }]);
+  save('Notifications activées sur cet appareil');
+}
+async function pushOff(id) {
+  if (id === readJSON(PUSH_ID, null)) {
+    try { const reg = await navigator.serviceWorker.ready, sub = await reg.pushManager.getSubscription(); if (sub) await sub.unsubscribe(); } catch (e) {}
+    writeJSON(PUSH_ID, null);
+  }
+  S.push.subs = S.push.subs.filter(x => x.id !== id);
+  save('Appareil retiré des notifications');
+}
+function showPrivKey() {
+  const k = readJSON(VAPID_PRIV, null); if (!k) return;
+  openSheet({ title: 'Clé privée de notification', body: `<p class="lead">Copiez cette clé dans un secret du dépôt GitHub nommé <strong>VAPID_PRIVATE_KEY</strong> (Settings › Secrets and variables › Actions › New repository secret). Ne la partagez pas : elle permet d’envoyer des notifications à vos appareils.</p>
+    <div class="fields"><div class="fld wide"><label for="f-vk">Clé privée</label><input id="f-vk" readonly value="${esc(k)}" autocomplete="off" spellcheck="false"></div></div>
+    <div class="row"><button type="button" class="btn primary" data-act="push-copy">Copier la clé</button><a class="btn" href="${repoInfo()}/settings/secrets/actions/new" target="_blank" rel="noopener">Ouvrir les secrets GitHub</a></div>` });
+}
+function notifPanel() {
+  const P = S.push, rb = Radar.robot, repo = repoInfo(), myId = readJSON(PUSH_ID, null);
+  const ios = /iPhone|iPad/.test(navigator.userAgent), standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone;
+  const can = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const mine = myId && P.subs.some(x => x.id === myId);
+  const ok = b => b ? '<b class="ok-tick">✓</b> ' : '';
+  const dev = !can ? (ios && !standalone ? 'Sur iPhone, ouvrez l’app depuis son icône sur l’écran d’accueil (iOS 16.4 ou plus), puis revenez ici.' : 'Ce navigateur ne gère pas les notifications web.')
+    : Notification.permission === 'denied' ? 'Notifications refusées pour cette app : autorisez-les dans les réglages de l’appareil (sur iPhone : Réglages › Notifications › Carnet).'
+    : mine ? 'Cet appareil reçoit les notifications.' : `<button class="btn sm primary" data-act="push-on" ${P.vapid ? '' : 'disabled'}>Activer sur cet appareil</button>`;
+  const run = rb && rb.run;
+  const robot = rb ? `Robot : dernier passage le ${new Date(rb.at).toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} (séance du ${fmtDate(rb.ls)}) · ${rb.n} action(s) à jour${run ? ` · ${run.signals} signal(aux), ${run.sent} notification(s) envoyée(s)` : ''}${rb.errors ? ` · ${rb.errors} action(s) en erreur` : ''}.`
+    : 'Robot : pas encore passé. Après l’étape 4, l’historique commun apparaît ici.';
+  const subs = P.subs.map(x => `<li>${esc(x.label || 'Appareil')}${x.id === myId ? ' (cet appareil)' : ''} · depuis le ${fmtDate(x.at)}${rb && rb.dead.includes(x.id) ? ' · <strong>expiré, réactivez-le</strong>' : ''} <button class="btn sm" data-act="push-off" data-id="${esc(x.id)}">Retirer</button></li>`).join('');
+  return `<div class="sec-head" style="margin-top:18px"><h2>Notifications et historique commun</h2></div>
+    <p class="lead">Chaque soir de bourse, un robot GitHub gratuit met à jour l’historique de toutes vos actions suivies, une fois pour tous vos appareils, et vous envoie une notification pour chaque nouveau croisement de SMA, même app fermée.</p>
+    <ol class="lead" style="padding-left:18px;margin:0;display:grid;gap:8px">
+      <li>${ok(P.vapid)}${P.vapid ? `Clés de notification créées.${readJSON(VAPID_PRIV, null) ? ' <button class="btn sm" data-act="push-showkey">Voir la clé privée</button>' : ''}` : 'Créez les clés de notification (une seule fois, sur un seul appareil). <button class="btn sm primary" data-act="push-keys">Créer les clés</button>'}</li>
+      <li>${ok(rb)}Dans <a href="${repo}/settings/secrets/actions" target="_blank" rel="noopener">GitHub › Settings › Secrets › Actions</a>, ajoutez ces secrets (« New repository secret ») : <strong>GIST_TOKEN</strong> (votre jeton <code>ghp_</code> de la synchronisation), <strong>TWELVEDATA_KEY</strong>, <strong>FINNHUB_KEY</strong> (facultatif, plus rapide) et <strong>VAPID_PRIVATE_KEY</strong> (la clé privée de l’étape 1).</li>
+      <li>${ok(mine)}${dev}</li>
+      <li>${ok(rb && run)}Lancez un essai : <a href="${repo}/actions/workflows/radar.yml" target="_blank" rel="noopener">GitHub › Actions › Radar SMA</a> › « Run workflow ». Une notification de test arrive en 1 à 2 minutes ; le premier passage télécharge l’historique de toutes les actions (environ 25 minutes). Ensuite, le robot passe seul chaque soir vers 22 h 20 (heure de Paris).</li>
+    </ol>
+    <p class="hint">${robot}</p>
+    ${subs ? `<ul class="hint" style="padding-left:18px">${subs}</ul>` : ''}
+    <label class="check" style="margin-top:6px"><input type="checkbox" data-act="push-near" ${S.settings.pushNear ? 'checked' : ''}> Notifier aussi les actions proches de leur SMA (plus de notifications)</label>
+    <p class="hint">Une alerte déjà vue dans l’app n’est jamais notifiée. Le jeton et les clés restent dans les secrets GitHub : ni dans le code, ni dans le Gist.</p>`;
 }
 function readImageFile(file) {
   return new Promise((res, rej) => {
@@ -1032,7 +1149,8 @@ async function refreshQuotes(manual, hotOnly) {
   const skip = manualSet();
   const openT = new Set(S.lots.filter(l => !Core.lotState(l).closed).map(l => l.ticker));
   let tickers = [...new Set([...[...openT].sort()].concat(S.watch.filter(w => !w.sym).map(w => w.ticker).sort()))].filter(t => !skip.has(t));  // positions ouvertes d'abord
-  if (hotOnly) { const hot = hotTickers(); tickers = tickers.filter(t => openT.has(t) || hot.has(t)); }
+  // Avec le robot, les clôtures du radar viennent de lui : cours en direct seulement pour les positions et les actions proches de leur SMA.
+  if (hotOnly || Radar.shared) { const hot = hotTickers(); tickers = tickers.filter(t => openT.has(t) || hot.has(t)); }
   if (!tickers.length) return;
   Live.busy = true;
   if (manual) toast('Récupération des cours…');
@@ -1111,7 +1229,7 @@ function quotesPanel() {
 // La liste suivie (S.watch) est synchronisée ; l'historique reste sur l'appareil (IndexedDB), une requête par action et par jour.
 const TD_KEY = 'carnet-positions:twelvedata', SEEN_KEY = 'carnet-positions:radar-vu';
 const TF_SHORT = { D: 'J', W: 'S', M: 'M' }, TF_LONG = { D: 'journalière', W: 'hebdo', M: 'mensuelle' };
-const Radar = { hist: {}, busy: false, done: 0, todo: 0, err: '', errs: {}, loaded: false };
+const Radar = { hist: {}, busy: false, done: 0, todo: 0, err: '', errs: {}, loaded: false, shared: false, robot: null };  // shared : historique tenu à jour par le robot GitHub
 let radarQuery = '', radarFilter = 'all';
 const tdKey = () => { try { return localStorage.getItem(TD_KEY) || ''; } catch (e) { return ''; } };
 const symOf = w => (w.sym || w.ticker).toUpperCase();
@@ -1197,6 +1315,7 @@ async function refreshRadar(manual) {
   const prev = prevWeekday(ls), WEEK = 7 * 864e5, must = [], resync = [];
   for (const s of Object.keys(need)) {
     const h = Radar.hist[s];
+    if (Radar.shared && h && h.n >= need[s] && h.last >= prev) continue;   // le robot ajoute la clôture et vérifie l'historique
     if (!h || h.n < need[s]) must.push(s);
     else if (h.last < ls && h.ls !== ls && !(finnhubCovers(s) && h.last >= prev)) must.push(s);
     else if (Date.now() - (h.full || 0) > WEEK) resync.push(s);
@@ -1281,6 +1400,8 @@ function analyzeRaw(w, h) {
 // Alertes : chaque croisement (clôture au-dessus ou en dessous) reste affiché 15 jours après sa bougie ; « proche » tant que le cours est proche.
 // « Vu » est retrouvé par action, SMA, sens et bougie (semaine ou mois entier pour S et M) : une bougie complétée plus tard,
 // ou un historique un peu différent sur l'autre appareil, ne fait pas revenir une alerte déjà vue.
+// Tolérance : une clôture corrigée plus tard (Finnhub le soir, Twelve Data à la vérification) peut décaler un croisement d'un ou deux jours.
+const SEEN_TOL = { D: 4, W: 10, M: 35 };
 const seenIdx = { ref: null, n: -1, m: null };
 function seenIndex() {
   const s = S.seen, n = Object.keys(s).length;
@@ -1299,7 +1420,7 @@ function radarAlerts() {
     for (const x of a.crosses) {
       if (x.date < lim) break;
       const pre = `${id}|${x.dir}`, pk = periodKey(w.tf, x.date);
-      out.push({ key: `${pre}|${x.date}`, w, a, date: x.date, lvl: x.dir, seen: (idx.get(pre) || []).some(d => periodKey(w.tf, d) === pk),
+      out.push({ key: `${pre}|${x.date}`, w, a, date: x.date, lvl: x.dir, seen: (idx.get(pre) || []).some(d => periodKey(w.tf, d) === pk || Math.abs(Core.days(d, x.date)) <= SEEN_TOL[w.tf]),
         txt: `<strong>${lab}</strong> : ${x.dir === 'up' ? 'clôture au-dessus' : 'clôture en dessous'} de la SMA (${usd(x.close)} contre ${usd(x.sma)}, bougie du ${fmtDate(x.date)})` });
     }
     // « Proche » vue : reste vue jusqu'au prochain croisement, et au plus 15 jours.
@@ -1529,7 +1650,8 @@ function alertsList() {
   const acc = Core.accountState(S, null, 'last');
   if (acc.margin > 0 && acc.equity > 0) {
     const lvl = acc.equity / acc.margin * 100;
-    if (lvl < 150) out.push({ lvl: lvl < 120 ? 'err' : 'warn', txt: `Niveau de marge estimé <strong>${fmtNum(lvl, 0)} %</strong> (valeur nette ÷ marge). Le courtier ferme des positions vers 50 % : comparez avec MT5.` });
+    const min = S.settings.marginMin || 150;
+    if (lvl < min) out.push({ lvl: lvl < min * 0.8 ? 'err' : 'warn', txt: `Niveau de marge estimé <strong>${fmtNum(lvl, 0)} %</strong>, sous votre seuil de ${fmtNum(min, 0)} % (valeur nette ÷ marge). Le courtier ferme des positions vers 50 % : comparez avec MT5.` });
   }
   return out;
 }
@@ -1727,6 +1849,16 @@ function viewCalc() {
   <section class="card" aria-live="polite"><div id="calcResult"></div></section>
   </div>`;
 }
+// Niveau de marge estimé (valeur nette ÷ marge) si l'on ajoute une marge de « add » : alerte seulement, jamais bloquant.
+function marginAfter(add) {
+  const acc = Core.accountState(S, null, 'last'), m = acc.margin + (add || 0);
+  return acc.equity > 0 && m > 0 ? { now: acc.margin > 0 ? acc.equity / acc.margin * 100 : null, after: acc.equity / m * 100 } : null;
+}
+function marginWarn(add) {
+  const ma = marginAfter(add), min = S.settings.marginMin || 150;
+  if (!ma || ma.after >= min) return '';
+  return `<div class="banner warn"><span>Après cet achat, niveau de marge estimé <strong class="num">${fmtNum(ma.after, 0)} %</strong>${ma.now != null ? ` (aujourd’hui ${fmtNum(ma.now, 0)} %)` : ''}, sous votre seuil de ${fmtNum(min, 0)} %. Le courtier ferme des positions vers 50 %. Vous pouvez quand même enregistrer l’achat.</span></div>`;
+}
 function calcInput() {
   const d = calcDraft, ref = referenceCapital();
   return { equity: ref.value, riskPct: S.settings.riskPct, entry: d.entry, stop: d.stop, leverage: d.leverage, cap: d.cap,
@@ -1754,6 +1886,7 @@ function updateCalc() {
       ${kv('Baisse de 10 % du cours', usd(-r.drop10), 'perte réelle, sans re-multiplier par le levier', 'neg')}
     </dl>
     ${r.marginChecked ? '' : '<p class="hint">Marge disponible non saisie : la contrainte de marge n’est pas vérifiée.</p>'}
+    ${marginWarn(r.margin)}
     <div class="row"><button class="btn primary" data-act="record-buy">Enregistrer l’achat</button></div>
     ${fine()}</div>`;
 }
@@ -1947,6 +2080,7 @@ function viewSettings() {
       ${fld('cap', 'Plafond d’exposition ($)', s.cap, 'Exposition réelle, pas la marge.')}
       ${fld('leverage', 'Levier par défaut (×)', s.leverage)}
       ${fld('staleDays', 'Alerte données anciennes (jours)', s.staleDays)}
+      ${fld('marginMin', 'Alerte niveau de marge sous (%)', s.marginMin || 150, 'Valeur nette ÷ marge. Prévient sans bloquer ; le courtier ferme vers 50 %.')}
       ${fld('inFixed', 'Frais entrée fixes ($)', f.inFixed)}
       ${fld('inPct', 'Frais entrée (%)', f.inPct)}
       ${fld('outFixed', 'Frais sortie fixes ($)', f.outFixed)}
@@ -1998,7 +2132,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.10.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.11.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
@@ -2006,7 +2140,7 @@ function syncPanel() {
       <button class="btn danger" data-act="sync-off">Déconnecter cet appareil</button></div>
     <div class="banner info"><span><strong>Sauvegarde automatique</strong> chaque semaine dans un second Gist secret, les ${BACKUP_KEEP} dernières gardées (positions, flux, cours, radar ; les captures restent dans le Gist principal).
       ${Store.cfg.lastBackup ? 'Dernière : ' + new Date(Store.cfg.lastBackup).toLocaleDateString('fr-FR') + '.' : 'Première sauvegarde à la prochaine synchronisation.'}</span></div>
-    <div class="row"><button class="btn" data-act="backup-now">Sauvegarder maintenant</button><button class="btn" data-act="backup-list">Restaurer une sauvegarde…</button></div>${conf}${exp}`;
+    <div class="row"><button class="btn" data-act="backup-now">Sauvegarder maintenant</button><button class="btn" data-act="backup-list">Restaurer une sauvegarde…</button></div>${conf}${exp}${notifPanel()}`;
   return `<div class="banner warn"><span><strong>Données conservées uniquement sur cet appareil.</strong> Connectez GitHub pour synchroniser Mac et iPhone, ou exportez régulièrement en JSON.</span></div>
     <details class="lot"><summary><span><span class="tk">Activer la synchronisation</span><br><small>Gratuit, avec votre compte GitHub. Environ 2 minutes, une fois par appareil.</small></span><span class="pill open">Guide</span></summary>
     <div class="body">
@@ -2084,8 +2218,9 @@ function sheetBuy() {
       const risk = riskOf(q, p, st, fe, f), box = $('#buyCheck');
       if (risk == null || !(st < p) || !(lv >= 1)) { box.className = 'banner err'; box.textContent = 'Vérifiez prix, quantité, stop (inférieur au prix) et levier.'; return; }
       const rp = risk / ref.value * 100, over = risk > r.budget + 0.005, expo = q * p;
-      box.className = 'banner ' + (over || expo > r.params.cap + 0.005 ? 'warn' : 'info');
-      box.innerHTML = `Exposition <strong class="num">${usd(expo)}</strong> · marge ≈ <span class="num">${usd(expo / lv)}</span> · risque initial <strong class="num">${usd(risk)}</strong> (${pct(rp)} de ${usd(ref.value)})${over ? ' · <strong>dépasse le budget de ' + usd(r.budget) + '</strong>' : ''}${expo > r.params.cap + 0.005 ? ' · <strong>dépasse le plafond</strong>' : ''}`;
+      const ma = marginAfter(expo / lv), low = ma && ma.after < (S.settings.marginMin || 150);
+      box.className = 'banner ' + (over || low || expo > r.params.cap + 0.005 ? 'warn' : 'info');
+      box.innerHTML = (low ? `<strong>Niveau de marge après achat ≈ ${fmtNum(ma.after, 0)} %</strong>, sous votre seuil de ${fmtNum(S.settings.marginMin || 150, 0)} %. ` : '') + `Exposition <strong class="num">${usd(expo)}</strong> · marge ≈ <span class="num">${usd(expo / lv)}</span> · risque initial <strong class="num">${usd(risk)}</strong> (${pct(rp)} de ${usd(ref.value)})${over ? ' · <strong>dépasse le budget de ' + usd(r.budget) + '</strong>' : ''}${expo > r.params.cap + 0.005 ? ' · <strong>dépasse le plafond</strong>' : ''}`;
     },
     onSubmit: async form => {
       const t = F(form, 'ticker').trim().toUpperCase(), date = F(form, 'date');
@@ -2546,6 +2681,16 @@ document.addEventListener('click', e => {
       writeJSON(CONFLICT_KEY, { at: Date.now(), from: 'avant restauration', state: S });
       S = normalize(c.state); calcDraft = null; save('Version restaurée'); }); break;
     case 'drop-conflict': writeJSON(CONFLICT_KEY, null); render(); break;
+    case 'push-keys': {
+      const go = () => makeVapid().then(k => { writeJSON(VAPID_PRIV, k.priv); S.push.vapid = k.pub; S.push.subs = []; save('Clés de notification créées'); showPrivKey(); }, e => toast('Création impossible : ' + e.message));
+      if (S.push.subs.length) confirmSheet('Recréer les clés ?', 'Les appareils déjà abonnés devront réactiver les notifications, et le secret VAPID_PRIVATE_KEY devra être remplacé.', 'Recréer', go); else go();
+      break;
+    }
+    case 'push-showkey': showPrivKey(); break;
+    case 'push-copy': { const k = readJSON(VAPID_PRIV, null); if (k && navigator.clipboard) navigator.clipboard.writeText(k).then(() => toast('Clé copiée'), () => toast('Copie impossible : sélectionnez la clé à la main')); break; }
+    case 'push-on': b.disabled = true; pushOn().catch(e => { toast(e.message); b.disabled = false; }); break;
+    case 'push-off': pushOff(b.dataset.id); break;
+    case 'push-near': S.settings.pushNear = b.checked; save(b.checked ? 'Notifications « proche » activées' : 'Notifications « proche » désactivées'); break;
     case 'backup-now': b.disabled = true; toast('Sauvegarde en cours…');
       backupNow(true).then(ok => toast(ok ? 'Sauvegarde du ' + fmtDate(todayISO()) + ' enregistrée' : 'Rien à sauvegarder'), e => { toast('Sauvegarde impossible : ' + (e instanceof TypeError ? 'pas de réseau' : e.message)); b.disabled = false; }); break;
     case 'backup-list': b.disabled = true;
@@ -2609,7 +2754,7 @@ document.addEventListener('submit', async e => {
   const form = e.target;
   if (form.id === 'setForm') {
     const g = n => form.elements[n].value, s = S.settings;
-    const v = { initialCapital: num(g('initialCapital')), riskPct: num(g('riskPct')), cap: num(g('cap')), leverage: num(g('leverage')), staleDays: num(g('staleDays')), decimals: num(g('decimals')) };
+    const v = { initialCapital: num(g('initialCapital')), riskPct: num(g('riskPct')), cap: num(g('cap')), leverage: num(g('leverage')), staleDays: num(g('staleDays')), decimals: num(g('decimals')), marginMin: num(g('marginMin')) };
     const fz = { inFixed: numOr(g('inFixed'), 0), inPct: numOr(g('inPct'), 0), outFixed: numOr(g('outFixed'), 0), outPct: numOr(g('outPct'), 0) };
     const errs = [];
     if (!(v.initialCapital > 0)) errs.push('capital initial');
@@ -2617,6 +2762,7 @@ document.addEventListener('submit', async e => {
     if (!(v.cap > 0)) errs.push('plafond');
     if (!(v.leverage >= 1)) errs.push('levier');
     if (!(v.staleDays >= 0)) errs.push('alerte');
+    if (!(v.marginMin >= 50 && v.marginMin <= 1000)) errs.push('seuil de marge (50 à 1000 %)');
     if (!(Number.isInteger(v.decimals) && v.decimals >= 0 && v.decimals <= 8)) errs.push('précision (entier 0 à 8)');
     if (Object.values(fz).some(x => !(x >= 0))) errs.push('frais');
     if (!g('startDate')) errs.push('date de départ');
@@ -2644,11 +2790,14 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet
   migrateSeen();
   render();
   if (Store.cfg) { setSync('saving'); syncNow(); } else setSync('local');
+  window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (['dash', 'calc', 'pos', 'radar', 'set'].includes(h) && h !== tab) { tab = h; render(); window.scrollTo(0, 0); } });
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   // Cours automatiques : à l'ouverture, au retour sur l'app, puis toutes les 2 minutes pendant la séance.
   refreshQuotes();
-  loadRadarCache().then(() => { render(); refreshRadar(); });
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { if (Date.now() - Live.at > 60000) refreshQuotes(); refreshRadar(); } });
+  // Historique du radar : d'abord celui du robot (Gist), puis Twelve Data seulement pour ce qui manque.
+  const radarUp = throttle => (Store.cfg ? pullSharedRadar(throttle).catch(() => {}) : Promise.resolve()).then(() => refreshRadar());
+  loadRadarCache().then(() => { render(); radarUp(false); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { if (Date.now() - Live.at > 60000) refreshQuotes(); radarUp(true); } });
   setInterval(() => { if (document.visibilityState === 'visible' && tab !== 'calc' && marketOpen(Date.now())) refreshQuotes(false, Date.now() - (Live.fullAt || 0) < 600000); }, 120000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Store.cfg) scheduleSync(200); });
   window.addEventListener('online', () => { if (Store.cfg) scheduleSync(200); });
