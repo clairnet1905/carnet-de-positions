@@ -313,7 +313,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.14.0 · licence MIT */
+/* Carnet de positions v1.15.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -1751,6 +1751,7 @@ function viewDash() {
     ${mUse != null && acc.margin > 0 ? `<div class="gauge"><div class="row"><span>Marge estimée utilisée : <strong style="color:var(--hero-ink)">${usd(acc.margin)}</strong></span><span>${fmtNum(mUse, 0)} % de la valeur nette</span></div><div class="track"><i class="${mCls}" style="width:${Math.min(100, mUse).toFixed(1)}%"></i></div></div>` : ''}
   </div>
   ${ref.stale ? `<div class="banner warn"><span>Valorisation datée de ${ref.age} jours (${fmtDate(ref.date)}). Mettez à jour les cours ou saisissez la valeur du courtier.</span><button class="btn sm" data-act="prices">Mettre à jour</button></div>` : ''}
+  ${acctCard(ref)}
   ${lb ? `<div class="banner info"><span>Courtier au ${fmtDate(lb.date)} : <strong class="num">${usd(lb.netValue)}</strong>${isNum(lb.marginAvail) ? `, marge disponible <span class="num">${usd(lb.marginAvail)}</span>` : ''}. ${gap}</span></div>` : ''}
   <section class="card">
     <div class="sec-head"><h2>Performance <small>· ${PERIODS.find(x => x[0] === perfRange)[2]}</small></h2>${P[perfRange] ? `<strong class="num ${cls(P[perfRange].r)}" style="font-size:1.2rem">${pct(P[perfRange].r, true)}</strong>` : ''}</div>
@@ -1782,6 +1783,51 @@ function viewDash() {
       ${kv('Marge disponible saisie', lb && isNum(lb.marginAvail) ? usd(lb.marginAvail) : 'Non saisie', lb && isNum(lb.marginAvail) ? fmtDate(lb.date) : 'Réglages › Valeurs courtier')}
     </dl></details>
   </section>`;
+}
+// Bilan du compte courtier depuis son ouverture, période d'avant le carnet comprise (relevé du courtier : dépôts et retraits cumulés).
+// Résultat total = valeur actuelle − dépôts nets. Il se partage entre l'avant-carnet et le carnet, dont l'apport est capital initial + versements saisis.
+function acctBalance(ref) {
+  const a = S.settings.acct;
+  if (!a || !(a.deposits > 0)) return null;
+  const later = S.flows.filter(f => f.date > a.at).reduce((x, f) => x + f.amount, 0);
+  const net = a.deposits - (a.withdrawals || 0) + later;
+  const carnetIn = S.settings.initialCapital + S.flows.reduce((x, f) => x + f.amount, 0);
+  const total = ref.value - net;
+  return { a, later, net, total, totalPct: net > 0 ? total / net * 100 : null, carnet: ref.value - carnetIn, before: carnetIn - net };
+}
+function acctCard(ref) {
+  const B = acctBalance(ref);
+  if (!B) return '';
+  const { a } = B;
+  return `<section class="card">
+    <div class="sec-head"><h2>Depuis l’ouverture du compte${a.since ? ` <small>· ${esc(a.since)}</small>` : ''}</h2><strong class="num ${cls(B.total)}" style="font-size:1.2rem">${usd(B.total, true)}</strong></div>
+    <dl class="kv">
+      ${kv('Dépôts nets', usd(B.net), `${usd(a.deposits)} déposés${a.withdrawals ? ` − ${usd(a.withdrawals)} retirés` : ''} au relevé du ${fmtDate(a.at)}${Math.abs(B.later) >= 0.005 ? `, ${usd(B.later, true)} saisis depuis` : ''}`)}
+      ${kv('Valeur actuelle', usd(ref.value), ref.label)}
+      ${kv('Résultat total', `${usd(B.total, true)}${B.totalPct == null ? '' : ' · ' + pct(B.totalPct, true)}`, 'en dollars, dépôts déduits', cls(B.total))}
+      ${kv('dont avant le carnet', usd(B.before, true), `jusqu’au ${fmtDate(S.settings.startDate)} (forex, or…)`, cls(B.before))}
+      ${kv('dont depuis le carnet', usd(B.carnet, true), `par rapport à ${usd(B.net + B.before)} apportés`, cls(B.carnet))}
+    </dl>
+    <details class="more"><summary>Pourquoi ce n’est pas le « Gain » de MT5</summary>
+    <p class="hint">MT5 affiche un rendement pondéré dans le temps : une perte faite quand le compte était petit pèse autant qu’une perte sur un gros compte, et les dépôts suivants ne la rattrapent pas. Ici, c’est l’argent réellement gagné ou perdu par rapport à l’argent déposé. Le partage avant / depuis le carnet suppose que les versements faits depuis le ${fmtDate(S.settings.startDate)} sont saisis dans Réglages › Versements et retraits.</p>
+    <button type="button" class="btn sm" data-act="acct">Modifier le relevé</button></details>
+  </section>`;
+}
+function sheetAcct() {
+  const a = S.settings.acct || {};
+  openSheet({
+    title: 'Relevé du compte courtier', ok: 'Enregistrer',
+    body: `<p class="hint" style="margin-top:0">Dans MT5 : Historique › clic droit › Rapport. Recopiez les dépôts et retraits cumulés depuis l’ouverture du compte, toutes périodes et tous instruments confondus.</p>
+      <div class="fields">${dec('deposits', 'Dépôts cumulés ($)', a.deposits)}${dec('withdrawals', 'Retraits cumulés ($)', a.withdrawals || 0)}
+      ${inp('at', 'Date du relevé', a.at || todayISO(), 'type="date"')}${inp('since', 'Compte ouvert en', a.since || '', 'placeholder="avril 2025" autocomplete="off"')}</div>
+      ${a.deposits ? '<div class="row"><button type="button" class="btn sm danger" data-act="acct-off">Retirer le bilan</button></div>' : ''}`,
+    onSubmit: form => {
+      const dep = num(F(form, 'deposits')), wd = numOr(F(form, 'withdrawals'), 0), at = F(form, 'at');
+      need(dep > 0, 'Dépôts cumulés : montant positif.'); need(wd >= 0, 'Retraits cumulés : montant positif ou nul.'); need(!!at, 'Date du relevé manquante.');
+      S.settings.acct = { deposits: dep, withdrawals: wd, at, since: F(form, 'since').trim() };
+      save('Bilan depuis l’ouverture enregistré');
+    }
+  });
 }
 const MOIS = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
 const MOIS_C = ['Janv.', 'Févr.', 'Mars', 'Avr.', 'Mai', 'Juin', 'Juil.', 'Août', 'Sept.', 'Oct.', 'Nov.', 'Déc.'];
@@ -2189,6 +2235,7 @@ function viewSettings() {
   <section class="card">
     <div class="sec-head"><h2>Versements et retraits</h2><button class="btn sm primary" data-act="add-flow">Ajouter</button></div>
     <p class="lead">Flux externes uniquement. Ils changent la valeur nette, jamais la performance.</p>
+    <div class="row" style="margin-bottom:8px"><button class="btn sm" data-act="acct">${S.settings.acct ? 'Modifier' : 'Saisir'} le relevé depuis l’ouverture du compte</button>${S.settings.acct ? `<small>${usd(S.settings.acct.deposits)} déposés au ${fmtDate(S.settings.acct.at)}</small>` : ''}</div>
     ${flows.length ? `<div class="tbl"><table><thead><tr><th>Date</th><th>Type</th><th class="n">Montant</th><th></th><th></th></tr></thead><tbody>${flows.map(x => `<tr><td>${fmtDate(x.date)}</td><td>${x.amount >= 0 ? 'Versement' : 'Retrait'}${x.note ? ' · ' + esc(x.note) : ''}</td><td class="n">${usd(x.amount, true)}</td><td>${x.demo ? '<span class="pill demo">Démo</span>' : ''}</td><td><button class="btn sm" data-act="del-flow" data-id="${x.id}">Suppr.</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">Aucun flux saisi.</p>'}
   </section>
   <section class="card">
@@ -2221,7 +2268,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.14.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.15.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
@@ -2656,6 +2703,8 @@ document.addEventListener('click', e => {
     case 'radar-filter': radarFilter = b.dataset.f; render(); break;
     case 'radar-import': sheetWatchImport(); break;
     case 'radar-settings': sheetRadarSettings(); break;
+    case 'acct': sheetAcct(); break;
+    case 'acct-off': delete S.settings.acct; closeSheet(); save('Bilan depuis l’ouverture retiré'); break;
     case 'radar-refresh': refreshQuotes(); refreshRadar(true); break;
     case 'radar-edit': sheetWatch(S.watch.find(x => x.id === b.dataset.id)); break;
     case 'radar-del': { const w = S.watch.find(x => x.id === b.dataset.id);
