@@ -245,6 +245,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 .ptile b{font:600 1.05rem var(--f-num)} .ptile b.pos{color:var(--gain)} .ptile b.neg{color:var(--loss)}
 .ptile small{font-size:.72rem;color:var(--muted);overflow-wrap:anywhere}
 .ptile[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.ptile.whole{cursor:default;background:transparent;border:1.5px dashed var(--line)}
 .disc{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
 .disc div{border-radius:12px;padding:12px;background:var(--surface-2);display:grid;gap:2px}
 .disc b{font:600 1.35rem var(--f-num)}
@@ -316,7 +317,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.16.0 · licence MIT */
+/* Carnet de positions v1.17.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -1766,7 +1767,7 @@ function viewDash() {
   <section class="card">
     <div class="sec-head"><h2>Performance <small>· ${PERIODS.find(x => x[0] === perfRange)[2]}</small></h2>${P[perfRange] ? `<strong class="num ${cls(P[perfRange].r)}" style="font-size:1.2rem">${pct(P[perfRange].r, true)}</strong>` : ''}</div>
     <p class="hint" style="margin:0 0 8px">Touchez une période pour afficher sa courbe. Rendement du compte hors dépôts et retraits ; le « +x % » de la valeur nette, lui, compare à la somme apportée.</p>
-    <div class="ptiles" role="group" aria-label="Période">${PERIODS.map(([k, l, sub]) => perfTile(k, l, sub, P[k])).join('')}</div>
+    <div class="ptiles" role="group" aria-label="Période">${PERIODS.map(([k, l, sub]) => perfTile(k, l, sub, P[k])).join('')}${acctTile(ref)}</div>
     ${P.broken ? `<div class="banner err">Courbe interrompue au ${fmtDate(P.brokenAt)} : valeur de départ nulle ou négative.</div>` : ''}
     ${perfWhy(P)}
     ${rangePts.length > 1 ? `<p class="chart-t">${PERIODS.find(x => x[0] === perfRange)[1]} : ${fmtDate(rangePts[0].date)} → ${fmtDate(rangePts[rangePts.length - 1].date)}</p>` : ''}
@@ -1804,6 +1805,12 @@ function acctBalance(ref) {
   const carnetIn = S.settings.initialCapital + S.flows.reduce((x, f) => x + f.amount, 0);
   const total = ref.value - net;
   return { a, later, net, total, totalPct: net > 0 ? total / net * 100 : null, carnet: ref.value - carnetIn, before: carnetIn - net };
+}
+// Tuile « Compte entier » : résultat en dollars depuis l'ouverture rapporté aux dépôts nets (pas de courbe, faute d'historique avant le carnet).
+function acctTile(ref) {
+  const B = acctBalance(ref);
+  if (!B) return '';
+  return `<div class="ptile whole" title="Valeur actuelle − dépôts nets, depuis l’ouverture du compte"><span>Compte entier</span><b class="${cls(B.total)}">${B.totalPct == null ? '—' : pct(B.totalPct, true)}</b><small>${B.a.since ? 'depuis ' + esc(B.a.since) : 'depuis l’ouverture'} · ${usd(B.total, true)}</small></div>`;
 }
 function acctCard(ref) {
   const B = acctBalance(ref);
@@ -2278,7 +2285,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.16.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.17.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
