@@ -320,7 +320,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.18.0 · licence MIT */
+/* Carnet de positions v1.18.1 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -1500,6 +1500,23 @@ function radarAlerts() {
 const ALERT_DAYS = 15;
 // Alertes vues : { clé: date où elle a été vue }, synchronisées entre appareils, oubliées au bout de 60 jours.
 // Ancienne version : gardées sur l'appareil (liste de clés, puis objet), reprises une fois.
+// Une seule fois : commission et swap IC Markets (CFD actions US) activés, et commission ajoutée aux achats et ventes
+// déjà saisis sans frais. Le swap, lui, est estimé depuis la date d'achat de chaque position (Core.setSwap).
+function migrateFees() {
+  const s = S.settings;
+  if (s.feesV >= 1) return;
+  s.fees = Object.assign({}, s.fees);
+  if (!s.fees.perShare && !s.fees.minComm) { s.fees.perShare = 0.02; s.fees.minComm = 0.02; }
+  if (!s.swap || !s.swap.pct) s.swap = { pct: 5.93, triple: 5 };
+  const f = Core.normFees(s.fees);
+  for (const l of S.lots) {
+    if (l.demo) continue;
+    if (!(l.entryFee > 0)) l.entryFee = Core.roundTo(Core.commission(l.qty, f), 4);
+    for (const e of l.events) if (e.type === 'sell' && !(e.fee > 0)) e.fee = Core.roundTo(Core.commission(e.qty, f), 4);
+  }
+  s.feesV = 1;
+  save();
+}
 function migrateSeen() {
   try {
     const v = JSON.parse(localStorage.getItem(SEEN_KEY) || 'null');
@@ -2137,7 +2154,7 @@ function viewPos() {
     const last = vs[0].last, px = last ? last.price : null;
     const expo = q * (px == null ? avg : px);
     const margin = vs.reduce((a, v) => a + v.ls.rem * (px == null ? v.lot.price : px) / (v.lot.leverage || 1), 0);
-    const un = vs.reduce((a, v) => a + v.unreal, 0);
+    const un = vs.reduce((a, v) => a + v.unreal, 0), swapT = vs.reduce((a, v) => a + v.ls.funding, 0);
     const stops = vs.map(v => v.lot.stopCurrent).filter(x => isNum(x) && x > 0);
     const stop = stops.length === vs.length ? Math.min(...stops) : null;
     const atStop = vs.every(v => !v.sa.missing) ? vs.reduce((a, v) => a + v.sa.vsEntry, 0) : null;
@@ -2148,7 +2165,7 @@ function viewPos() {
     const state = (stop != null && px != null && px <= stop) || stop == null ? 'danger' : un > 0.005 ? 'up' : un < -0.005 ? 'down' : '';
     const html = `<article class="pcard ${state}" data-q="${esc((t + ' ' + vs.map(v => v.lot.note || '').join(' ')).toLowerCase())}">
       <header><div><span class="tk">${esc(t)}</span> <button class="src ${manualSet().has(t) ? '' : 'on'}" data-act="quote-toggle" data-t="${esc(t)}" title="Source du cours : touchez pour changer">${manualSet().has(t) ? 'Cours manuel' : 'Cours Finnhub'}</button> ${stop != null && stop >= avg ? '<span class="pill win">Sans risque</span>' : ''}${state === 'danger' ? `<span class="pill loss">${stop == null ? 'Sans stop' : 'Stop atteint'}</span>` : ''}
-        <small>${vs.length > 1 ? vs.length + ' achats · ' : ''}${Core.days(first, today)} j · levier ${lev}</small></div>
+        <small>${vs.length > 1 ? vs.length + ' achats · ' : ''}${Core.days(first, today)} j · levier ${lev}${swapT > 0.0049 ? ` · swap ${usd(-swapT, true)}` : ''}</small></div>
         <div class="pl ${cls(un)}">${usd(un, true)}<small>${pct(un / (q * avg) * 100, true)}</small></div></header>
       ${px != null ? rail(avg, stop, px) : '<p class="hint">Aucun cours saisi.</p>'}
       <div class="mini">
@@ -2337,7 +2354,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.18.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.18.1 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
@@ -3001,6 +3018,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet
   Store.cfg = readJSON(SYNC_KEY, null);
   if (!local) { loadDemo(); S.updatedAt = 0; writeLocal(); }
   migrateSeen();
+  migrateFees();
   render();
   if (Store.cfg) { setSync('saving'); syncNow(); } else setSync('local');
   window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (['dash', 'calc', 'pos', 'radar', 'set'].includes(h) && h !== tab) { tab = h; render(); window.scrollTo(0, 0); } });
