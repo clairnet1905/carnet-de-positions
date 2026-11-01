@@ -34,14 +34,14 @@ async function findGists() {
 }
 
 // ----- Cours -----
-let tdCalls = 0, tdLast = 0;
+let tdCalls = 0, tdLast = 0, ADJ = 'all';
 async function twelve(sym, n) {
   if (!TWELVEDATA_KEY) throw new Error('pas de clé Twelve Data');
   if (tdCalls >= TD_DAY_LIMIT) throw new Error('quota Twelve Data du jour réservé');
   for (let attempt = 0; attempt < 3; attempt++) {
     const wait = tdLast + 8000 - Date.now(); if (wait > 0) await sleep(wait);   // 8 requêtes par minute (offre gratuite)
     tdLast = Date.now(); tdCalls++;
-    const r = await fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=1day&outputsize=${n}&apikey=${encodeURIComponent(TWELVEDATA_KEY)}`);
+    const r = await fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=1day&outputsize=${n}&adjust=${ADJ}&apikey=${encodeURIComponent(TWELVEDATA_KEY)}`);
     const j = await r.json().catch(() => ({}));
     if (j.code === 429 || r.status === 429) { await sleep(61000); continue; }
     if (j.status === 'error' || !Array.isArray(j.values)) throw new Error(j.message || 'erreur ' + r.status);
@@ -68,6 +68,8 @@ if (!ids.main) { console.error('Gist de l’application introuvable : activez d�
 const main = await gh('/gists/' + ids.main);
 const S = JSON.parse(await fileText(main.files[STATE_FILE]));
 S.watch = S.watch || []; S.settings = S.settings || {};
+// Cours ajustés des dividendes (comme le bouton ADJ de TradingView), sauf si l'app le désactive (Radar › Réglages).
+ADJ = S.settings.adjDiv === false ? 'splits' : 'all';
 let R = { v: 1, hist: {}, notified: {}, ls: '', at: 0, log: [] };
 if (ids.radar) {
   const g = await gh('/gists/' + ids.radar);
@@ -77,33 +79,39 @@ const hist = {};
 for (const s in R.hist) hist[s] = unpack(R.hist[s]);
 
 const now = Date.now(), ls = lastSession(now), prev = prevWeekday(ls);
+const adjChanged = (R.adj || 'splits') !== ADJ;   // réglage changé (ou premier passage en cours ajustés) : tout est retéléchargé
 const need = {}, usSym = {};
 for (const w of S.watch) { const s = symOf(w); need[s] = Math.max(need[s] || 0, barsNeeded(w)); if (!w.sym) usSym[s] = true; }
 const manual = new Set((S.settings.manualTickers || []).map(t => String(t).toUpperCase()));
-log(`Séance du ${ls} · ${Object.keys(need).length} action(s), ${S.watch.length} SMA`);
+log(`Séance du ${ls} · ${Object.keys(need).length} action(s), ${S.watch.length} SMA · cours ${ADJ === 'all' ? 'ajustés des dividendes' : 'ajustés des divisions seulement'}${adjChanged ? ' (réglage changé : tout est retéléchargé)' : ''}`);
 
-// Ordre : historique absent ou trop court (Twelve Data complet), puis clôture du jour (Finnhub, ou Twelve Data court),
+// Ordre : historique absent ou trop court (Twelve Data complet), puis clôture du jour (Twelve Data court, qui recale l’historique ajusté ; Finnhub si les cours ne sont pas ajustés),
 // puis vérification complète hebdomadaire de quelques actions (divisions d'actions, clôtures corrigées).
 const full = [], daily = [], resync = [];
 for (const s of Object.keys(need)) {
   const h = hist[s];
-  if (!h || h.n < need[s] || days(h.last, ls) > 20) full.push(s);   // un trou de quelques jours (jour férié) se comble par une requête courte
+  if (!h || adjChanged || h.n < need[s] || days(h.last, ls) > 20) full.push(s);   // un trou de quelques jours (jour férié) se comble par une requête courte
   else if (h.last < ls) daily.push(s);
   else if (now - (h.full || 0) > WEEK) resync.push(s);
 }
 resync.sort((a, b) => (hist[a].full || 0) - (hist[b].full || 0));
-const errors = {};
+const errors = {}, adjusted = [];
 const put = (s, bars, isFull) => {
   bars = bars.filter(b => b[0] <= ls);
   const old = hist[s] && !isFull ? hist[s].bars : [];
   const from = bars.length ? bars[0][0] : '9999';
-  const merged = old.filter(b => b[0] < from).concat(bars).slice(-Math.max(need[s] + 30, 60));
+  // Un dividende ou une division d'actions récents décalent tous les cours ajustés antérieurs d'un même facteur :
+  // on le mesure sur une clôture commune aux deux séries et on l'applique à l'historique gardé.
+  const same = old.find(b => b[0] === from), k = same ? bars[0][1] / same[1] : 1, shift = Math.abs(k - 1) > 2e-4;
+  if (shift) adjusted.push(s);
+  const older = old.filter(b => b[0] < from).map(([d, c]) => [d, shift ? c * k : c]);
+  const merged = older.concat(bars).slice(-Math.max(need[s] + 30, 60));
   hist[s] = { bars: merged, n: need[s], full: isFull ? Date.now() : (hist[s] && hist[s].full) || 0, last: merged.length ? merged[merged.length - 1][0] : '' };
 };
 for (const s of full) { try { put(s, await twelve(s, need[s]), true); } catch (e) { errors[s] = e.message; } }
 for (const s of daily) {
   try {
-    if (FINNHUB_KEY && usSym[s] && !manual.has(s)) {
+    if (ADJ === 'splits' && FINNHUB_KEY && usSym[s] && !manual.has(s)) {
       const q = await finnhub(s);
       const d = q && q.t ? new Date(q.t * 1000).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) : '';
       if (q && q.c > 0 && d === ls && hist[s].last === prev) { put(s, [[d, q.c]], false); continue; }
@@ -115,7 +123,7 @@ for (const s of resync.slice(0, RESYNC_PER_RUN)) { try { put(s, await twelve(s, 
 
 // ----- Notifications -----
 const subs = (S.push && S.push.subs) || [], pub = S.push && S.push.vapid;
-const first = !R.ls;   // premier passage : on mémorise les croisements existants sans notifier (pas d'avalanche)
+const first = !R.ls || adjChanged;   // premier passage ou réglage changé : on mémorise les croisements sans notifier (pas d'avalanche)
 const sig = signals(S, hist, ls, R.notified, { near: !!S.settings.pushNear });
 let sent = 0, dead = [];
 const payloads = [];
@@ -135,11 +143,12 @@ for (const k in R.notified) if (days(R.notified[k], ls) > 60) delete R.notified[
 // ----- Enregistrement -----
 const packed = {};
 for (const s in hist) if (need[s]) packed[s] = pack(hist[s]);   // les actions retirées du radar sont oubliées
-R = { v: 1, ls, at: Date.now(), hist: packed, notified: R.notified, deadSubs: dead, errors,
+R = { v: 1, ls, adj: ADJ, at: Date.now(), hist: packed, notified: R.notified, deadSubs: dead, errors,
   log: [{ at: Date.now(), ls, full: full.length, daily: daily.length, resync: Math.min(resync.length, RESYNC_PER_RUN), signals: sig.length, sent, td: tdCalls, errors: Object.keys(errors).length }].concat(R.log || []).slice(0, 30) };
 const body = JSON.stringify(R);
 if (ids.radar) await gh('/gists/' + ids.radar, { method: 'PATCH', body: JSON.stringify({ files: { [RADAR_FILE]: { content: body } } }) });
 else await gh('/gists', { method: 'POST', body: JSON.stringify({ description: 'Carnet de positions : historique du radar SMA (gist secret, ne pas rendre public)', public: false, files: { [RADAR_FILE]: { content: body } } }) });
 log(`Historique : ${full.length} complet(s), ${daily.length} clôture(s) du jour, ${Math.min(resync.length, RESYNC_PER_RUN)} vérification(s) · ${tdCalls} requête(s) Twelve Data · ${(body.length / 1024).toFixed(0)} Ko`);
 log(`Signaux : ${sig.length}${first ? ' (premier passage, mémorisés sans notifier)' : ''} · notifications envoyées : ${sent}`);
+if (adjusted.length) log('Historique réajusté (dividende ou division) : ' + adjusted.join(', '));
 if (Object.keys(errors).length) log('Erreurs : ' + Object.entries(errors).slice(0, 20).map(([s, m]) => s + ' (' + m + ')').join(', '));
