@@ -193,7 +193,8 @@ tr:last-child td{border-bottom:0}
 .rlist{grid-template-columns:repeat(auto-fill,minmax(min(100%,520px),1fr))}
 .alert.up{background:var(--gain-bg);color:var(--gain);border-color:transparent} .alert.up::before{background:var(--gain)}
 .alert.seen{opacity:.6}
-.alert .new{font:700 .66rem var(--f-body);text-transform:uppercase;letter-spacing:.05em;background:currentColor;color:var(--surface);padding:1px 6px;border-radius:99px;margin-right:4px}
+.alert.up .new{background:var(--gain)}.alert.err .new{background:var(--loss)}.alert.warn .new{background:var(--warn)}
+.alert .new{font:700 .66rem var(--f-body);text-transform:uppercase;letter-spacing:.05em;background:var(--accent);color:var(--surface);padding:1px 6px;border-radius:99px;margin-right:4px}
 .src{font:600 .66rem var(--f-body);letter-spacing:.03em;border:1px solid var(--line);background:var(--surface-2);color:var(--muted);border-radius:99px;padding:2px 8px;cursor:pointer;vertical-align:middle}
 .src.on{background:var(--gain-bg);color:var(--gain);border-color:transparent}
 .search{display:grid;gap:4px}
@@ -234,6 +235,8 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 .thumb{max-width:100%;max-height:260px;border-radius:10px;border:1px solid var(--line)}
 .shots{display:flex;flex-wrap:wrap;gap:10px;margin:4px 0}.shots figure{margin:0;max-width:100%}.shots figcaption{font-size:12px;color:var(--muted);margin-top:4px}
 .filters{display:flex;gap:6px;flex-wrap:wrap}
+.al-tf{margin:10px 0 2px;font-size:.72rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.alerts .al-tf:first-child{margin-top:0}
 .filters button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent);border-color:transparent}
 /* Discipline */
 .ptiles{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));margin-bottom:12px}
@@ -313,7 +316,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.15.2 · licence MIT */
+/* Carnet de positions v1.16.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -1246,7 +1249,7 @@ function quotesPanel() {
 const TD_KEY = 'carnet-positions:twelvedata', SEEN_KEY = 'carnet-positions:radar-vu';
 const TF_SHORT = { D: 'J', W: 'S', M: 'M' }, TF_LONG = { D: 'journalière', W: 'hebdo', M: 'mensuelle' };
 const Radar = { hist: {}, busy: false, done: 0, todo: 0, err: '', errs: {}, loaded: false, shared: false, robot: null };  // shared : historique tenu à jour par le robot GitHub
-let radarQuery = '', radarFilter = 'all';
+let radarQuery = '', radarFilter = 'all', nearOpen = false;
 const tdKey = () => { try { return localStorage.getItem(TD_KEY) || ''; } catch (e) { return ''; } };
 const symOf = w => (w.sym || w.ticker).toUpperCase();
 // Cours ajustés des dividendes (« all », comme le bouton ADJ de TradingView) ou des seules divisions d'actions (« splits »).
@@ -1497,19 +1500,24 @@ function viewRadar() {
     <p class="hint">La clé reste sur cet appareil : elle n’est ni synchronisée ni exportée.</p>
   </section>`;
   // Une carte par action, avec ses SMA (J, S, M) en lignes ; la carte prend le statut le plus urgent de ses SMA.
-  const tfOrder = { D: 0, W: 1, M: 2 }, groups = {};
+  const tfOrder = { D: 0, W: 1, M: 2 }, groups = {}, recent = addDays(todayISO(), -ALERT_DAYS);
   for (const w of S.watch) (groups[w.ticker] = groups[w.ticker] || []).push({ w, a: analyzeWatch(w) });
   const cards = Object.keys(groups).map(t => {
     const lines = groups[t].sort((x, y) => tfOrder[x.w.tf] - tfOrder[y.w.tf] || y.w.period - x.w.period);  // J, puis S, puis M ; période décroissante
     const ok = lines.filter(l => l.a && !l.a.short);
     const rank = Math.min(...lines.map(l => radarRank(l.a)));
     const dist = ok.length ? Math.min(...ok.map(l => Math.abs(l.a.dist))) : 1e9;
-    return { t, lines, ok, rank, dist, signal: lines.some(l => l.a && !l.a.short && (l.a.cross || l.a.pending)), watch: lines.some(l => l.a && !l.a.short && (l.a.cross || l.a.pending || l.a.near)) };
+    // Croisements : clôture de l'autre côté de la SMA depuis moins de ALERT_DAYS jours, ou en train de passer. Proches : sans croisement récent.
+    const signal = ok.some(l => l.a.pending || (l.a.lastCross && l.a.lastCross.date >= recent));
+    return { t, lines, ok, rank: signal ? Math.min(rank, 0) : rank, dist, signal, near: !signal && ok.some(l => l.a.near) };
   }).sort((x, y) => x.rank - y.rank || x.dist - y.dist || (x.t < y.t ? -1 : 1));
-  const shown = cards.filter(c => radarFilter === 'signal' ? c.signal : radarFilter === 'watch' ? c.watch : true);
-  const al = radarAlerts(), fresh = al.filter(x => !x.seen), seenAl = al.filter(x => x.seen);
-  // Croisements d'abord (les plus récents en tête), puis les actions proches de leur SMA.
-  const alertOrder = (x, y) => (x.lvl === 'near') - (y.lvl === 'near') || (x.date < y.date ? 1 : x.date > y.date ? -1 : 0) || (x.w.ticker < y.w.ticker ? -1 : 1);
+  const shown = cards.filter(c => radarFilter === 'signal' ? c.signal : radarFilter === 'near' ? c.near : true);
+  const al = radarAlerts(), crossAl = al.filter(x => x.lvl !== 'near'), nearAl = al.filter(x => x.lvl === 'near');
+  const fresh = crossAl.filter(x => !x.seen), seenAl = crossAl.filter(x => x.seen), nearNew = nearAl.filter(x => !x.seen).length;
+  // Rangées par unité (J, S, M), puis période décroissante (J 233 avant J 200), puis clôture la plus récente.
+  const alertOrder = (x, y) => tfOrder[x.w.tf] - tfOrder[y.w.tf] || y.w.period - x.w.period || (x.date < y.date ? 1 : x.date > y.date ? -1 : 0) || (x.w.ticker < y.w.ticker ? -1 : 1);
+  const AL_TF = { D: 'SMA journalières', W: 'SMA hebdo', M: 'SMA mensuelles' };
+  const alertList = list => list.sort(alertOrder).map((x, i) => (i === 0 || x.w.tf !== list[i - 1].w.tf ? `<p class="al-tf">${AL_TF[x.w.tf]}</p>` : '') + alertRow(x)).join('');
   const alertRow = x => `<div class="alert ${x.lvl === 'up' ? 'ok up' : x.lvl === 'down' ? 'err' : 'warn'} ${x.seen ? 'seen' : ''}"><span>${x.seen ? '' : '<b class="new">Nouveau</b> '}${x.txt}</span>${x.seen ? '' : `<button class="btn sm" data-act="radar-seen" data-k="${esc(x.key)}">Vu</button>`}</div>`;
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const prog = Radar.busy ? `<div class="alert live on"><span>Historique : ${Radar.done} / ${Radar.todo} action(s)… (8 par minute, offre gratuite). Gardez l’app ouverte : le chargement s’arrête quand elle passe en arrière-plan.</span></div>`
@@ -1554,17 +1562,19 @@ function viewRadar() {
   </section>
   ${al.length ? `<section class="card">
     <div class="sec-head"><h2>Alertes${fresh.length ? ` <span class="pill warn">${fresh.length} nouvelle(s)</span>` : ''}</h2>${fresh.length > 1 ? `<button class="btn sm" data-act="radar-seen-all">Tout marquer comme vu</button>` : ''}</div>
-    ${fresh.length ? `<div class="alerts">${fresh.sort(alertOrder).map(alertRow).join('')}</div>` : '<p class="hint">Aucune nouvelle alerte.</p>'}
-    ${seenAl.length ? `<details class="more" style="margin-top:10px"><summary>Déjà vues (${seenAl.length})</summary><div class="alerts">${seenAl.sort(alertOrder).map(alertRow).join('')}</div></details>` : ''}
+    ${fresh.length ? `<div class="alerts">${alertList(fresh)}</div>` : '<p class="hint">Aucun nouveau croisement.</p>'}
+    ${seenAl.length ? `<details class="more" style="margin-top:10px"><summary>Déjà vues (${seenAl.length})</summary><div class="alerts">${alertList(seenAl)}</div></details>` : ''}
+    ${nearAl.length ? `<details class="more near-al" id="near-al" style="margin-top:10px" ${nearOpen ? 'open' : ''}><summary>Proches de leur SMA (${nearAl.length})${nearNew ? ` · ${nearNew} nouvelle(s)` : ''}</summary><div class="alerts">${alertList(nearAl.filter(x => !x.seen))}${alertList(nearAl.filter(x => x.seen))}</div></details>` : ''}
     <p class="hint">Une alerte disparaît ${ALERT_DAYS} jours après la clôture qui l’a déclenchée.</p>
   </section>` : ''}
   <section class="card">
     ${cards.length ? `<div class="search"><input type="search" id="radar-q" value="${esc(radarQuery)}" placeholder="Rechercher une action" autocomplete="off" autocapitalize="characters" aria-label="Rechercher une action"></div>
-      <div class="filters">${fBtn('all', 'Toutes', cards.length)}${fBtn('signal', 'Signaux', cards.filter(c => c.signal).length)}${fBtn('watch', 'À surveiller', cards.filter(c => c.watch).length)}</div>
+      <div class="filters">${fBtn('all', 'Toutes', cards.length)}${fBtn('signal', 'Croisements', cards.filter(c => c.signal).length)}${fBtn('near', 'Proches', cards.filter(c => c.near).length)}</div>
       <div class="rlist">${shown.length ? shown.map(card).join('') : '<p class="lead">Aucune action pour ce filtre.</p>'}</div>`
       : '<p class="lead">Aucune action suivie. Touchez « + Ajouter » pour saisir une action et sa SMA, ou « Importer une liste » pour en coller plusieurs d’un coup.</p>'}
   </section>`;
 }
+document.addEventListener('toggle', e => { if (e.target.id === 'near-al') nearOpen = e.target.open; }, true);
 function applyRadarQuery() {
   const q = radarQuery.trim().toLowerCase();
   for (const el of document.querySelectorAll('.rrow[data-q]')) el.hidden = !!q && !el.dataset.q.includes(q);
@@ -2268,7 +2278,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.15.2 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.16.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
@@ -2710,7 +2720,7 @@ document.addEventListener('click', e => {
     case 'radar-del': { const w = S.watch.find(x => x.id === b.dataset.id);
       confirmSheet('Retirer ' + esc(w.ticker) + ' du radar ?', `SMA ${w.period} ${TF_LONG[w.tf]}. Vos positions ne sont pas touchées.`, 'Retirer', () => { S.watch = S.watch.filter(x => x !== w); save('Retirée du radar'); }); break; }
     case 'radar-seen': markSeen([b.dataset.k]); render(); break;
-    case 'radar-seen-all': markSeen(radarAlerts().map(x => x.key)); render(); break;
+    case 'radar-seen-all': markSeen(radarAlerts().filter(x => x.lvl !== 'near').map(x => x.key)); render(); break;
     case 'radar-calc': {
       const w = S.watch.find(x => x.id === b.dataset.id), a = analyzeWatch(w);
       calcDraft = Object.assign(freshDraft(), { ticker: w.ticker, entry: String(Core.roundTo(a.p, 2)), stop: String(Core.roundTo(a.smaNow, 2)), example: false });
