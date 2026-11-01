@@ -248,6 +248,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 .ptile small{font-size:.72rem;color:var(--muted);overflow-wrap:anywhere}
 .ptile[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
 .ptile.whole{cursor:default;background:transparent;border:1.5px dashed var(--line)}
+button.ptile.whole{cursor:pointer}button.ptile.whole small{color:var(--accent)}
 .disc{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
 .disc div{border-radius:12px;padding:12px;background:var(--surface-2);display:grid;gap:2px}
 .disc b{font:600 1.35rem var(--f-num)}
@@ -319,7 +320,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.17.0 · licence MIT */
+/* Carnet de positions v1.17.1 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -1811,7 +1812,7 @@ function acctBalance(ref) {
 // Tuile « Compte entier » : résultat en dollars depuis l'ouverture rapporté aux dépôts nets (pas de courbe, faute d'historique avant le carnet).
 function acctTile(ref) {
   const B = acctBalance(ref);
-  if (!B) return '';
+  if (!B) return `<button type="button" class="ptile whole" data-act="acct"><span>Compte entier</span><b>—</b><small>Saisir le relevé MT5</small></button>`;
   return `<div class="ptile whole" title="Valeur actuelle − dépôts nets, depuis l’ouverture du compte"><span>Compte entier</span><b class="${cls(B.total)}">${B.totalPct == null ? '—' : pct(B.totalPct, true)}</b><small>${B.a.since ? 'depuis ' + esc(B.a.since) : 'depuis l’ouverture'} · ${usd(B.total, true)}</small></div>`;
 }
 function acctCard(ref) {
@@ -2289,7 +2290,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.17.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.17.1 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
