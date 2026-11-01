@@ -1,0 +1,32 @@
+name: Débloquer GitHub Pages
+
+# À lancer à la main quand un déploiement est refusé avec « due to in progress deployment. Please cancel <sha> first ».
+# Annule le déploiement bloqué indiqué (ou, sans indication, le dernier déploiement), puis relance la publication du site.
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Identifiant du déploiement bloqué (le sha cité dans l’erreur), vide = le dernier'
+        required: false
+        default: ''
+
+permissions:
+  pages: write
+  deployments: read
+  contents: read
+
+jobs:
+  debloquer:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Annuler le déploiement bloqué et relancer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          if [ -z "$SHA" ]; then SHA=$(gh api "repos/$REPO/deployments?environment=github-pages&per_page=1" --jq '.[0].sha'); fi
+          echo "Déploiement visé : $SHA"
+          gh api "repos/$REPO/pages/deployments/$SHA" || true
+          gh api -X POST "repos/$REPO/pages/deployments/$SHA/cancel" && echo "Annulé." || echo "Annulation refusée (déjà terminé ?)"
+          gh api -X POST "repos/$REPO/pages/builds" && echo "Nouvelle publication demandée." || echo "Relance refusée : faites un nouvel envoi de fichiers."
