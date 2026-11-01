@@ -223,6 +223,8 @@ details.lot>summary::-webkit-details-marker{display:none}
 details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 .pcard details.lot{border:0;background:var(--surface-2)}
 .pcard details.lot>summary{padding:8px 10px;font-size:.84rem;font-weight:600;color:var(--accent)}
+.sum-r{display:flex;align-items:center;gap:8px}
+.sum-r .btn{font-weight:600}
 .pcard details.lot .body{padding:0 10px 10px}
 .pcard details.lot .kv div{background:var(--surface)}
 .chev{transition:transform .15s} details[open]>summary .chev{transform:rotate(90deg)}
@@ -2168,11 +2170,13 @@ function lotDetails(v, inJournal, compact) {
     const photo = e.type === 'sell' ? `<button class="btn sm" data-act="sell-img" data-lot="${lot.id}" data-ev="${e.id}">${e.imgId ? 'Photo ✓' : '+ Photo'}</button> ` : '';
     return `<tr><td>${fmtDate(e.date)}</td><td>${lab}</td><td>${detail}</td><td class="n">${amt}</td><td>${photo}<button class="btn sm" data-act="del-event" data-lot="${lot.id}" data-ev="${e.id}" aria-label="Supprimer ce mouvement">Suppr.</button></td></tr>`;
   }).join('');
+  // Positions en cours : « Modifier » directement sur la ligne, sans déplier les détails.
+  const quick = inJournal ? '' : `<button type="button" class="btn sm" data-act="edit-lot" data-lot="${lot.id}">Modifier</button>`;
   const sumRight = ls.closed
     ? `<span class="num ${cls(ls.netRealized)}">${usd(ls.netRealized, true)}${R != null ? ' · ' + fmtR(R) : ''}</span>`
     : `<span class="num ${cls(unreal)}">${usd(unreal, true)}</span>`;
   return `<details class="lot" data-key="${key}" ${inJournal ? `data-q="${esc((lot.ticker + ' ' + (lot.note || '')).toLowerCase())}"` : ''} ${openLots.has(key) ? 'open' : ''}>
-    <summary>${compact ? `<span>Détails et actions <small>· achat du ${fmtDate(lot.date)} à ${usd(lot.price)}</small></span><span class="chev">›</span>` : `<span><span class="tk">${esc(lot.ticker)}</span> ${status} ${lot.demo ? '<span class="pill demo">Démo</span>' : ''}<br><small>${fmtDate(lot.date)} · ${qty(lot.qty)} à ${usd(lot.price)} · ${MOTIFS[lot.motif] || 'Autre'}</small></span>${sumRight}`}</summary>
+    <summary>${compact ? `<span>Détails et actions <small>· achat du ${fmtDate(lot.date)} à ${usd(lot.price)}</small></span><span class="sum-r">${quick}<span class="chev">›</span></span>` : `<span><span class="tk">${esc(lot.ticker)}</span> ${status} ${lot.demo ? '<span class="pill demo">Démo</span>' : ''}<br><small>${fmtDate(lot.date)} · ${qty(lot.qty)} à ${usd(lot.price)} · ${MOTIFS[lot.motif] || 'Autre'}</small></span><span class="sum-r">${sumRight}${quick}</span>`}</summary>
     <div class="body">
       <dl class="kv">
         ${kv('Quantité restante', qty(ls.rem), ls.sold ? `vendu ${qty(ls.sold)}` : '')}
@@ -2701,6 +2705,7 @@ function clearDemo() {
 // ---------- Événements ----------
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-tab],[data-act]'); if (!b) return;
+  if (b.closest('summary')) e.preventDefault();   // un bouton posé sur une ligne repliable ne la déplie pas
   if (b.dataset.tab) { tab = b.dataset.tab; render(); window.scrollTo(0, 0); return; }
   const a = b.dataset.act, lot = b.dataset.lot ? findLot(b.dataset.lot) : null;
   switch (a) {
