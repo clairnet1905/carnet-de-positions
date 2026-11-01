@@ -320,7 +320,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.18.1 · licence MIT */
+/* Carnet de positions v1.19.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -683,7 +683,7 @@ function defaultState() {
   return {
     app: 'carnet-positions', version: 1, updatedAt: 0,
     settings: { initialCapital: 1000, startDate: todayISO(), riskPct: 1, cap: 100, leverage: 5,
-      fees: { inFixed: 0, inPct: 0, outFixed: 0, outPct: 0, perShare: 0, minComm: 0 }, swap: { pct: 0, triple: 5 }, fractional: true, decimals: 4, staleDays: 4, refSource: 'auto', manualTickers: [], nearPct: 2, marginMin: 150, adjDiv: true },
+      fees: { inFixed: 0, inPct: 0, outFixed: 0, outPct: 0, perShare: 0, minComm: 0 }, swap: { pct: 0, triple: 5 }, fractional: true, decimals: 4, staleDays: 4, refSource: 'auto', manualTickers: [], nearPct: 2, marginMin: 150, adjDiv: true, overshoot: 3 },
     flows: [], lots: [], prices: {}, snapshots: [], watch: [], seen: {}, push: { vapid: '', subs: [] }
   };
 }
@@ -1763,6 +1763,26 @@ function alertsStrip() {
 }
 
 // ----- Discipline : écarts aux règles de taille et de stop -----
+// Sortie à la clôture sous le stop : écart entre le stop en vigueur le jour de la vente et le prix de vente.
+// Seules les ventes sous le stop comptent (les autres sont des sorties volontaires).
+function stopAt(lot, d) {
+  let st = lot.stopInitial;
+  for (const e of lot.events.filter(x => x.type === 'stop').sort((a, b) => a.date < b.date ? -1 : 1)) if (e.date <= d) st = e.to;
+  return isNum(st) && st > 0 ? st : null;
+}
+function overshootStats() {
+  const xs = [];
+  for (const l of S.lots) for (const e of l.events) {
+    if (e.type !== 'sell') continue;
+    const st = stopAt(l, e.date);
+    if (st && e.price < st - 1e-9) xs.push({ t: l.ticker, pct: (st - e.price) / st * 100 });
+  }
+  if (!xs.length) return null;
+  const worst = xs.reduce((a, x) => x.pct > a.pct ? x : a);
+  return { n: xs.length, avg: xs.reduce((a, x) => a + x.pct, 0) / xs.length, worst };
+}
+// Dépassement retenu pour l'information du calculateur : la moyenne mesurée dès 3 sorties, sinon le réglage.
+function overshootUsed() { const o = overshootStats(); return o && o.n >= 3 ? { pct: o.avg, src: `moyenne de vos ${o.n} sorties` } : { pct: isNum(S.settings.overshoot) ? S.settings.overshoot : 3, src: 'valeur des réglages' }; }
 function disciplineCard(T) {
   const s = S.settings, lots = S.lots;
   if (!lots.length) return '';
@@ -1780,6 +1800,7 @@ function disciplineCard(T) {
       ${box(overCap.length ? 'bad' : 'good', overCap.length + ' / ' + lots.length, 'Au-dessus du plafond à l’achat', names(overCap))}
       ${box(overRisk.length ? 'bad' : 'good', overRisk.length + ' / ' + lots.length, 'Risque initial au-dessus de ' + fmtNum(s.riskPct) + ' %', names(overRisk))}
       ${box(lowered.length ? 'meh' : 'good', lowered.length + ' / ' + open.length, 'Stops descendus', lowered.length ? names(lowered) + ' : stop actuel sous le stop initial' : 'aucun stop abaissé')}
+      ${(o => box(!o ? '' : o.avg <= 2 ? 'good' : o.avg <= 4 ? 'meh' : 'bad', o ? pct(o.avg) : '—', 'Dépassement moyen du stop', o ? `${o.n} sortie(s) sous le stop · pire ${pct(o.worst.pct)} (${esc(o.worst.t)})` : 'aucune sortie sous le stop pour l’instant'))(overshootStats())}
       ${box('good', safe.length + ' / ' + open.length, 'Positions sans risque', safe.length ? names(safe) + ' : stop au niveau de l’entrée ou au-dessus' : 'aucun stop au-dessus de l’entrée')}
     </div>
   </section>`;
@@ -2097,6 +2118,7 @@ function updateCalc() {
       ${kv('Distance du stop', pct(r.stopDistPct))}
       ${kv('Perte prévue au stop', usd(-r.totalRisk), `prix ${usd(r.priceRisk)} + frais ${usd(r.feesRT)}`, 'neg')}
       ${kv('Risque du compte', pct(r.riskPctAccount), `budget ${usd(r.budget)}`)}
+      ${(o => { const loss = r.totalRisk + r.q * r.params.stop * o.pct / 100; return kv(`Si la clôture passe ${fmtNum(o.pct, 1)} % sous le stop`, usd(-loss), `${pct(loss / r.params.equity * 100)} du capital · ${o.src} (information, la taille reste calculée sur votre stop)`, 'neg'); })(overshootUsed())}
       ${kv('Baisse de 10 % du cours', usd(-r.drop10), 'perte réelle, sans re-multiplier par le levier', 'neg')}
     </dl>
     ${r.marginChecked ? '' : '<p class="hint">Marge disponible non saisie : la contrainte de marge n’est pas vérifiée.</p>'}
@@ -2296,6 +2318,7 @@ function viewSettings() {
       ${fld('cap', 'Plafond d’exposition ($)', s.cap, 'Exposition réelle, pas la marge.')}
       ${fld('leverage', 'Levier par défaut (×)', s.leverage)}
       ${fld('staleDays', 'Alerte données anciennes (jours)', s.staleDays)}
+      ${fld('overshoot', 'Dépassement prévu sous le stop (%)', isNum(s.overshoot) ? s.overshoot : 3, 'Sortie à la clôture : écart habituel sous le stop. Information du calculateur, remplacée par votre moyenne réelle dès 3 sorties.')}
       ${fld('marginMin', 'Alerte niveau de marge sous (%)', s.marginMin || 150, 'Valeur nette ÷ marge. Prévient sans bloquer ; le courtier ferme vers 50 %.')}
       ${fld('inFixed', 'Frais entrée fixes ($)', f.inFixed)}
       ${fld('inPct', 'Frais entrée (%)', f.inPct)}
@@ -2354,7 +2377,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.18.1 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.19.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
@@ -2982,7 +3005,7 @@ document.addEventListener('submit', async e => {
   const form = e.target;
   if (form.id === 'setForm') {
     const g = n => form.elements[n].value, s = S.settings;
-    const v = { initialCapital: num(g('initialCapital')), riskPct: num(g('riskPct')), cap: num(g('cap')), leverage: num(g('leverage')), staleDays: num(g('staleDays')), decimals: num(g('decimals')), marginMin: num(g('marginMin')) };
+    const v = { initialCapital: num(g('initialCapital')), riskPct: num(g('riskPct')), cap: num(g('cap')), leverage: num(g('leverage')), staleDays: num(g('staleDays')), decimals: num(g('decimals')), marginMin: num(g('marginMin')), overshoot: numOr(g('overshoot'), 3) };
     const fz = { inFixed: numOr(g('inFixed'), 0), inPct: numOr(g('inPct'), 0), outFixed: numOr(g('outFixed'), 0), outPct: numOr(g('outPct'), 0), perShare: numOr(g('perShare'), 0), minComm: numOr(g('minComm'), 0) };
     const sw = { pct: numOr(g('swapPct'), 0), triple: +g('swapTriple') || 5 };
     const errs = [];
@@ -2992,6 +3015,7 @@ document.addEventListener('submit', async e => {
     if (!(v.leverage >= 1)) errs.push('levier');
     if (!(v.staleDays >= 0)) errs.push('alerte');
     if (!(v.marginMin >= 50 && v.marginMin <= 1000)) errs.push('seuil de marge (50 à 1000 %)');
+    if (!(v.overshoot >= 0 && v.overshoot <= 50)) errs.push('dépassement prévu (0 à 50 %)');
     if (!(Number.isInteger(v.decimals) && v.decimals >= 0 && v.decimals <= 8)) errs.push('précision (entier 0 à 8)');
     if (Object.values(fz).some(x => !(x >= 0))) errs.push('frais');
     if (!(sw.pct >= 0 && sw.pct <= 100)) errs.push('swap (0 à 100 % par an)');
