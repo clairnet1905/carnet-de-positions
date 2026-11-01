@@ -320,7 +320,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.17.1 · licence MIT */
+/* Carnet de positions v1.18.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -357,11 +357,13 @@ const Core = (() => {
 
   function normFees(f) {
     f = f || {};
-    return { inFixed: numOr(f.inFixed, 0), inPct: numOr(f.inPct, 0), outFixed: numOr(f.outFixed, 0), outPct: numOr(f.outPct, 0) };
+    return { inFixed: numOr(f.inFixed, 0), inPct: numOr(f.inPct, 0), outFixed: numOr(f.outFixed, 0), outPct: numOr(f.outPct, 0), perShare: numOr(f.perShare, 0), minComm: numOr(f.minComm, 0) };
   }
-  // Frais d'entrée et de sortie : part fixe + part proportionnelle au montant échangé.
-  function feeIn(q, price, f) { return q > 0 ? f.inFixed + q * price * f.inPct / 100 : 0; }
-  function feeOut(q, price, f) { return q > 0 ? f.outFixed + q * price * f.outPct / 100 : 0; }
+  // Commission du courtier par action (CFD : 1 action par lot), avec un minimum par ordre, à l'entrée comme à la sortie.
+  function commission(q, f) { return q > 0 && (f.perShare || f.minComm) ? Math.max(f.minComm || 0, q * (f.perShare || 0)) : 0; }
+  // Frais d'entrée et de sortie : part fixe + part proportionnelle au montant échangé + commission par action.
+  function feeIn(q, price, f) { return q > 0 ? f.inFixed + q * price * f.inPct / 100 + commission(q, f) : 0; }
+  function feeOut(q, price, f) { return q > 0 ? f.outFixed + q * price * f.outPct / 100 + commission(q, f) : 0; }
 
   // ---------- 1. Calculateur avant achat ----------
   function sizePosition(inp) {
@@ -381,7 +383,7 @@ const Core = (() => {
     if (isNum(p.entry) && isNum(p.stop) && p.stop > 0 && p.entry > 0 && p.stop >= p.entry) errors.push('Le stop doit être strictement inférieur au prix d’entrée (achat uniquement).');
     if (!isNum(p.leverage) || p.leverage < 1) errors.push('Le levier doit être supérieur ou égal à 1.');
     if (!isNum(p.cap) || p.cap <= 0) errors.push('Le plafond de position doit être positif.');
-    const feeLabels = { inFixed: 'Frais fixes d’entrée', inPct: 'Frais d’entrée en %', outFixed: 'Frais fixes de sortie', outPct: 'Frais de sortie en %' };
+    const feeLabels = { inFixed: 'Frais fixes d’entrée', inPct: 'Frais d’entrée en %', outFixed: 'Frais fixes de sortie', outPct: 'Frais de sortie en %', perShare: 'Commission par action', minComm: 'Commission minimum' };
     for (const k in feeLabels) if (!isNum(fees[k]) || fees[k] < 0) errors.push(feeLabels[k] + ' : valeur invalide.');
     if (fractional && (!Number.isInteger(p.decimals) || p.decimals < 0 || p.decimals > 8)) errors.push('La précision doit être un nombre entier de décimales entre 0 et 8.');
     if (p.marginAvail !== null && (!isNum(p.marginAvail) || p.marginAvail < 0)) errors.push('La marge disponible est invalide.');
@@ -389,12 +391,12 @@ const Core = (() => {
 
     const budget = p.equity * p.riskPct / 100;
     const fixed = fees.inFixed + fees.outFixed;
-    const perUnit = (p.entry - p.stop) + p.entry * fees.inPct / 100 + p.stop * fees.outPct / 100;
+    const perUnit = (p.entry - p.stop) + p.entry * fees.inPct / 100 + p.stop * fees.outPct / 100 + 2 * fees.perShare;   // le minimum de commission est vérifié ensuite, quantité par quantité
     const lim = {
       risk: Math.max(0, (budget - fixed) / perUnit),
       cap: p.cap / p.entry,
       margin: p.marginAvail === null ? Infinity
-        : Math.max(0, (p.marginAvail - fees.inFixed) / (p.entry / p.leverage + p.entry * fees.inPct / 100))
+        : Math.max(0, (p.marginAvail - fees.inFixed) / (p.entry / p.leverage + p.entry * fees.inPct / 100 + fees.perShare))
     };
     const dec = p.decimals, step = Math.pow(10, -dec);
     const ev = q => {
@@ -436,6 +438,40 @@ const Core = (() => {
   }
 
   // ---------- 2. Comptabilité ----------
+  // Swap estimé des CFD à l'achat : chaque nuit de semaine où la ligne est détenue à la clôture,
+  // quantité × dernier cours connu × taux annuel ÷ 360, multiplié le jour du rollover triple (vendredi : week-end).
+  // Un financement saisi à la main (montant réel du courtier) remplace l'estimation jusqu'à sa date.
+  let SW = null;
+  const swapMemo = new Map();
+  function setSwap(cfg) { SW = cfg && cfg.pct > 0 ? cfg : null; }
+  const addDay = d => { const t = new Date(d + 'T12:00:00Z'); t.setUTCDate(t.getUTCDate() + 1); return t.toISOString().slice(0, 10); };
+  function swapNights(lot) {
+    const evs = lot.events || [], ph = priceHist(SW.prices, lot.ticker);
+    const manual = evs.reduce((m, e) => e.type === 'funding' && e.date > m ? e.date : m, '');
+    const sells = evs.filter(e => e.type === 'sell').sort((a, b) => a.date < b.date ? -1 : 1);
+    const sig = [SW.pct, SW.triple, SW.today, lot.date, lot.qty, lot.price, manual, sells.map(e => e.date + ':' + e.qty).join(','), ph.length, ph.length ? ph[ph.length - 1].date + ph[ph.length - 1].price : ''].join('|');
+    const hit = swapMemo.get(lot.id);
+    if (hit && hit.sig === sig) return hit.nights;
+    const px = ph.slice().sort((a, b) => a.date < b.date ? -1 : 1), nights = [];
+    let held = lot.qty, si = 0, pi = 0, price = lot.price;
+    for (let d = lot.date; d < SW.today; d = addDay(d)) {
+      while (si < sells.length && sells[si].date <= d) held -= sells[si++].qty;
+      if (held <= 1e-9) break;
+      while (pi < px.length && px[pi].date <= d) price = px[pi++].price;
+      const wd = new Date(d + 'T12:00:00Z').getUTCDay();
+      if (wd === 0 || wd === 6 || d <= manual) continue;
+      nights.push([d, held * price * SW.pct / 100 / 360 * (wd === SW.triple ? 3 : 1)]);
+    }
+    swapMemo.set(lot.id, { sig, nights });
+    return nights;
+  }
+  // Swap estimé jusqu'à la clôture du jour upTo (la nuit de upTo n'est pas encore passée).
+  function swapEst(lot, upTo) {
+    if (!SW) return 0;
+    let t = 0;
+    for (const [d, a] of swapNights(lot)) { if (upTo && d >= upTo) break; t += a; }
+    return t;
+  }
   function lotState(lot, upTo) {
     const evs = (lot.events || []).filter(e => !upTo || e.date <= upTo);
     let sold = 0, gross = 0, exitFees = 0, funding = 0, divs = 0, lastSell = null;
@@ -448,10 +484,12 @@ const Core = (() => {
     }
     let rem = lot.qty - sold;
     if (Math.abs(rem) < 1e-9) rem = 0;
+    const fundingEst = swapEst(lot, upTo);
+    funding += fundingEst;
     const entryFee = lot.entryFee || 0;
-    // Chaque coût n'apparaît qu'une fois : frais d'entrée, frais de sortie, financement.
+    // Chaque coût n'apparaît qu'une fois : frais d'entrée, frais de sortie, financement (saisi ou estimé).
     const netRealized = gross + divs - entryFee - exitFees - funding;
-    return { rem, sold, gross, exitFees, funding, divs, entryFee, txFees: entryFee + exitFees, netRealized, closed: rem <= 0, closeDate: rem <= 0 ? lastSell : null };
+    return { rem, sold, gross, exitFees, funding, fundingEst, divs, entryFee, txFees: entryFee + exitFees, netRealized, closed: rem <= 0, closeDate: rem <= 0 ? lastSell : null };
   }
 
   function priceHist(prices, t) { return (prices && prices[t]) || []; }
@@ -614,7 +652,7 @@ const Core = (() => {
     };
   }
 
-  return { usd, pct, qty, num, numOr, isNum, roundTo, floorTo, days, normFees, feeIn, feeOut, sizePosition,
+  return { usd, pct, qty, num, numOr, isNum, roundTo, floorTo, days, normFees, commission, feeIn, feeOut, setSwap, sizePosition,
     lotState, priceOn, lastPrice, accountState, observations, twr, periodReturn, maxDrawdown, frequency, tradeStats, stopAnalysis };
 })();
 /*CORE-END*/
@@ -645,7 +683,7 @@ function defaultState() {
   return {
     app: 'carnet-positions', version: 1, updatedAt: 0,
     settings: { initialCapital: 1000, startDate: todayISO(), riskPct: 1, cap: 100, leverage: 5,
-      fees: { inFixed: 0, inPct: 0, outFixed: 0, outPct: 0 }, fractional: true, decimals: 4, staleDays: 4, refSource: 'auto', manualTickers: [], nearPct: 2, marginMin: 150, adjDiv: true },
+      fees: { inFixed: 0, inPct: 0, outFixed: 0, outPct: 0, perShare: 0, minComm: 0 }, swap: { pct: 0, triple: 5 }, fractional: true, decimals: 4, staleDays: 4, refSource: 'auto', manualTickers: [], nearPct: 2, marginMin: 150, adjDiv: true },
     flows: [], lots: [], prices: {}, snapshots: [], watch: [], seen: {}, push: { vapid: '', subs: [] }
   };
 }
@@ -1654,10 +1692,13 @@ function sheetRadarSettings() {
 }
 
 // ---------- Rendu ----------
+// Swap des CFD estimé chaque nuit (Réglages › Compte) : voir Core.setSwap.
+function syncSwap() { const w = S.settings.swap || {}; Core.setSwap({ pct: w.pct || 0, triple: w.triple == null ? 5 : w.triple, prices: S.prices, today: todayISO() }); }
 function render() {
   document.querySelectorAll('nav.tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === tab ? 'true' : 'false'));
   const v = $('#view'), saved = S.prices;
   if (Object.keys(Live.prices).length) S.prices = withLive(saved);
+  syncSwap();
   try {
     if (tab === 'dash') v.innerHTML = viewDash();
     else if (tab === 'calc') { v.innerHTML = viewCalc(); updateCalc(); }
@@ -1996,6 +2037,7 @@ function viewCalc() {
       ${f('inPct', 'Frais entrée (% montant)', d.inPct)}
       ${f('outFixed', 'Frais sortie fixes ($)', d.outFixed)}
       ${f('outPct', 'Frais sortie (% montant)', d.outPct)}
+      ${S.settings.fees.perShare || S.settings.fees.minComm ? `<p class="hint wide">Commission courtier en plus : ${usd(S.settings.fees.perShare || 0)} par action, ${usd(S.settings.fees.minComm || 0)} minimum, à l’entrée et à la sortie (Réglages).</p>` : ''}
       <div class="fld"><span class="lbl">Fractions d’action</span><label class="check"><input type="checkbox" id="c-fractional" name="fractional" ${d.fractional ? 'checked' : ''}> autorisées</label></div>
       ${f('decimals', 'Précision (décimales)', d.decimals, d.fractional ? '' : 'disabled')}
     </form>
@@ -2018,7 +2060,7 @@ function calcInput() {
   const d = calcDraft, ref = referenceCapital();
   return { equity: ref.value, riskPct: S.settings.riskPct, entry: d.entry, stop: d.stop, leverage: d.leverage, cap: d.cap,
     fractional: d.fractional, decimals: d.decimals, marginAvail: d.marginAvail,
-    fees: { inFixed: d.inFixed, inPct: d.inPct, outFixed: d.outFixed, outPct: d.outPct } };
+    fees: { inFixed: d.inFixed, inPct: d.inPct, outFixed: d.outFixed, outPct: d.outPct, perShare: S.settings.fees.perShare, minComm: S.settings.fees.minComm } };
 }
 function updateCalc() {
   const box = $('#calcResult'); if (!box) return;
@@ -2186,7 +2228,7 @@ function lotDetails(v, inJournal, compact) {
         ${kv('Stop actuel', isNum(lot.stopCurrent) && lot.stopCurrent > 0 ? usd(lot.stopCurrent) : 'Manquant', '', isNum(lot.stopCurrent) && lot.stopCurrent > 0 ? '' : 'neg')}
         ${kv('Risque initial', isNum(lot.riskInitial) ? usd(lot.riskInitial) : 'Non calculable', (isNum(lot.riskInitialPct) ? pct(lot.riskInitialPct) + ' de ' + usd(lot.refCapital) : '') + (xPlan != null ? ` · ${fmtNum(xPlan, 1)} × le plan (1 R = ${usd(u)})` : ''), xPlan > 1.2 ? 'neg' : '')}
         ${kv('Frais payés', usd(ls.txFees), `entrée ${usd(ls.entryFee)} · sortie ${usd(ls.exitFees)}`)}
-        ${kv('Financement', usd(ls.funding))}
+        ${kv('Financement', usd(ls.funding), ls.fundingEst > 0.0049 ? `dont ${usd(ls.fundingEst)} de swap estimé${ls.funding - ls.fundingEst > 0.0049 ? ', le reste saisi' : ''}` : '')}
         ${ls.divs ? kv('Dividendes / ajust.', usd(ls.divs, true)) : ''}
         ${kv('Réalisé net', usd(ls.netRealized, true), 'frais déduits', cls(ls.netRealized))}
         ${ls.closed ? kv('Durée', Core.days(lot.date, ls.closeDate) + ' jours', 'clôturée le ' + fmtDate(ls.closeDate)) : kv('Durée de détention', Core.days(lot.date, todayISO()) + ' jours')}
@@ -2242,6 +2284,11 @@ function viewSettings() {
       ${fld('inPct', 'Frais entrée (%)', f.inPct)}
       ${fld('outFixed', 'Frais sortie fixes ($)', f.outFixed)}
       ${fld('outPct', 'Frais sortie (%)', f.outPct)}
+      ${fld('perShare', 'Commission par action ($)', f.perShare || 0, 'CFD actions : 1 action par lot. Entrée et sortie.')}
+      ${fld('minComm', 'Commission minimum ($)', f.minComm || 0)}
+      ${fld('swapPct', 'Swap acheteur (% par an)', (s.swap && s.swap.pct) || 0, 'Coût estimé chaque nuit : exposition × taux ÷ 360. 0 = pas d’estimation.')}
+      <div class="fld"><label for="s-swapTriple">Swap triple le</label><select id="s-swapTriple" name="swapTriple">${['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi'].map((l, i) => `<option value="${i + 1}" ${((s.swap && s.swap.triple) || 5) === i + 1 ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="fld wide"><button type="button" class="btn sm" data-act="preset-icm">Préremplir IC Markets (CFD actions US)</button><p class="hint">Commission 0,02 $ par action (minimum 0,02 $), swap acheteur 5,93 % par an, triple le vendredi. Vérifiez dans MT5 : clic droit sur le symbole › Spécification.</p></div>
       <div class="fld"><span class="lbl">Fractions d’action</span><label class="check"><input type="checkbox" name="fractional" ${s.fractional ? 'checked' : ''}> autorisées</label></div>
       ${fld('decimals', 'Précision (décimales)', s.decimals)}
       <div class="fld wide"><label for="s-refSource">Capital de référence du calculateur</label>
@@ -2290,7 +2337,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.17.1 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.18.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
@@ -2355,7 +2402,7 @@ function riskOf(q, price, stop, entryFee, f) {
 function sheetBuy() {
   const r = Core.sizePosition(calcInput()); if (!r.ok) return;
   const d = calcDraft, ref = referenceCapital();
-  const f = Core.normFees({ inFixed: d.inFixed, inPct: d.inPct, outFixed: d.outFixed, outPct: d.outPct });
+  const f = Core.normFees({ inFixed: d.inFixed, inPct: d.inPct, outFixed: d.outFixed, outPct: d.outPct, perShare: S.settings.fees.perShare, minComm: S.settings.fees.minComm });
   openSheet({
     title: 'Confirmer l’achat exécuté', ok: 'Enregistrer l’achat',
     body: `<p class="lead">Corrigez avec les valeurs réellement exécutées chez le courtier.</p><div class="fields">
@@ -2461,7 +2508,7 @@ function sheetAmount(lot, kind) {
   const isF = kind === 'funding';
   openSheet({
     title: (isF ? 'Frais de financement ' : 'Dividende ou ajustement ') + lot.ticker, ok: 'Enregistrer',
-    body: `<p class="lead">${isF ? 'Montant réellement débité par le courtier (nombre positif).' : 'Montant réellement crédité (positif) ou débité (négatif).'}</p><div class="fields">
+    body: `<p class="lead">${isF ? 'Montant réellement débité par le courtier (nombre positif), par exemple le swap cumulé lu dans MT5. Il remplace le swap estimé jusqu’à cette date.' : 'Montant réellement crédité (positif) ou débité (négatif).'}</p><div class="fields">
       ${dateInp('date', 'Date', todayISO())}${dec('amount', 'Montant ($)', '')}
       ${isF ? '' : `<div class="fld"><label for="f-kind">Type</label><select id="f-kind" name="kind"><option value="dividend">Dividende</option><option value="adjust">Ajustement</option></select></div>`}
       <div class="fld wide"><label for="f-note">Note</label><input id="f-note" name="note" placeholder="facultatif"></div></div>`,
@@ -2727,6 +2774,7 @@ document.addEventListener('click', e => {
     case 'radar-import': sheetWatchImport(); break;
     case 'radar-settings': sheetRadarSettings(); break;
     case 'acct': sheetAcct(); break;
+    case 'preset-icm': { const fm = b.form; fm.elements.perShare.value = '0.02'; fm.elements.minComm.value = '0.02'; fm.elements.swapPct.value = '5.93'; fm.elements.swapTriple.value = '5'; toast('Valeurs IC Markets remplies : touchez « Enregistrer les réglages »'); break; }
     case 'acct-off': delete S.settings.acct; closeSheet(); save('Bilan depuis l’ouverture retiré'); break;
     case 'radar-refresh': refreshQuotes(); refreshRadar(true); break;
     case 'radar-edit': sheetWatch(S.watch.find(x => x.id === b.dataset.id)); break;
@@ -2918,7 +2966,8 @@ document.addEventListener('submit', async e => {
   if (form.id === 'setForm') {
     const g = n => form.elements[n].value, s = S.settings;
     const v = { initialCapital: num(g('initialCapital')), riskPct: num(g('riskPct')), cap: num(g('cap')), leverage: num(g('leverage')), staleDays: num(g('staleDays')), decimals: num(g('decimals')), marginMin: num(g('marginMin')) };
-    const fz = { inFixed: numOr(g('inFixed'), 0), inPct: numOr(g('inPct'), 0), outFixed: numOr(g('outFixed'), 0), outPct: numOr(g('outPct'), 0) };
+    const fz = { inFixed: numOr(g('inFixed'), 0), inPct: numOr(g('inPct'), 0), outFixed: numOr(g('outFixed'), 0), outPct: numOr(g('outPct'), 0), perShare: numOr(g('perShare'), 0), minComm: numOr(g('minComm'), 0) };
+    const sw = { pct: numOr(g('swapPct'), 0), triple: +g('swapTriple') || 5 };
     const errs = [];
     if (!(v.initialCapital > 0)) errs.push('capital initial');
     if (!(v.riskPct > 0 && v.riskPct <= 100)) errs.push('risque');
@@ -2928,9 +2977,10 @@ document.addEventListener('submit', async e => {
     if (!(v.marginMin >= 50 && v.marginMin <= 1000)) errs.push('seuil de marge (50 à 1000 %)');
     if (!(Number.isInteger(v.decimals) && v.decimals >= 0 && v.decimals <= 8)) errs.push('précision (entier 0 à 8)');
     if (Object.values(fz).some(x => !(x >= 0))) errs.push('frais');
+    if (!(sw.pct >= 0 && sw.pct <= 100)) errs.push('swap (0 à 100 % par an)');
     if (!g('startDate')) errs.push('date de départ');
     if (errs.length) { toast('Valeurs invalides : ' + errs.join(', ')); return; }
-    Object.assign(s, v, { fees: fz, fractional: form.elements.fractional.checked, startDate: g('startDate'), refSource: g('refSource') });
+    Object.assign(s, v, { fees: fz, swap: sw, fractional: form.elements.fractional.checked, startDate: g('startDate'), refSource: g('refSource') });
     calcDraft = null; save('Réglages enregistrés');
     return;
   }
