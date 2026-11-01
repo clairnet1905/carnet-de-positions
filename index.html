@@ -313,7 +313,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.13.0 · licence MIT */
+/* Carnet de positions v1.14.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -638,7 +638,7 @@ function defaultState() {
   return {
     app: 'carnet-positions', version: 1, updatedAt: 0,
     settings: { initialCapital: 1000, startDate: todayISO(), riskPct: 1, cap: 100, leverage: 5,
-      fees: { inFixed: 0, inPct: 0, outFixed: 0, outPct: 0 }, fractional: true, decimals: 4, staleDays: 4, refSource: 'auto', manualTickers: [], nearPct: 2, marginMin: 150 },
+      fees: { inFixed: 0, inPct: 0, outFixed: 0, outPct: 0 }, fractional: true, decimals: 4, staleDays: 4, refSource: 'auto', manualTickers: [], nearPct: 2, marginMin: 150, adjDiv: true },
     flows: [], lots: [], prices: {}, snapshots: [], watch: [], seen: {}, push: { vapid: '', subs: [] }
   };
 }
@@ -943,12 +943,13 @@ async function pullSharedRadar(throttle) {
     const upd = {};
     for (const s in R.hist) {
       const h = unpackHist(R.hist[s]), loc = Radar.hist[s];
-      if (!h.bars.length) continue;
-      if (!loc || h.last > loc.last || (h.last === loc.last && (h.full || 0) >= (loc.full || 0)) || h.n > (loc.n || 0)) upd[s] = Object.assign(h, { ls: R.ls, at: R.at });
+      h.adj = R.adj || 'splits';
+      if (!h.bars.length || loc && histOk(loc) && !histOk(h)) continue;   // garder l'historique de l'appareil s'il est seul au bon réglage
+      if (!loc || histOk(loc) !== histOk(h) || h.last > loc.last || (h.last === loc.last && (h.full || 0) >= (loc.full || 0)) || h.n > (loc.n || 0)) upd[s] = Object.assign(h, { ls: R.ls, at: R.at });
     }
     Object.assign(Radar.hist, upd);
     await HDB.run('readwrite', st => { for (const s in upd) st.put(upd[s], s); return null; });
-    Radar.robot = { ver, ls: R.ls, at: R.at, n: Object.keys(R.hist).length, run: (R.log || [])[0] || null, dead: R.deadSubs || [], errors: Object.keys(R.errors || {}).length };
+    Radar.robot = { ver, ls: R.ls, at: R.at, n: Object.keys(R.hist).length, run: (R.log || [])[0] || null, dead: R.deadSubs || [], errors: Object.keys(R.errors || {}).length, adj: R.adj || 'splits' };
     writeJSON(RADAR_META, Radar.robot);
     Radar.shared = robotFresh(Radar.robot);
     if (tab !== 'calc') render();
@@ -1248,6 +1249,9 @@ const Radar = { hist: {}, busy: false, done: 0, todo: 0, err: '', errs: {}, load
 let radarQuery = '', radarFilter = 'all';
 const tdKey = () => { try { return localStorage.getItem(TD_KEY) || ''; } catch (e) { return ''; } };
 const symOf = w => (w.sym || w.ticker).toUpperCase();
+// Cours ajustés des dividendes (« all », comme le bouton ADJ de TradingView) ou des seules divisions d'actions (« splits »).
+const adjMode = () => S.settings.adjDiv === false ? 'splits' : 'all';
+const histOk = h => (h.adj || 'splits') === adjMode();
 const HDB = {
   p: null,
   open() {
@@ -1275,7 +1279,7 @@ const finnhubCovers = sym => !!quoteKey() && !manualSet().has(sym) && S.watch.so
 // Ajoute la clôture du jour (Finnhub) à l'historique gardé sur l'appareil, si elle suit directement la dernière clôture connue.
 async function appendClose(sym, d, c) {
   const h = Radar.hist[sym];
-  if (!h || !h.bars.length || !finnhubCovers(sym)) return false;
+  if (!h || !h.bars.length || !histOk(h) || !finnhubCovers(sym)) return false;
   const last = h.bars[h.bars.length - 1];
   if (d < last[0]) return false;
   if (d === last[0]) { if (last[1] === c) return false; last[1] = c; }
@@ -1304,7 +1308,7 @@ const periodKey = (tf, d) => tf === 'M' ? d.slice(0, 7) : tf === 'W' ? weekKey(d
 // Nombre de clôtures journalières nécessaires pour une SMA, avec une marge pour retrouver le dernier croisement.
 function barsNeeded(w) { const n = w.period + 25; return Math.min(5000, w.tf === 'M' ? n * 22 : w.tf === 'W' ? n * 5 : n); }
 async function tdSeries(sym, n, key) {
-  const r = await fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=1day&outputsize=${n}&apikey=${encodeURIComponent(key)}`, { cache: 'no-store' });
+  const r = await fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=1day&outputsize=${n}&adjust=${adjMode()}&apikey=${encodeURIComponent(key)}`, { cache: 'no-store' });
   const j = await r.json().catch(() => ({}));
   if (j.status === 'error' || !Array.isArray(j.values)) throw Object.assign(new Error(j.message || 'erreur ' + r.status), { code: j.code || r.status });
   return j.values.map(v => [String(v.datetime).slice(0, 10), +v.close]).filter(v => v[1] > 0).sort((a, b) => a[0] < b[0] ? -1 : 1);
@@ -1330,8 +1334,9 @@ async function refreshRadar(manual) {
   const prev = prevWeekday(ls), WEEK = 7 * 864e5, must = [], resync = [];
   for (const s of Object.keys(need)) {
     const h = Radar.hist[s];
-    if (Radar.shared && h && h.n >= need[s] && h.last >= prev) continue;   // le robot ajoute la clôture et vérifie l'historique
-    if (!h || h.n < need[s]) must.push(s);
+    // le robot ajoute la clôture et vérifie l'historique ; après un changement de réglage, il retélécharge tout à son prochain passage
+    if (Radar.shared && h && (histOk(h) || (Radar.robot.adj || 'splits') !== adjMode()) && h.n >= need[s] && h.last >= prev) continue;
+    if (!h || h.n < need[s] || !histOk(h)) must.push(s);
     else if (h.last < ls && h.ls !== ls && !(finnhubCovers(s) && h.last >= prev)) must.push(s);
     else if (Date.now() - (h.full || 0) > WEEK) resync.push(s);
   }
@@ -1349,7 +1354,7 @@ async function refreshRadar(manual) {
         throw e;
       });
       bars = bars.filter(b => b[0] <= ls);
-      const h = { bars, n: need[s], last: bars.length ? bars[bars.length - 1][0] : '', ls, at: Date.now(), full: Date.now() };
+      const h = { bars, n: need[s], last: bars.length ? bars[bars.length - 1][0] : '', ls, at: Date.now(), full: Date.now(), adj: adjMode() };
       Radar.hist[s] = h; await HDB.set(s, h); delete Radar.errs[s];
     } catch (e) {
       if (e.code === 401 || e.code === 403 && /key/i.test(e.message)) { Radar.err = 'clé Twelve Data refusée'; break; }
@@ -1542,7 +1547,7 @@ function viewRadar() {
   return `${key ? '' : setup}
   <section class="card">
     <div class="sec-head"><h2>Radar SMA</h2><div class="row"><button class="btn sm" data-act="radar-refresh" ${key && S.watch.length ? '' : 'disabled'}>Actualiser</button><button class="btn sm primary" data-act="radar-add">+ Ajouter</button></div></div>
-    <p class="lead">${cards.length} action(s), ${S.watch.length} SMA. Alerte « proche » à ${fmtNum(S.settings.nearPct || 2)} % de la SMA. ${quoteKey() ? 'Historique Twelve Data (une fois, puis vérifié chaque semaine) complété chaque soir par la clôture Finnhub.' : 'Sans clé Finnhub sur cet appareil, l’historique est retéléchargé chaque jour sur Twelve Data (plus lent).'}</p>
+    <p class="lead">${cards.length} action(s), ${S.watch.length} SMA. Alerte « proche » à ${fmtNum(S.settings.nearPct || 2)} % de la SMA. ${adjMode() === 'all' ? 'Cours ajustés des dividendes (ADJ de TradingView). ' : 'Cours non ajustés des dividendes. '}${quoteKey() ? 'Historique Twelve Data (une fois, puis vérifié chaque semaine) complété chaque soir par la clôture Finnhub.' : 'Sans clé Finnhub sur cet appareil, l’historique est retéléchargé chaque jour sur Twelve Data (plus lent).'}</p>
     ${prog}${Radar.err ? `<div class="banner err">${esc(Radar.err)}</div>` : ''}
     ${errs.length ? `<p class="hint">Sans historique : ${errs.map(esc).join(', ')}.</p>` : ''}
     <div class="row"><button class="btn sm" data-act="radar-import">Importer une liste</button><button class="btn sm" data-act="radar-settings">Réglages du radar</button></div>
@@ -1624,8 +1629,13 @@ function sheetRadarSettings() {
   openSheet({
     title: 'Réglages du radar', ok: 'Enregistrer',
     body: `<div class="fields">${dec('nearPct', 'Alerte « proche » à (% de la SMA)', S.settings.nearPct || 2)}</div>
+      <label class="check"><input type="checkbox" name="adjDiv" ${S.settings.adjDiv === false ? '' : 'checked'}> Cours ajustés des dividendes, comme le bouton ADJ de TradingView</label>
+      <p class="hint">Les SMA longues (377 semaines, 100 mois) changent beaucoup selon ce réglage : gardez le même que sur votre graphique TradingView. Un changement retélécharge tout l’historique.</p>
       ${tdKey() ? '<div class="row"><button type="button" class="btn sm danger" data-act="td-off">Retirer la clé Twelve Data</button></div>' : ''}`,
-    onSubmit: form => { const v = num(F(form, 'nearPct')); need(v > 0 && v <= 20, 'Entre 0 et 20 %.'); S.settings.nearPct = v; save('Réglages du radar enregistrés'); }
+    onSubmit: form => { const v = num(F(form, 'nearPct')); need(v > 0 && v <= 20, 'Entre 0 et 20 %.'); S.settings.nearPct = v;
+      const adj = !!form.elements.adjDiv.checked, chg = adj !== (S.settings.adjDiv !== false);
+      S.settings.adjDiv = adj; save(chg ? 'Réglage enregistré : historique du radar retéléchargé' : 'Réglages du radar enregistrés');
+      if (chg) refreshRadar(); }
   });
 }
 
@@ -2211,7 +2221,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.13.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.14.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
