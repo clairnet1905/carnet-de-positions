@@ -247,6 +247,12 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 .ptile b{font:600 1.05rem var(--f-num)} .ptile b.pos{color:var(--gain)} .ptile b.neg{color:var(--loss)}
 .ptile small{font-size:.72rem;color:var(--muted);overflow-wrap:anywhere}
 .ptile[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.itiles{display:grid;gap:8px;grid-template-columns:repeat(3,minmax(0,1fr))}
+.itile{display:grid;gap:3px;align-content:start;text-align:left;border:0;border-radius:12px;padding:9px 10px;background:var(--surface-2);color:inherit;font:inherit;cursor:pointer;min-width:0}
+.itile>span:first-child{font-size:.72rem;color:var(--muted);font-weight:600}.itile>span:first-child small{font-weight:400}
+.itile b{font:600 1.05rem var(--f-num)} .itile b.pos{color:var(--gain)} .itile b.neg{color:var(--loss)} .itile>small{font-size:.7rem;color:var(--muted)}
+.ichips{display:flex;flex-wrap:wrap;gap:3px}.ichips i{font:600 .62rem var(--f-num);font-style:normal;padding:1px 5px;border-radius:99px;background:var(--surface);color:var(--muted)}
+.ichips i.up{background:var(--gain-bg);color:var(--gain)}.ichips i.down{background:var(--loss-bg);color:var(--loss)}
 .ptile.whole{cursor:default;background:transparent;border:1.5px dashed var(--line)}
 button.ptile.whole{cursor:pointer}button.ptile.whole small{color:var(--accent)}
 .disc{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
@@ -320,7 +326,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.20.0 · licence MIT */
+/* Carnet de positions v1.21.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -1387,7 +1393,7 @@ async function appendClose(sym, d, c) {
 // Actions du radar à suivre en direct pendant la séance : proches de leur SMA ou en train de la croiser.
 function hotTickers() {
   const out = new Set(), lim = 2 * (S.settings.nearPct || 2);
-  for (const w of S.watch) { if (w.sym) continue; const a = analyzeWatch(w); if (!a || a.short || a.pending || Math.abs(a.dist) <= lim) out.add(w.ticker); }
+  for (const w of S.watch) { if (w.sym) continue; if (w.idx) { out.add(w.ticker); continue; } const a = analyzeWatch(w); if (!a || a.short || a.pending || Math.abs(a.dist) <= lim) out.add(w.ticker); }
   return out;
 }
 // Dernière séance terminée à New York (jours fériés non gérés : la séance manquante est simplement absente des données).
@@ -1615,7 +1621,7 @@ function viewRadar() {
   </section>`;
   // Une carte par action, avec ses SMA (J, S, M) en lignes ; la carte prend le statut le plus urgent de ses SMA.
   const tfOrder = { D: 0, W: 1, M: 2 }, groups = {}, recent = addDays(todayISO(), -ALERT_DAYS);
-  for (const w of S.watch) (groups[w.ticker] = groups[w.ticker] || []).push({ w, a: analyzeWatch(w) });
+  for (const w of S.watch) if (!w.idx) (groups[w.ticker] = groups[w.ticker] || []).push({ w, a: analyzeWatch(w) });
   const cards = Object.keys(groups).map(t => {
     const lines = groups[t].sort((x, y) => tfOrder[x.w.tf] - tfOrder[y.w.tf] || y.w.period - x.w.period);  // J, puis S, puis M ; période décroissante
     const ok = lines.filter(l => l.a && !l.a.short);
@@ -1669,7 +1675,7 @@ function viewRadar() {
   return `${key ? '' : setup}
   <section class="card">
     <div class="sec-head"><h2>Radar SMA <small title="${adjMode() === 'all' ? 'Cours ajustés des dividendes, comme le bouton ADJ de TradingView' : 'Cours non ajustés des dividendes'}">· ${adjMode() === 'all' ? 'ADJ' : 'brut'}</small></h2><div class="row"><button class="btn sm" data-act="radar-refresh" ${key && S.watch.length ? '' : 'disabled'}>Actualiser</button><button class="btn sm primary" data-act="radar-add">+ Ajouter</button></div></div>
-    <p class="lead">${cards.length} action(s), ${S.watch.length} SMA. Alerte « proche » à ${fmtNum(S.settings.nearPct || 2)} % de la SMA. ${adjMode() === 'all' ? 'Cours ajustés des dividendes (ADJ de TradingView). ' : 'Cours non ajustés des dividendes. '}${quoteKey() ? 'Historique Twelve Data (une fois, puis vérifié chaque semaine) complété chaque soir par la clôture Finnhub.' : 'Sans clé Finnhub sur cet appareil, l’historique est retéléchargé chaque jour sur Twelve Data (plus lent).'}</p>
+    <p class="lead">${cards.length} action(s), ${S.watch.filter(w => !w.idx).length} SMA. Alerte « proche » à ${fmtNum(S.settings.nearPct || 2)} % de la SMA. ${adjMode() === 'all' ? 'Cours ajustés des dividendes (ADJ de TradingView). ' : 'Cours non ajustés des dividendes. '}${quoteKey() ? 'Historique Twelve Data (une fois, puis vérifié chaque semaine) complété chaque soir par la clôture Finnhub.' : 'Sans clé Finnhub sur cet appareil, l’historique est retéléchargé chaque jour sur Twelve Data (plus lent).'}</p>
     ${prog}${Radar.err ? `<div class="banner err">${esc(Radar.err)}</div>` : ''}
     ${errs.length ? `<p class="hint">Sans historique : ${errs.map(esc).join(', ')}.</p>` : ''}
     <div class="row"><button class="btn sm" data-act="radar-import">Importer une liste</button><button class="btn sm" data-act="radar-settings">Réglages du radar</button></div>
@@ -1716,6 +1722,30 @@ function sheetWatch(w, preset) {
     }
   });
 }
+// Une action par ligne : ticker puis paires « unité période » (ou « période unité » ; une période seule est journalière).
+function parseSmaList(text) {
+  const map = { J: 'D', D: 'D', S: 'W', W: 'W', M: 'M' }, rows = [], bad = [];
+  for (const line of String(text).split(/\n/)) {
+    const l = line.trim(); if (!l) continue;
+    const [t, ...rest] = l.split(/[;,\t ]+/).map(x => x.trim().toUpperCase()).filter(Boolean);
+    const pairs = []; let ok = /^[A-Z0-9.\-]{1,12}$/.test(t || '') && rest.length > 0;
+    for (let i = 0; ok && i < rest.length; i++) {
+      const a = rest[i], b = rest[i + 1];
+      if (map[a] && /^\d+$/.test(b || '')) { pairs.push([map[a], +b]); i++; }
+      else if (/^\d+$/.test(a) && map[b]) { pairs.push([map[b], +a]); i++; }
+      else if (/^\d+$/.test(a)) pairs.push(['D', +a]);
+      else ok = false;
+    }
+    if (!ok) { bad.push(l); continue; }
+    const good = [];
+    for (const [tf, n] of pairs) {
+      if (!periodOk(tf, n)) bad.push(`${t} ${TF_SHORT[tf]} ${n}`);
+      else if (!good.some(([a, b]) => a === tf && b === n)) good.push([tf, n]);
+    }
+    if (good.length) rows.push({ t, pairs: good });
+  }
+  return { rows, bad };
+}
 function sheetWatchImport() {
   openSheet({
     title: 'Importer une liste', ok: 'Importer',
@@ -1723,26 +1753,10 @@ function sheetWatchImport() {
       <pre class="hint" style="margin:0">AAPL J 233 S 55 M 13\nABBV J 8\nACN;89;S</pre>
       <div class="fields"><div class="fld wide"><label for="f-list">Liste</label><textarea id="f-list" name="list" rows="8" autocapitalize="characters"></textarea></div></div>`,
     onSubmit: form => {
-      const map = { J: 'D', D: 'D', S: 'W', W: 'W', M: 'M' };
-      let add = 0; const bad = [];
-      for (const line of F(form, 'list').split(/\n/)) {
-        const l = line.trim(); if (!l) continue;
-        const [t, ...rest] = l.split(/[;,\t ]+/).map(x => x.trim().toUpperCase()).filter(Boolean);
-        // Paires « unité période » ou « période unité » ; une période seule est journalière.
-        const pairs = []; let ok = /^[A-Z0-9.\-]{1,12}$/.test(t || '') && rest.length > 0;
-        for (let i = 0; ok && i < rest.length; i++) {
-          const a = rest[i], b = rest[i + 1];
-          if (map[a] && /^\d+$/.test(b || '')) { pairs.push([map[a], +b]); i++; }
-          else if (/^\d+$/.test(a) && map[b]) { pairs.push([map[b], +a]); i++; }
-          else if (/^\d+$/.test(a)) pairs.push(['D', +a]);
-          else ok = false;
-        }
-        if (!ok) { bad.push(l); continue; }
-        for (const [tf, n] of pairs) {
-          if (!periodOk(tf, n)) { bad.push(`${t} ${TF_SHORT[tf]} ${n}`); continue; }
-          if (S.watch.some(x => x.ticker === t && x.tf === tf && x.period === n)) continue;
-          S.watch.push({ id: uid(), ticker: t, period: n, tf, sym: '', note: '' }); add++;
-        }
+      let add = 0; const { rows, bad } = parseSmaList(F(form, 'list'));
+      for (const { t, pairs } of rows) for (const [tf, n] of pairs) {
+        if (S.watch.some(x => x.ticker === t && x.tf === tf && x.period === n)) continue;
+        S.watch.push({ id: uid(), ticker: t, period: n, tf, sym: '', note: '' }); add++;
       }
       need(add || !bad.length, 'Lignes non reconnues : ' + bad.slice(0, 3).join(' | '));
       save(`${add} SMA ajoutée(s)${bad.length ? ` · ignoré : ${bad.slice(0, 4).join(' | ')}${bad.length > 4 ? '…' : ''}` : ''}`);
@@ -1864,6 +1878,73 @@ function disciplineCard(T) {
 }
 
 // ----- Tableau de bord -----
+// ----- Marché US : S&P 500, Nasdaq 100 et Dow Jones via leurs ETF (indices payants chez Finnhub et Twelve Data) -----
+// Leurs SMA vivent dans S.watch (idx: true) pour l'historique, le robot et les alertes, mais restent hors des cartes du radar.
+const IDX = [['SPY', 'S&P 500'], ['QQQ', 'Nasdaq 100'], ['DIA', 'Dow Jones']];
+const IDX_DEF = 'SPY J 200 J 233 S 21 S 55 M 8\nQQQ J 89 J 233 S 13 S 89 M 5 M 21\nDIA J 50 S 55 M 13';
+const TF_ORD = { D: 0, W: 1, M: 2 };
+const idxWatch = t => S.watch.filter(w => w.idx && w.ticker === t).sort((x, y) => TF_ORD[x.tf] - TF_ORD[y.tf] || y.period - x.period);
+const idxText = () => IDX.map(([t]) => idxWatch(t)).filter(ws => ws.length).map(ws => ws[0].ticker + ' ' + ws.map(w => TF_SHORT[w.tf] + ' ' + w.period).join(' ')).join('\n');
+function setIdx(text) {
+  const { rows, bad } = parseSmaList(text), known = new Set(IDX.map(x => x[0]));
+  const keep = S.watch.filter(w => w.idx), out = [];
+  for (const { t, pairs } of rows) {
+    if (!known.has(t)) { bad.push(t); continue; }
+    for (const [tf, n] of pairs) if (!out.some(w => w.ticker === t && w.tf === tf && w.period === n)) out.push(keep.find(w => w.ticker === t && w.tf === tf && w.period === n) || { id: `idx-${t}-${tf}${n}`, ticker: t, period: n, tf, sym: '', note: '', idx: true });  // id fixe : pas de doublon entre appareils
+  }
+  S.watch = S.watch.filter(w => !w.idx).concat(out);
+  return bad;
+}
+function migrateIdx() {
+  if (S.settings.idxV >= 1) return;
+  if (!S.watch.some(w => w.idx)) setIdx(IDX_DEF);
+  S.settings.idxV = 1;
+}
+// Variation du jour : celle de Finnhub en direct, sinon les deux dernières clôtures de l'historique.
+function idxDay(t) {
+  const L = Live.prices[t];
+  if (L && isNum(L.dp)) return L.dp;
+  const h = Radar.hist[t], b = h && h.bars;
+  return b && b.length > 1 ? (b[b.length - 1][1] / b[b.length - 2][1] - 1) * 100 : null;
+}
+const idxSide = a => !a || a.short ? '' : a.p > a.smaNow ? 'up' : 'down';
+function marketCard() {
+  if (!Radar.loaded && S.watch.length) loadRadarCache().then(() => { if (tab === 'dash') render(); });
+  const tiles = IDX.map(([t, name]) => {
+    const ws = idxWatch(t); if (!ws.length) return '';
+    const as = ws.map(w => ({ w, a: analyzeWatch(w) })), ok = as.filter(x => idxSide(x.a));
+    const up = ok.filter(x => idxSide(x.a) === 'up').length, dp = idxDay(t);
+    const chips = as.map(({ w, a }) => `<i class="${idxSide(a)}">${TF_SHORT[w.tf]}${w.period}</i>`).join('');
+    return `<button type="button" class="itile" data-act="idx-detail" data-t="${t}"><span>${name} <small>${t}</small></span>
+      <b class="num ${dp == null ? '' : cls(dp)}">${dp == null ? '—' : pct(dp, true)}</b>
+      <span class="ichips">${chips}</span><small>${ok.length ? `${up}/${ok.length} au-dessus` : 'historique en attente'}</small></button>`;
+  }).join('');
+  if (!tiles) return '';
+  const live = IDX.some(([t]) => Live.prices[t]) && marketOpen(Date.now());
+  return `<section class="card mkt"><div class="sec-head"><h2>Marché US <small>· ${live ? 'en direct' : 'dernière séance'}</small></h2><button class="btn sm" data-act="idx-edit">SMA</button></div>
+    <div class="itiles">${tiles}</div>
+    <p class="hint" style="margin:6px 0 0">Via les ETF SPY, QQQ et DIA. Vert : cours au-dessus de la SMA, rouge : en dessous. Touchez un indice pour le détail.</p></section>`;
+}
+function sheetIdxDetail(t) {
+  const name = (IDX.find(x => x[0] === t) || [t, t])[1], dd = d => fmtDate(d).replace(/ \d{4}$/, '');
+  const rows = idxWatch(t).map(w => { const a = analyzeWatch(w), ok = a && !a.short;
+    return `<tr><td>${TF_SHORT[w.tf]} ${w.period}</td><td class="n">${ok ? usd(a.smaNow) : '—'}</td><td class="n ${ok ? cls(a.dist) : ''}">${ok ? pct(a.dist, true) : a && a.short ? 'historique court' : 'en attente'}</td><td>${ok && a.lastCross ? `${a.lastCross.dir === 'up' ? '↑' : '↓'} ${dd(a.lastCross.date)}` : ''}</td></tr>`; }).join('');
+  const a0 = idxWatch(t).map(analyzeWatch).find(a => a && !a.short), dp = idxDay(t);
+  openSheet({ title: `${name} · ${t}`, noFocus: true,
+    body: `<p class="lead">${a0 ? `Cours ${usd(a0.p)} <small class="muted">(${a0.src})</small>` : ''}${dp == null ? '' : ` · jour <span class="${cls(dp)}">${pct(dp, true)}</span>`}</p>
+      <div class="tbl"><table><thead><tr><th>SMA</th><th class="n">Valeur</th><th class="n">Écart</th><th>Dernier croisement</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="hint">Mêmes calculs que le radar (cours ${adjMode() === 'all' ? 'ajustés des dividendes' : 'non ajustés'}). Les croisements apparaissent aussi dans les alertes.</p>` });
+}
+function sheetIdxEdit() {
+  openSheet({ title: 'SMA des indices', ok: 'Enregistrer',
+    body: `<p class="lead">Une ligne par ETF (SPY, QQQ, DIA), comme pour l’import du radar.</p>
+      <div class="fields"><div class="fld wide"><label for="f-idx">SMA suivies</label><textarea id="f-idx" name="idx" rows="4" autocapitalize="characters">${esc(idxText())}</textarea></div></div>`,
+    onSubmit: form => {
+      const bad = setIdx(F(form, 'idx'));
+      save('SMA des indices enregistrées' + (bad.length ? ' · ignoré : ' + bad.slice(0, 4).join(' | ') : ''));
+      refreshRadar();
+    } });
+}
 function viewDash() {
   const ref = referenceCapital(), acc = ref.acc, lb = latestBroker(), P = perf(), T = Core.tradeStats(S, planR);
   let gap = '';
@@ -1888,6 +1969,7 @@ function viewDash() {
   return `${demoBanner()}
   ${alertsStrip()}
   ${liveBar()}
+  ${marketCard()}
   <div class="hero-card">
     <div class="row" style="justify-content:space-between"><span class="lbl">Valeur nette du compte</span><small>${ref.label} · cours au ${fmtDate(acc.openCount ? acc.minPriceDate : todayISO())}</small></div>
     <div><div class="big">${usd(acc.equity)}</div>
@@ -2434,7 +2516,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.20.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.21.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
@@ -2869,6 +2951,8 @@ document.addEventListener('click', e => {
     case 'radar-add-sma': sheetWatch(null, b.dataset.t); break;
     case 'radar-filter': radarFilter = b.dataset.f; render(); break;
     case 'radar-import': sheetWatchImport(); break;
+    case 'idx-detail': sheetIdxDetail(b.dataset.t); break;
+    case 'idx-edit': sheetIdxEdit(); break;
     case 'radar-settings': sheetRadarSettings(); break;
     case 'acct': sheetAcct(); break;
     case 'preset-icm': { const fm = b.form; fm.elements.perShare.value = '0.02'; fm.elements.minComm.value = '0.02'; fm.elements.swapPct.value = '5.93'; fm.elements.swapTriple.value = '5'; toast('Valeurs IC Markets remplies : touchez « Enregistrer les réglages »'); break; }
@@ -3100,6 +3184,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet
   if (!local) { loadDemo(); S.updatedAt = 0; writeLocal(); }
   migrateSeen();
   migrateFees();
+  migrateIdx();
   render();
   if (Store.cfg) { setSync('saving'); syncNow(); } else setSync('local');
   window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (['dash', 'calc', 'pos', 'radar', 'set'].includes(h) && h !== tab) { tab = h; render(); window.scrollTo(0, 0); } });
