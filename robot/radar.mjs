@@ -4,7 +4,7 @@
 //    dans un second Gist secret (« carnet-radar.json ») que l'app télécharge.
 // 3. Envoie une notification groupée aux appareils abonnés pour chaque nouveau croisement de SMA.
 // Les clés ne sont jamais écrites dans le code : elles viennent des secrets du dépôt (Settings › Secrets and variables › Actions).
-import { addDays, days, lastSession, prevWeekday, barsNeeded, symOf, signals, message, pack, unpack } from './sma.mjs';
+import { addDays, days, lastSession, prevWeekday, nextWeekday, weekKey, barsNeeded, symOf, signals, message, analyze, pack, unpack } from './sma.mjs';
 
 const { GIST_TOKEN, TWELVEDATA_KEY, FINNHUB_KEY, VAPID_PRIVATE_KEY, TEST_PUSH } = process.env;
 const STATE_FILE = 'carnet-positions.json', RADAR_FILE = 'carnet-radar.json';
@@ -128,6 +128,64 @@ const sig = signals(S, hist, ls, R.notified, { near: !!S.settings.pushNear });
 let sent = 0, dead = [];
 const payloads = [];
 if (sig.length && !first) payloads.push(message(sig, ls));
+
+// ----- Aides : stops à remonter, résultats au prochain jour de bourse, bilan du vendredi -----
+const usd = x => x.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' $';
+const TFL = { D: 'J', W: 'S', M: 'M' };
+const remOf = l => l.qty - (l.events || []).filter(e => e.type === 'sell').reduce((a, e) => a + e.qty, 0);
+const openLots = (S.lots || []).filter(l => !l.demo && remOf(l) > 1e-9);
+const openT = [...new Set(openLots.map(l => l.ticker))];
+const extra = [];   // clés à mémoriser après envoi
+// Stops : une SMA de l'action est passée entre le stop actuel et la dernière clôture (une notification par stop et par SMA).
+if (S.settings.pushStops !== false) {
+  const lines = [];
+  for (const t of openT) {
+    const l = openLots.find(x => x.ticker === t), st = l.stopCurrent > 0 ? l.stopCurrent : 0;
+    for (const w of S.watch.filter(x => x.ticker === t && !x.idx)) {
+      const h = hist[symOf(w)]; if (!h) continue;
+      const a = analyze(w, h.bars, ls, S.settings.nearPct); if (!a || a.short) continue;
+      const key = `stop|${l.id}|${w.id}|${st}`;
+      if (a.sma > st * 1.005 && a.sma < a.lastClose && !R.notified[key]) { lines.push(`${t} : SMA ${w.period} ${TFL[w.tf]} à ${usd(a.sma)} (stop ${st ? usd(st) : 'aucun'})`); extra.push(key); }
+    }
+  }
+  if (lines.length && !first) payloads.push({ title: `Stops · ${lines.length} à remonter`, body: lines.slice(0, 6).join('\n') + (lines.length > 6 ? `\n+ ${lines.length - 6} autre(s) dans l’app` : ''), tag: 'stops-' + ls, url: './#dash' });
+}
+// Résultats : positions ouvertes qui publient d'ici le prochain jour de bourse (week-end compris le vendredi).
+if (S.settings.pushEarn !== false && FINNHUB_KEY && openT.length) {
+  try {
+    const to = nextWeekday(ls), r = await fetch(`https://finnhub.io/api/v1/calendar/earnings?from=${addDays(ls, 1)}&to=${to}&token=${encodeURIComponent(FINNHUB_KEY)}`);
+    const rows = r.ok ? ((await r.json()) || {}).earningsCalendar || [] : [];
+    const H = { bmo: 'avant l’ouverture', amc: 'après la clôture', dmh: 'pendant la séance' };
+    const hit = rows.filter(x => openT.includes(String(x.symbol || '').toUpperCase()) && !R.notified[`earn|${x.symbol}|${x.date}`]);
+    if (hit.length) {
+      payloads.push({ title: `Résultats · ${hit.map(x => x.symbol).join(', ')}`, body: hit.map(x => `${x.symbol} publie le ${x.date.split('-').reverse().join('/')}${H[x.hour] ? ' ' + H[x.hour] : ''}`).join('\n') + '\nGarder, alléger ou resserrer le stop : à vous de voir.', tag: 'earn-' + ls, url: './#pos' });
+      for (const x of hit) extra.push(`earn|${x.symbol}|${x.date}`);
+    }
+  } catch (e) { log('Calendrier des résultats indisponible : ' + e.message); }
+}
+// Bilan du vendredi : trades clôturés, R, stops remontés, positions ouvertes, feu du marché.
+if (S.settings.pushWeekly !== false && new Date(ls + 'T12:00:00Z').getUTCDay() === 5 && !R.notified['week|' + ls]) {
+  const from = weekKey(ls), inW = d => d >= from && d <= ls, rp = S.settings.riskPct || 1;
+  let n = 0, net = 0, sumR = 0, nR = 0, raised = 0;
+  for (const l of (S.lots || []).filter(x => !x.demo)) {
+    const sells = (l.events || []).filter(e => e.type === 'sell');
+    const ev = l.events || [];
+    raised += ev.filter(e => e.type === 'stop' && inW(e.date) && e.to > (e.from || 0)).length;
+    const last = sells.map(e => e.date).sort().pop();
+    if (remOf(l) > 1e-9 || !last || !inW(last)) continue;
+    const g = sells.reduce((a, e) => a + e.qty * (e.price - l.price) - (e.fee || 0), 0) - (l.entryFee || 0)
+      + ev.filter(e => e.type === 'dividend' || e.type === 'adjust').reduce((a, e) => a + (e.amount || 0), 0) - ev.filter(e => e.type === 'funding').reduce((a, e) => a + (e.amount || 0), 0);
+    const u = l.riskPlan > 0 ? l.riskPlan : l.refCapital > 0 ? l.refCapital * rp / 100 : 0;
+    n++; net += g; if (u > 0) { sumR += g / u; nR++; }
+  }
+  let up = 0, k = 0;
+  for (const w of S.watch.filter(x => x.idx)) { const h = hist[symOf(w)]; if (!h) continue; const a = analyze(w, h.bars, ls, 2); if (!a || a.short) continue; k++; if (a.above) up++; }
+  const feu = k ? (up / k >= 0.7 ? 'vert' : up / k <= 0.3 ? 'rouge' : 'orange') : null;
+  const lines = [n ? `${n} trade(s) clôturé(s) : ${net >= 0 ? '+' : ''}${usd(net)}${nR ? ` · ${sumR >= 0 ? '+' : ''}${sumR.toFixed(2).replace('.', ',')} R` : ''} (swap estimé non compris)` : 'Aucun trade clôturé cette semaine',
+    `${openT.length} position(s) ouverte(s) · ${raised} stop(s) remonté(s)`, feu ? `Feu ${feu} : ${up}/${k} de vos SMA d’indices au-dessus` : ''].filter(Boolean);
+  payloads.push({ title: 'Bilan de la semaine', body: lines.join('\n'), tag: 'week-' + ls, url: './#dash' });
+  extra.push('week|' + ls);
+}
 if (TEST_PUSH === 'true') payloads.push({ title: 'Carnet de positions', body: `Notifications actives. Radar : ${Object.keys(hist).length} action(s) à jour au ${ls}.`, tag: 'test', url: './#radar' });
 if (payloads.length && subs.length && pub && VAPID_PRIVATE_KEY) {
   const webpush = (await import('web-push')).default;
@@ -138,6 +196,7 @@ if (payloads.length && subs.length && pub && VAPID_PRIVATE_KEY) {
   }
 } else if (payloads.length) log('Notification non envoyée : ' + (!subs.length ? 'aucun appareil abonné' : !pub ? 'clés de notification non créées dans l’app' : 'secret VAPID_PRIVATE_KEY manquant'));
 for (const x of sig) R.notified[x.key] = ls;
+for (const k of extra) R.notified[k] = ls;
 for (const k in R.notified) if (days(R.notified[k], ls) > 60) delete R.notified[k];
 
 // ----- Enregistrement -----
