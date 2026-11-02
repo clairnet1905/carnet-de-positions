@@ -5,9 +5,11 @@
 // 3. Envoie une notification groupée aux appareils abonnés pour chaque nouveau croisement de SMA.
 // Les clés ne sont jamais écrites dans le code : elles viennent des secrets du dépôt (Settings › Secrets and variables › Actions).
 import { addDays, days, lastSession, prevWeekday, nextWeekday, weekKey, barsNeeded, symOf, signals, message, analyze, pack, unpack } from './sma.mjs';
+import { labUnit, packUnit, doneBars } from './labsma.mjs';
 
 const { GIST_TOKEN, TWELVEDATA_KEY, FINNHUB_KEY, VAPID_PRIVATE_KEY, TEST_PUSH } = process.env;
-const STATE_FILE = 'carnet-positions.json', RADAR_FILE = 'carnet-radar.json';
+const STATE_FILE = 'carnet-positions.json', RADAR_FILE = 'carnet-radar.json', LAB_FILE = 'carnet-lab.json';
+const LAB_PER_RUN = 40, LAB_REDO_DAYS = 30, T0 = Date.now();
 const SITE = 'https://clairnet1905.github.io/carnet-de-positions/';
 const WEEK = 7 * 864e5, RESYNC_PER_RUN = 40, TD_DAY_LIMIT = 700;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -35,13 +37,13 @@ async function findGists() {
 
 // ----- Cours -----
 let tdCalls = 0, tdLast = 0, ADJ = 'all';
-async function twelve(sym, n) {
+async function twelve(sym, n, interval = '1day') {
   if (!TWELVEDATA_KEY) throw new Error('pas de clé Twelve Data');
   if (tdCalls >= TD_DAY_LIMIT) throw new Error('quota Twelve Data du jour réservé');
   for (let attempt = 0; attempt < 3; attempt++) {
     const wait = tdLast + 8000 - Date.now(); if (wait > 0) await sleep(wait);   // 8 requêtes par minute (offre gratuite)
     tdLast = Date.now(); tdCalls++;
-    const r = await fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=1day&outputsize=${n}&adjust=${ADJ}&apikey=${encodeURIComponent(TWELVEDATA_KEY)}`);
+    const r = await fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=${interval}&outputsize=${n}&adjust=${ADJ}&apikey=${encodeURIComponent(TWELVEDATA_KEY)}`);
     const j = await r.json().catch(() => ({}));
     if (j.code === 429 || r.status === 429) { await sleep(61000); continue; }
     if (j.status === 'error' || !Array.isArray(j.values)) throw new Error(j.message || 'erreur ' + r.status);
@@ -70,10 +72,11 @@ const S = JSON.parse(await fileText(main.files[STATE_FILE]));
 S.watch = S.watch || []; S.settings = S.settings || {};
 // Cours ajustés des dividendes (comme le bouton ADJ de TradingView), sauf si l'app le désactive (Radar › Réglages).
 ADJ = S.settings.adjDiv === false ? 'splits' : 'all';
-let R = { v: 1, hist: {}, notified: {}, ls: '', at: 0, log: [] };
+let R = { v: 1, hist: {}, notified: {}, ls: '', at: 0, log: [] }, L = { v: 1, res: {} };
 if (ids.radar) {
   const g = await gh('/gists/' + ids.radar);
   try { R = Object.assign(R, JSON.parse(await fileText(g.files[RADAR_FILE]))); } catch (e) { log('Historique illisible, reconstruit.'); }
+  try { if (g.files[LAB_FILE]) L = Object.assign(L, JSON.parse(await fileText(g.files[LAB_FILE]))); } catch (e) { log('Résultats du Labo illisibles, recommencés.'); }
 }
 const hist = {};
 for (const s in R.hist) hist[s] = unpack(R.hist[s]);
@@ -121,6 +124,30 @@ for (const s of daily) {
 }
 for (const s of resync.slice(0, RESYNC_PER_RUN)) { try { put(s, await twelve(s, need[s]), true); } catch (e) { errors[s] = e.message; break; } }
 
+// ----- Labo SMA : tickers demandés dans l'app (S.settings.labQueue), jamais ceux déjà suivis au radar -----
+// 3 requêtes Twelve Data par action (J 5000 séances, S et M depuis le début de l'actif), refaites tous les 30 jours.
+const inRadar = new Set(S.watch.map(w => String(w.ticker).toUpperCase()));
+const labQ = [...new Set((S.settings.labQueue || []).map(t => String(t).toUpperCase()))];
+const labDue = t => { const x = L.res[t]; return !x || x.adj !== ADJ || days(new Date(x.at).toISOString().slice(0, 10), ls) > (x.err ? 7 : LAB_REDO_DAYS); };
+const labTodo = labQ.filter(t => !inRadar.has(t) && labDue(t)).sort((a, b) => (L.res[a] ? 1 : 0) - (L.res[b] ? 1 : 0));
+let labDone = 0;
+for (const t of labTodo.slice(0, LAB_PER_RUN)) {
+  if (tdCalls + 3 > TD_DAY_LIMIT || Date.now() - T0 > 65 * 60000) break;   // quota du jour et durée maximale du robot
+  try {
+    const one = {};
+    for (const [tf, iv] of [['D', '1day'], ['W', '1week'], ['M', '1month']]) one[tf] = packUnit(labUnit(doneBars(await twelve(t, 5000, iv), tf, ls), tf));
+    L.res[t] = { at: Date.now(), ls, adj: ADJ, ...one };
+    labDone++;
+  } catch (e) {
+    if (/quota|limite/.test(e.message)) break;
+    if (/not found|invalid|symbol/i.test(e.message)) L.res[t] = { at: Date.now(), ls, adj: ADJ, err: e.message };   // ticker introuvable : réessayé dans 7 jours
+    else log(`Labo ${t} : ${e.message} (réessayé au prochain passage)`);
+  }
+}
+for (const t in L.res) if (!labQ.includes(t)) delete L.res[t];   // retirés de la liste dans l'app
+const labLeft = labQ.filter(t => !inRadar.has(t) && labDue(t)).length;
+L = { v: 1, at: Date.now(), ls, res: L.res };
+
 // ----- Notifications -----
 const subs = (S.push && S.push.subs) || [], pub = S.push && S.push.vapid;
 const first = !R.ls || adjChanged;   // premier passage ou réglage changé : on mémorise les croisements sans notifier (pas d'avalanche)
@@ -128,6 +155,7 @@ const sig = signals(S, hist, ls, R.notified, { near: !!S.settings.pushNear });
 let sent = 0, dead = [];
 const payloads = [];
 if (sig.length && !first) payloads.push(message(sig, ls));
+if (labDone && !labLeft) payloads.push({ title: 'Labo SMA terminé', body: `${labQ.filter(t => L.res[t] && !L.res[t].err).length} action(s) testée(s) sur 15 SMA × J / S / M. Résultats dans l’app.`, tag: 'lab-' + ls, url: './#lab' });
 
 // ----- Aides : stops à remonter, résultats au prochain jour de bourse, bilan du vendredi -----
 const usd = x => x.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' $';
@@ -205,8 +233,10 @@ for (const s in hist) if (need[s]) packed[s] = pack(hist[s]);   // les actions r
 R = { v: 1, ls, adj: ADJ, at: Date.now(), hist: packed, notified: R.notified, deadSubs: dead, errors,
   log: [{ at: Date.now(), ls, full: full.length, daily: daily.length, resync: Math.min(resync.length, RESYNC_PER_RUN), signals: sig.length, sent, td: tdCalls, errors: Object.keys(errors).length }].concat(R.log || []).slice(0, 30) };
 const body = JSON.stringify(R);
-if (ids.radar) await gh('/gists/' + ids.radar, { method: 'PATCH', body: JSON.stringify({ files: { [RADAR_FILE]: { content: body } } }) });
-else await gh('/gists', { method: 'POST', body: JSON.stringify({ description: 'Carnet de positions : historique du radar SMA (gist secret, ne pas rendre public)', public: false, files: { [RADAR_FILE]: { content: body } } }) });
+const labBody = JSON.stringify(L);
+if (ids.radar) await gh('/gists/' + ids.radar, { method: 'PATCH', body: JSON.stringify({ files: { [RADAR_FILE]: { content: body }, [LAB_FILE]: { content: labBody } } }) });
+else await gh('/gists', { method: 'POST', body: JSON.stringify({ description: 'Carnet de positions : historique du radar SMA (gist secret, ne pas rendre public)', public: false, files: { [RADAR_FILE]: { content: body }, [LAB_FILE]: { content: labBody } } }) });
+if (labQ.length) log(`Labo SMA : ${labDone} action(s) testée(s) · ${labLeft} en attente · ${(labBody.length / 1024).toFixed(0)} Ko`);
 log(`Historique : ${full.length} complet(s), ${daily.length} clôture(s) du jour, ${Math.min(resync.length, RESYNC_PER_RUN)} vérification(s) · ${tdCalls} requête(s) Twelve Data · ${(body.length / 1024).toFixed(0)} Ko`);
 log(`Signaux : ${sig.length}${first ? ' (premier passage, mémorisés sans notifier)' : ''} · notifications envoyées : ${sent}`);
 if (adjusted.length) log('Historique réajusté (dividende ou division) : ' + adjusted.join(', '));
