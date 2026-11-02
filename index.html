@@ -237,6 +237,32 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 .thumb{max-width:100%;max-height:260px;border-radius:10px;border:1px solid var(--line)}
 .shots{display:flex;flex-wrap:wrap;gap:10px;margin:4px 0}.shots figure{margin:0;max-width:100%}.shots figcaption{font-size:12px;color:var(--muted);margin-top:4px}
 .filters{display:flex;gap:6px;flex-wrap:wrap}
+.feu{display:flex;gap:10px;align-items:flex-start;margin:10px 0 0;padding:10px 12px;border-radius:12px;font-size:.86rem;background:var(--surface-2);color:var(--ink)}
+.feu i{flex:none;width:12px;height:12px;border-radius:50%;margin-top:3px;background:var(--muted)}
+.feu.go{background:var(--gain-bg)} .feu.go i{background:var(--gain);box-shadow:0 0 0 3px color-mix(in srgb,var(--gain) 25%,transparent)}
+.feu.mid{background:var(--warn-bg)} .feu.mid i{background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 25%,transparent)}
+.feu.stop{background:var(--loss-bg)} .feu.stop i{background:var(--loss);box-shadow:0 0 0 3px color-mix(in srgb,var(--loss) 25%,transparent)}
+.sraise{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:0 0 8px}
+.sraise p{margin:0 0 6px} .sraise .row{justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:4px}
+.sraise .tf{font:600 .72rem var(--f-body);padding:2px 7px;border-radius:6px;background:var(--warn-bg);color:var(--warn)}
+.erows{display:grid;gap:6px;margin:10px 0}
+.erow{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) 70px;gap:10px;align-items:center;font-size:.86rem}
+.erow.few{opacity:.55}
+.ek{font-weight:600;min-width:0} .ek small{display:block;font-weight:500;color:var(--muted);font-size:.74rem}
+.ebar{position:relative;height:10px;border-radius:5px;background:var(--surface-2)}
+.ebar::after{content:"";position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--line)}
+.ebar i{position:absolute;top:0;bottom:0;border-radius:5px}
+.ebar i.p{left:50%;background:var(--gain)} .ebar i.n{right:50%;background:var(--loss)}
+.erow b{text-align:right}
+.swapl{margin:8px 0 0;font-size:.8rem;color:var(--muted)} .swapl.hi{color:var(--warn)}
+.checks{border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin:12px 0}
+.checks.all{border-color:var(--gain)}
+.checks h3{margin:0;font-size:.95rem}
+.checks ul{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:8px}
+.checks li{display:flex;gap:10px;align-items:flex-start}
+.checks li i{flex:none;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-style:normal;font-weight:700;font-size:.78rem;background:var(--surface-2);color:var(--muted)}
+.checks li.ok i{background:var(--gain-bg);color:var(--gain)} .checks li.bad i{background:var(--loss-bg);color:var(--loss)}
+.checks li span{display:grid;gap:1px;font-size:.88rem} .checks li small{color:var(--muted);font-size:.78rem}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:99px;overflow:hidden;background:var(--surface-2)}
 .seg button{border:0;background:transparent;font:600 .76rem var(--f-body);color:var(--muted);padding:6px 11px;cursor:pointer}
 .seg button[aria-pressed="true"]{background:var(--ink);color:var(--surface)}
@@ -355,7 +381,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.23.0 · licence MIT */
+/* Carnet de positions v1.24.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -1101,6 +1127,9 @@ function notifPanel() {
     <p class="hint">${robot}</p>
     ${subs ? `<ul class="hint" style="padding-left:18px">${subs}</ul>` : ''}
     <label class="check" style="margin-top:6px"><input type="checkbox" data-act="push-near" ${S.settings.pushNear ? 'checked' : ''}> Notifier aussi les actions proches de leur SMA (plus de notifications)</label>
+    <label class="check" style="margin-top:6px"><input type="checkbox" data-act="push-opt" data-k="pushStops" ${S.settings.pushStops !== false ? 'checked' : ''}> Stops à remonter sur une de vos SMA</label>
+    <label class="check" style="margin-top:6px"><input type="checkbox" data-act="push-opt" data-k="pushEarn" ${S.settings.pushEarn !== false ? 'checked' : ''}> Résultats d’une position le jour de bourse suivant</label>
+    <label class="check" style="margin-top:6px"><input type="checkbox" data-act="push-opt" data-k="pushWeekly" ${S.settings.pushWeekly !== false ? 'checked' : ''}> Bilan de la semaine, le vendredi soir</label>
     <p class="hint">Une alerte déjà vue dans l’app n’est jamais notifiée. Le jeton et les clés restent dans les secrets GitHub : ni dans le code, ni dans le Gist.</p>`;
 }
 function readImageFile(file) {
@@ -1870,6 +1899,13 @@ function demoBanner() {
 function alertsList() {
   const today = todayISO(), out = [];
   const open = S.lots.map(lotView).filter(v => !v.ls.closed);
+  // Résultats d'ici le prochain jour de bourse, et swap qui a mangé une bonne part du gain latent (une ligne par action).
+  for (const tk of [...new Set(open.map(v => v.lot.ticker))]) {
+    const e = nextEarn(tk), n = e ? Core.days(today, e[0]) : 99;
+    if (e && n <= (wdOf(today) === 5 ? 3 : 1)) out.push({ lvl: 'warn', txt: `<strong>${esc(tk)}</strong> : résultats ${n === 0 ? 'aujourd’hui' : n === 1 ? 'demain' : 'lundi'}${EARN_H[e[1]] ? ' ' + EARN_H[e[1]] : ''}. Gardez, allégez ou resserrez le stop : à vous de voir.`, lot: open.find(v => v.lot.ticker === tk).lot.id });
+    const vs = open.filter(v => v.lot.ticker === tk), sw = vs.reduce((a, v) => a + v.ls.funding, 0), un = vs.reduce((a, v) => a + v.unreal, 0);
+    if (un > 0.5 && sw / un * 100 >= swapWarnPct()) out.push({ lvl: 'warn', txt: `<strong>${esc(tk)}</strong> : le swap (${usd(sw)}) a déjà mangé ${fmtNum(sw / un * 100, 0)} % du gain latent.`, lot: vs[0].lot.id });
+  }
   for (const v of open) {
     const t = esc(v.lot.ticker), st = v.lot.stopCurrent, p = v.last ? v.last.price : null;
     if (v.sa.missing) out.push({ lvl: 'err', txt: `<strong>${t}</strong> : aucun stop, risque non borné.`, lot: v.lot.id });
@@ -1889,6 +1925,8 @@ function alertsList() {
 function alertsStrip() {
   const a = alertsList();
   const ra = S.watch.length ? radarAlerts().filter(x => !x.seen) : [];
+  const sr = S.watch.length ? stopRaises() : [];
+  if (sr.length) a.unshift({ lvl: 'warn', txt: `<strong>Stops</strong> : ${sr.length} stop(s) peuvent être remontés sur une de vos SMA · ${sr.slice(0, 4).map(x => esc(x.v.lot.ticker)).join(', ')}${sr.length > 4 ? '…' : ''}`, act: 'stop-raises', btn: 'Voir' });
   if (ra.length) a.unshift({ lvl: ra.some(x => x.lvl !== 'near') ? 'err' : 'warn', txt: `<strong>Radar SMA</strong> : ${ra.length} nouvelle(s) alerte(s) · ${ra.slice(0, 3).map(x => esc(x.w.ticker) + (x.lvl === 'up' ? ' ↑' : x.lvl === 'down' ? ' ↓' : ' ≈')).join(', ')}${ra.length > 3 ? '…' : ''}`, act: 'go-radar', btn: 'Voir' });
   if (!a.length) return S.lots.some(l => !Core.lotState(l).closed) ? '<div class="alerts"><div class="alert ok"><span>Aucune alerte : stops en place, cours à jour, marge correcte.</span></div></div>' : '';
   const row = x => `<div class="alert ${x.lvl}"><span>${x.txt}</span>${x.act ? `<button class="btn sm" data-act="${x.act}">${x.btn}</button>` : x.lot ? `<button class="btn sm" data-act="open-lot" data-lot="${x.lot}">Voir</button>` : ''}</div>`;
@@ -1942,6 +1980,140 @@ function disciplineCard(T) {
 }
 
 // ----- Tableau de bord -----
+// ----- Aides au trading : information seulement, rien n'est bloqué et le calculateur garde votre stop -----
+// Feu du marché : part de vos SMA de SPY, QQQ et DIA sous le cours (vert ≥ 70 %, rouge ≤ 30 %).
+function marketLight() {
+  let up = 0, n = 0; const per = [];
+  for (const [t, name] of IDX) {
+    let u = 0, k = 0;
+    for (const w of idxWatch(t)) { const s = idxSide(analyzeWatch(w)); if (!s) continue; k++; if (s === 'up') u++; }
+    if (k) per.push({ t, name, u, k });
+    up += u; n += k;
+  }
+  if (!n) return null;
+  const r = up / n, lvl = r >= 0.7 ? 'go' : r <= 0.3 ? 'stop' : 'mid';
+  return { up, n, per, lvl, label: { go: 'Feu vert', mid: 'Feu orange', stop: 'Feu rouge' }[lvl],
+    txt: { go: 'marché au-dessus de la plupart de vos SMA : contexte favorable aux achats long', mid: 'marché partagé : soyez sélectif', stop: 'marché sous la plupart de vos SMA : les achats long réussissent moins souvent' }[lvl] };
+}
+const feuLine = L => L ? `<div class="feu ${L.lvl}"><i aria-hidden="true"></i><span><strong>${L.label}</strong> · ${L.up}/${L.n} de vos SMA au-dessus (${L.per.map(p => `${p.t} ${p.u}/${p.k}`).join(', ')}) : ${L.txt}.</span></div>` : '';
+// Feu du marché à une date passée, avec l'historique de SPY, QQQ et DIA (bougie en cours comprise pour S et M).
+const lightMemo = new Map();
+function lightAt(d) {
+  if (lightMemo.has(d)) return lightMemo.get(d);
+  let up = 0, n = 0;
+  for (const [t] of IDX) {
+    const h = Radar.hist[t]; if (!h || !h.bars.length) continue;
+    const bars = h.bars.filter(b => b[0] <= d); if (!bars.length) continue;
+    for (const w of idxWatch(t)) {
+      const c = []; let k0 = null;   // clôtures par bougie (sans le cache de groupBars : une série par date)
+      for (const [dd, x] of bars) { const k = periodKey(w.tf, dd); if (k === k0) c[c.length - 1] = x; else { c.push(x); k0 = k; } }
+      if (c.length < w.period) continue;
+      const s = c.slice(-w.period).reduce((a, x) => a + x, 0) / w.period;
+      n++; if (c[c.length - 1] > s) up++;
+    }
+  }
+  const r = n ? (up / n >= 0.7 ? 'Feu vert' : up / n <= 0.3 ? 'Feu rouge' : 'Feu orange') : null;
+  lightMemo.set(d, r); return r;
+}
+
+// Stops à remonter : une de vos SMA de l'action est passée entre le stop actuel et le cours.
+const SKIP_KEY = 'carnet-positions:stop-skip';
+const stopSkip = () => { try { return JSON.parse(localStorage.getItem(SKIP_KEY)) || {}; } catch (e) { return {}; } };
+function stopRaises() {
+  const out = [], seen = new Set(), skip = stopSkip();
+  for (const v of S.lots.map(lotView)) {
+    if (v.ls.closed || seen.has(v.lot.ticker)) continue;
+    seen.add(v.lot.ticker);
+    const st = isNum(v.lot.stopCurrent) ? v.lot.stopCurrent : 0, px = v.last ? v.last.price : null, rem = S.lots.filter(l => l.ticker === v.lot.ticker).reduce((a, l) => a + Core.lotState(l).rem, 0);
+    const opts = [];
+    for (const w of S.watch) {
+      if (w.ticker !== v.lot.ticker || w.idx) continue;
+      const a = analyzeWatch(w); if (!a || a.short) continue;
+      if (a.sma > st * 1.005 && (px == null || a.sma < px) && !skip[`${v.lot.id}|${w.id}|${st}`]) opts.push({ w, sma: a.sma, prot: rem * (a.sma - st) });
+    }
+    if (opts.length) out.push({ v, st, px, opts: opts.sort((a, b) => b.sma - a.sma) });
+  }
+  return out;
+}
+function sheetStopRaises() {
+  const R = stopRaises();
+  openSheet({ title: 'Stops à remonter', noFocus: true,
+    body: R.length ? `<p class="lead">Une de vos SMA est passée au-dessus du stop actuel, sous le cours. Choisissez la SMA de votre méthode : le stop n'est changé qu'après validation.</p>
+      ${R.map(x => `<div class="sraise"><p><b>${esc(x.v.lot.ticker)}</b> · stop ${x.st > 0 ? usd(x.st) : 'aucun'}${x.px != null ? ` · cours ${usd(x.px)}` : ''}</p>
+        ${x.opts.map(o => `<div class="row"><span><span class="tf">${TF_SHORT[o.w.tf]} ${o.w.period}</span> ${usd(o.sma)} <small class="muted">+${usd(o.prot)} protégés</small></span><span class="row"><button class="btn sm primary" data-act="radar-stop" data-id="${o.w.id}">Mettre</button><button class="btn sm" data-act="stop-skip" data-k="${esc(`${x.v.lot.id}|${o.w.id}|${x.st}`)}">Ignorer</button></span></div>`).join('')}</div>`).join('')}
+      <p class="hint">« Ignorer » masque la suggestion tant que le stop ne change pas (sur cet appareil).</p>`
+      : '<p class="lead">Aucun stop à remonter pour l’instant.</p>' });
+}
+
+// Bilan par catégorie : espérance en R (gain net ÷ risque prévu) des positions clôturées.
+let edgeDim = 'motif';
+const EDGE_DIMS = [['motif', 'Motif'], ['sect', 'Secteur'], ['hold', 'Durée'], ['earn', 'Résultats'], ['mkt', 'Marché'], ['plan', 'Plan']];
+function edgeKey(dim, c) {
+  const l = c.lot;
+  if (dim === 'motif') return MOTIFS[l.motif] || 'Non renseigné';
+  if (dim === 'sect') return sectorOf(l.ticker) || 'Non classé';
+  if (dim === 'hold') { const d = Core.days(l.date, c.date); return d <= 5 ? '5 jours ou moins' : d <= 20 ? '6 à 20 jours' : 'Plus de 20 jours'; }
+  if (dim === 'earn') return !Earn.map[l.ticker] ? 'Calendrier inconnu' : Earn.map[l.ticker].some(([e]) => e >= l.date && e <= c.date) ? 'Résultats pendant la position' : 'Sans résultats';
+  if (dim === 'mkt') return lightAt(l.date) ? lightAt(l.date) + ' à l’achat' : 'Historique indices manquant';
+  return l.planOk === true ? 'Plan respecté' : l.planOk === false ? 'Plan non respecté' : 'Non renseigné';
+}
+function edgeCard() {
+  const all = Core.tradeStats(S, planR).closed.filter(c => c.R != null);
+  if (all.length < 3) return '';
+  if (edgeDim === 'mkt' && S.watch.length && !Radar.loaded) loadRadarCache().then(() => { if (tab === 'dash') render(); });
+  const g = {};
+  for (const c of all) { const k = edgeKey(edgeDim, c); (g[k] = g[k] || []).push(c); }
+  const rows = Object.entries(g).map(([k, cs]) => ({ k, n: cs.length, win: cs.filter(c => c.net > 0.0049).length / cs.length * 100, avg: cs.reduce((a, c) => a + c.R, 0) / cs.length, tot: cs.reduce((a, c) => a + c.R, 0) }))
+    .sort((a, b) => b.n - a.n || b.avg - a.avg);
+  const m = Math.max(...rows.map(r => Math.abs(r.avg)), 0.5);
+  const best = rows.filter(r => r.n >= 5).sort((a, b) => b.avg - a.avg)[0], worst = rows.filter(r => r.n >= 5).sort((a, b) => a.avg - b.avg)[0];
+  return `<section class="card edge">
+    <div class="sec-head"><h2>Ce qui marche pour vous <small>· ${all.length} trade(s)</small></h2></div>
+    <div class="filters">${EDGE_DIMS.map(([k, l]) => `<button class="btn sm" data-act="edge-dim" data-f="${k}" aria-pressed="${edgeDim === k}">${l}</button>`).join('')}</div>
+    <div class="erows">${rows.map(r => `<div class="erow${r.n < 5 ? ' few' : ''}"><span class="ek">${esc(r.k)} <small>${r.n} · ${fmtNum(r.win, 0)} % gagnants</small></span>
+      <span class="ebar"><i class="${r.avg >= 0 ? 'p' : 'n'}" style="width:${(Math.abs(r.avg) / m * 50).toFixed(1)}%"></i></span>
+      <b class="num ${cls(r.avg)}">${r.avg >= 0 ? '+' : ''}${fmtNum(r.avg, 2)} R</b></div>`).join('')}</div>
+    ${best && worst && best.k !== worst.k ? `<p class="hint"><strong>${esc(best.k)}</strong> : ${best.avg >= 0 ? '+' : ''}${fmtNum(best.avg, 2)} R par trade, contre ${worst.avg >= 0 ? '+' : ''}${fmtNum(worst.avg, 2)} R pour <strong>${esc(worst.k)}</strong>.</p>` : ''}
+    <p class="hint">R = gain net (frais et swap compris) ÷ risque prévu à l’achat. Une catégorie de moins de 5 trades est grisée : trop peu pour conclure.</p>
+  </section>`;
+}
+
+// Swap CFD : coût par semaine (4 nuits simples + 1 triple = 7 nuits) et part du gain latent déjà mangée.
+const swapWeek = (rem, px) => { const w = S.settings.swap || {}; return w.pct > 0 ? rem * px * w.pct / 100 / 360 * 7 : 0; };
+const swapWarnPct = () => isNum(S.settings.swapWarn) ? S.settings.swapWarn : 30;
+
+// Vérifications avant achat (calculateur) : ✓ favorable, ✕ défavorable, ? inconnu.
+function preTradeChecks(ticker, risk, expo) {
+  const t = String(ticker || '').trim().toUpperCase(); if (!t) return '';
+  const items = [], add = (ok, label, detail) => items.push({ ok, label, detail });
+  const L = marketLight();
+  add(L ? (L.lvl === 'go' ? true : L.lvl === 'stop' ? false : null) : null, 'Marché au vert', L ? `${L.label} · ${L.up}/${L.n} de vos SMA d’indices au-dessus` : 'historique de SPY, QQQ et DIA en attente');
+  const ws = S.watch.filter(w => w.ticker === t && !w.idx).map(w => ({ w, a: analyzeWatch(w) })).filter(x => x.a && !x.a.short);
+  if (!ws.length) { add(null, 'Au-dessus de ses SMA', 'action absente du radar ou historique en attente'); add(null, 'Tendance alignée J, S et M', '—'); }
+  else {
+    const up = ws.filter(x => x.a.p > x.a.smaNow).length;
+    add(up === ws.length, 'Au-dessus de ses SMA', `${up}/${ws.length} : ${ws.map(x => `${TF_SHORT[x.w.tf]} ${x.w.period} ${x.a.p > x.a.smaNow ? '↑' : '↓'}`).join(', ')}`);
+    const tfs = ['D', 'W', 'M'].filter(tf => ws.some(x => x.w.tf === tf)), okTf = tfs.filter(tf => ws.filter(x => x.w.tf === tf).every(x => x.a.p > x.a.smaNow));
+    add(tfs.length < 2 ? null : okTf.length === tfs.length, 'Tendance alignée J, S et M', tfs.length < 2 ? 'une seule unité suivie au radar' : tfs.map(tf => `${TF_SHORT[tf]} ${okTf.includes(tf) ? '✓' : '✕'}`).join(' · '));
+  }
+  const e = nextEarn(t), ed = e ? Core.days(todayISO(), e[0]) : null;
+  add(e && ed <= 5 ? false : Earn.day ? true : null, 'Pas de résultats dans les 5 jours', e ? `résultats le ${fmtDate(e[0])}${EARN_H[e[1]] ? ' ' + EARN_H[e[1]] : ''}` : Earn.day ? 'aucune date annoncée' : 'calendrier en attente (clé Finnhub)');
+  const s = sectorOf(t);
+  if (!s) { if (quoteKey() && sectMissing(t) && !sectBusy) refreshSectors(t); add(null, 'Secteur pas surchargé', quoteKey() ? 'secteur en cours de recherche' : 'secteur inconnu'); }
+  else {
+    const B = sectorBook(), Lm = sectSet(), g = B.groups.find(x => x.s === s);
+    const share = (B.tot + expo) > 0 ? ((g ? g.expo : 0) + expo) / (B.tot + expo) * 100 : 0, rp = B.eq > 0 ? ((g ? g.risk : 0) + risk) / B.eq * 100 : 0;
+    const n = g ? g.list.filter(k => k.t !== t).length : 0;
+    add(!((B.n >= 2 && share > Lm.expo) || rp > Lm.risk), 'Secteur pas surchargé', `${esc(s)} : ${n} autre(s) position(s) · après achat ${fmtNum(share, 0)} % de l’exposition, ${pct(rp)} de risque au stop`);
+  }
+  const others = [...new Set(S.lots.filter(l => !Core.lotState(l).closed && l.ticker !== t).map(l => l.ticker))];
+  const cs = others.map(o => ({ o, c: corr(t, o) })).filter(x => x.c != null).sort((a, b) => b.c - a.c), lim = sectSet().corr;
+  add(!others.length ? true : !cs.length ? null : cs[0].c < lim, 'Pas de doublon caché', !others.length ? 'aucune autre position' : !cs.length ? 'historique nécessaire (action au radar)' : cs[0].c >= lim ? `évolue comme ${cs.filter(x => x.c >= lim).slice(0, 3).map(x => `${esc(x.o)} (${fmtNum(x.c, 2)})`).join(', ')}` : `corrélation max. ${fmtNum(cs[0].c, 2)} avec ${esc(cs[0].o)}`);
+  const known = items.filter(x => x.ok != null), good = known.filter(x => x.ok).length;
+  return `<div class="checks ${known.length && good === known.length ? 'all' : ''}"><div class="sec-head"><h3>Vérifications avant achat</h3><b class="num">${good}/${known.length}</b></div>
+    <ul>${items.map(x => `<li class="${x.ok === true ? 'ok' : x.ok === false ? 'bad' : 'unk'}"><i aria-hidden="true">${x.ok === true ? '✓' : x.ok === false ? '✕' : '?'}</i><span><strong>${x.label}</strong><small>${x.detail}</small></span></li>`).join('')}</ul>
+    <p class="hint">Information seulement : la quantité reste calculée sur votre stop.</p></div>`;
+}
 // ----- Secteurs et diversification : information seulement, le calculateur n'en tient jamais compte -----
 // Secteur Finnhub (finnhubIndustry) gardé sur l'appareil ; une correction à la main (S.settings.sectorFix) est synchronisée.
 const SECT_KEY = 'carnet-positions:sectors';
@@ -2102,13 +2274,14 @@ function sheetSectorFix(t) {
 }
 function sheetSectSet() {
   const L = sectSet();
-  openSheet({ title: 'Diversification', ok: 'Enregistrer',
+  openSheet({ title: 'Seuils d’alerte', ok: 'Enregistrer',
     body: `<p class="lead">Seuils d’alerte, pour information : ils ne bloquent rien et ne changent pas le calculateur.</p>
-      <div class="fields">${dec('expo', 'Exposition max. par secteur (%)', L.expo)}${dec('risk', 'Risque au stop max. par secteur (% du capital)', L.risk)}${dec('corr', 'Corrélation jugée forte (0 à 1)', L.corr)}</div>`,
+      <div class="fields">${dec('expo', 'Exposition max. par secteur (%)', L.expo)}${dec('risk', 'Risque au stop max. par secteur (% du capital)', L.risk)}${dec('corr', 'Corrélation jugée forte (0 à 1)', L.corr)}${dec('swapw', 'Alerte swap (% du gain latent)', swapWarnPct())}</div>`,
     onSubmit: form => {
       const e = num(F(form, 'expo')), r = num(F(form, 'risk')), c = num(F(form, 'corr'));
       need(e > 0 && e <= 100, 'Exposition entre 0 et 100 %.'); need(r > 0 && r <= 50, 'Risque entre 0 et 50 %.'); need(c > 0 && c < 1, 'Corrélation entre 0 et 1.');
-      S.settings.sectLim = { expo: e, risk: r, corr: c };
+      const sw = num(F(form, 'swapw')); need(sw > 0 && sw <= 100, 'Alerte swap entre 0 et 100 %.');
+      S.settings.sectLim = { expo: e, risk: r, corr: c }; S.settings.swapWarn = sw;
       save('Seuils de diversification enregistrés');
     } });
 }
@@ -2170,6 +2343,7 @@ function marketCard() {
   const live = IDX.some(([t]) => Live.prices[t]) && marketOpen(Date.now());
   return `<section class="card mkt"><div class="sec-head"><h2>Marché US <small>· ${live ? 'en direct' : 'dernière séance'}</small></h2><button class="btn sm" data-act="idx-edit">SMA</button></div>
     <div class="itiles">${tiles}</div>
+    ${feuLine(marketLight())}
     <p class="hint" style="margin:6px 0 0">Via les ETF SPY, QQQ et DIA. Vert : cours au-dessus de la SMA, rouge : en dessous. Touchez un indice pour le détail.</p></section>`;
 }
 function sheetIdxDetail(t) {
@@ -2248,6 +2422,7 @@ function viewDash() {
   </section>
   ${closedCard()}
   ${disciplineCard(T)}
+  ${edgeCard()}
   <section class="card">
     <details class="more"><summary>Détail du calcul de la valeur nette</summary>
     <dl class="kv">
@@ -2510,7 +2685,7 @@ function updateCalc() {
     </dl>
     ${r.marginChecked ? '' : '<p class="hint">Marge disponible non saisie : la contrainte de marge n’est pas vérifiée.</p>'}
     ${marginWarn(r.margin)}
-    ${sectorCalcHint(calcDraft.ticker, r.totalRisk, r.exposure)}
+    ${preTradeChecks(calcDraft.ticker, r.totalRisk, r.exposure)}
     <div class="row"><button class="btn primary" data-act="record-buy">Enregistrer l’achat</button></div>
     ${fine()}</div>`;
 }
@@ -2586,6 +2761,7 @@ function viewPos() {
         <div><span>Dist. stop</span><b class="${dist != null && dist < 1 ? 'neg' : ''}">${dist == null ? '—' : pct(dist)}</b></div>
         <div><span>Cours du</span><b class="${stale ? 'wrn' : last && last.live ? 'pos' : ''}">${last ? (last.live ? 'direct ' + hhmm(last.at) : fmtDate(last.date).replace(/ \d{4}$/, '')) : '—'}</b></div>
       </div>
+      ${swapT > 0.0049 ? (w => `<p class="swapl ${un > 0.5 && swapT / un * 100 >= swapWarnPct() ? 'hi' : ''}">Swap payé <b class="num">${usd(swapT)}</b>${w > 0 ? ` · ≈ <b class="num">${usd(w)}</b> par semaine` : ''}${un > 0.5 ? ` · ${fmtNum(swapT / un * 100, 0)} % du gain latent` : un < -0.5 ? ' · position en perte : le swap s’y ajoute' : ''}</p>`)(swapWeek(q, px == null ? avg : px)) : ''}
       ${vs.map(v => lotDetails(v, false, vs.length === 1)).join('')}
     </article>`;
     return { t, html, dist: dist == null ? -1e9 : dist, un, expo };
@@ -2765,7 +2941,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.23.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.24.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
@@ -3206,6 +3382,9 @@ document.addEventListener('click', e => {
     case 'sect-detail': sheetSector(b.dataset.s); break;
     case 'sect-fix': sheetSectorFix(b.dataset.t); break;
     case 'sect-set': sheetSectSet(); break;
+    case 'stop-raises': sheetStopRaises(); break;
+    case 'stop-skip': { const m = stopSkip(); m[b.dataset.k] = todayISO(); try { localStorage.setItem(SKIP_KEY, JSON.stringify(m)); } catch (e) {} sheetStopRaises(); render(); break; }
+    case 'edge-dim': edgeDim = b.dataset.f; render(); break;
     case 'radar-settings': sheetRadarSettings(); break;
     case 'acct': sheetAcct(); break;
     case 'preset-icm': { const fm = b.form; fm.elements.perShare.value = '0.02'; fm.elements.minComm.value = '0.02'; fm.elements.swapPct.value = '5.93'; fm.elements.swapTriple.value = '5'; toast('Valeurs IC Markets remplies : touchez « Enregistrer les réglages »'); break; }
@@ -3336,6 +3515,7 @@ document.addEventListener('click', e => {
     case 'push-on': b.disabled = true; pushOn().catch(e => { toast(e.message); b.disabled = false; }); break;
     case 'push-off': pushOff(b.dataset.id); break;
     case 'push-near': S.settings.pushNear = b.checked; save(b.checked ? 'Notifications « proche » activées' : 'Notifications « proche » désactivées'); break;
+    case 'push-opt': S.settings[b.dataset.k] = b.checked; save(b.checked ? 'Notification activée' : 'Notification désactivée'); break;
     case 'backup-now': b.disabled = true; toast('Sauvegarde en cours…');
       backupNow(true).then(ok => toast(ok ? 'Sauvegarde du ' + fmtDate(todayISO()) + ' enregistrée' : 'Rien à sauvegarder'), e => { toast('Sauvegarde impossible : ' + (e instanceof TypeError ? 'pas de réseau' : e.message)); b.disabled = false; }); break;
     case 'backup-list': b.disabled = true;
