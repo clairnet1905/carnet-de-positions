@@ -124,12 +124,11 @@ for (const s of daily) {
 }
 for (const s of resync.slice(0, RESYNC_PER_RUN)) { try { put(s, await twelve(s, need[s]), true); } catch (e) { errors[s] = e.message; break; } }
 
-// ----- Labo SMA : tickers demandés dans l'app (S.settings.labQueue), jamais ceux déjà suivis au radar -----
+// ----- Labo SMA : tickers demandés dans l'app (S.settings.labQueue), radar compris ; le robot n'écrit jamais dans le radar -----
 // 3 requêtes Twelve Data par action (J 5000 séances, S et M depuis le début de l'actif), refaites tous les 30 jours.
-const inRadar = new Set(S.watch.map(w => String(w.ticker).toUpperCase()));
 const labQ = [...new Set((S.settings.labQueue || []).map(t => String(t).toUpperCase()))];
 const labDue = t => { const x = L.res[t]; return !x || x.adj !== ADJ || days(new Date(x.at).toISOString().slice(0, 10), ls) > (x.err ? 7 : LAB_REDO_DAYS); };
-const labTodo = labQ.filter(t => !inRadar.has(t) && labDue(t)).sort((a, b) => (L.res[a] ? 1 : 0) - (L.res[b] ? 1 : 0));
+const labTodo = labQ.filter(labDue).sort((a, b) => (L.res[a] ? 1 : 0) - (L.res[b] ? 1 : 0));
 let labDone = 0;
 for (const t of labTodo.slice(0, LAB_PER_RUN)) {
   if (tdCalls + 3 > TD_DAY_LIMIT || Date.now() - T0 > 65 * 60000) break;   // quota du jour et durée maximale du robot
@@ -145,7 +144,7 @@ for (const t of labTodo.slice(0, LAB_PER_RUN)) {
   }
 }
 for (const t in L.res) if (!labQ.includes(t)) delete L.res[t];   // retirés de la liste dans l'app
-const labLeft = labQ.filter(t => !inRadar.has(t) && labDue(t)).length;
+const labLeft = labQ.filter(labDue).length;
 L = { v: 1, at: Date.now(), ls, res: L.res };
 
 // ----- Notifications -----
