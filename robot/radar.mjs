@@ -197,7 +197,8 @@ if (S.settings.pushStops !== false) {
   const lines = [];
   for (const t of openT) {
     const l = openLots.find(x => x.ticker === t), st = l.stopCurrent > 0 ? l.stopCurrent : 0;
-    for (const w of S.watch.filter(x => x.ticker === t && !x.idx)) {
+    const mine = [...new Set(openLots.filter(x => x.ticker === t).flatMap(x => x.smas || []))];   // SMA d'entrée choisies dans l'app (vide : toutes)
+    for (const w of S.watch.filter(x => x.ticker === t && !x.idx && (!mine.length || mine.includes(x.tf + '|' + x.period)))) {
       const h = hist[symOf(w)]; if (!h) continue;
       const a = analyze(w, h.bars, ls, S.settings.nearPct); if (!a || a.short) continue;
       const key = `stop|${l.id}|${w.id}|${st}`;
