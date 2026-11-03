@@ -267,6 +267,9 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 .lkpi div{background:var(--surface-2);border-radius:10px;padding:7px 9px} .lkpi small{display:block;font-size:.7rem;color:var(--muted)} .lkpi b{font-size:.92rem}
 .lcard .hint,.lcard .row{margin-left:12px;margin-right:12px}
 .lchk{display:grid;gap:6px;margin:8px 12px 0;font-size:.82rem}
+.ladd{margin:12px 12px 0;padding:12px;border-radius:14px;background:var(--surface-2)} .ladd h3{margin:0 0 8px;font-size:.95rem} .ladd .btn{width:100%;margin-top:8px}
+.laddl{display:grid;gap:6px} .laddl label{display:grid;grid-template-columns:auto auto 1fr;align-items:center;gap:4px 10px;padding:8px 10px;border-radius:10px;background:var(--surface);cursor:pointer}
+.laddl label.off{opacity:.55;cursor:default} .laddl input{width:18px;height:18px;margin:0} .laddl .lv{justify-self:start} .laddl small{grid-column:2/-1;color:var(--muted);font-size:.78rem}
 .lchk span{padding:7px 10px;border-radius:10px;background:var(--surface-2)} .lchk span.ok{background:var(--gain-bg)} .lchk span.bad{background:var(--warn-bg)} .lchk small{color:var(--muted)}
 .feu{display:flex;gap:10px;align-items:flex-start;margin:10px 0 0;padding:10px 12px;border-radius:12px;font-size:.86rem;background:var(--surface-2);color:var(--ink)}
 .feu i{flex:none;width:12px;height:12px;border-radius:50%;margin-top:3px;background:var(--muted)}
@@ -412,7 +415,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.25.1 · licence MIT */
+/* Carnet de positions v1.26.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -2026,7 +2029,7 @@ function setLab(L, ver) {
   Lab.ver = ver; Lab.res = (L && L.res) || {}; Lab.at = L && L.at;
   try { const t = JSON.stringify(Lab); if (t.length < 2.5e6) localStorage.setItem(LAB_KEY, t); } catch (e) {}
 }
-let labFee = (() => { try { return localStorage.getItem(LAB_FEE_KEY) || 'ic'; } catch (e) { return 'ic'; } })(), labSel = {}, labOpen = new Set();
+let labFee = (() => { try { return localStorage.getItem(LAB_FEE_KEY) || 'ic'; } catch (e) { return 'ic'; } })(), labSel = {}, labOpen = new Set(), labPick = {}, labChk = {};
 const labQueue = () => [...new Set((S.settings.labQueue || []).map(t => String(t).toUpperCase()))];
 const labRadarT = () => new Set(S.watch.map(w => String(w.ticker).toUpperCase()));
 // Une case : [cagr, dd, pf, trades, %gagnants, temps investi, trade moyen %, ouvert, cagr récent, dd récent, cagr 70 %, dd 70 %].
@@ -2046,6 +2049,24 @@ function labBest(rows, tf, ins) {
   const idx = rows.map((x, i) => [x, i]).filter(([x]) => x && (x[3] > 0 || x[7]) && sc(x) != null);   // au moins un trade
   const pool = idx.filter(([x]) => x[3] >= LAB_MIN[tf]).length ? idx.filter(([x]) => x[3] >= LAB_MIN[tf]) : idx;
   return pool.length ? pool.reduce((a, b) => sc(b[0]) > sc(a[0]) ? b : a)[1] : -1;
+}
+// Choix par unité pour l'ajout groupé : la case touchée dans la ligne, sinon la meilleure. Cochée d'office si le verdict est bon
+// et que l'action n'a pas déjà une SMA dans cette unité au radar (vos SMA existantes ne sont jamais changées).
+function labAddPlan(t, r, U, best) {
+  return U.map(tf => {
+    const i = labPick[t] && labPick[t][tf] != null ? labPick[t][tf] : best[tf], x = i >= 0 ? r[tf][labFee].sma[i] : null;
+    const v = labVerdict(x, tf), mine = S.watch.filter(w => w.ticker === t && w.tf === tf && !w.idx), dup = x && mine.some(w => w.period === LAB_P[i]);
+    const can = !!x && !dup, def = can && !mine.length && v[1] !== 'v3', c = labChk[t] && labChk[t][tf] != null ? labChk[t][tf] && can : def;
+    return { tf, i, x, v, mine, dup, can, on: c };
+  });
+}
+function labAddBox(t, plan) {
+  const on = plan.filter(p => p.on);
+  return `<div class="ladd"><h3>Ajouter au radar</h3><div class="laddl">${plan.map(p => `<label class="${p.can ? '' : 'off'}"><input type="checkbox" data-act="lab-chk" data-t="${esc(t)}" data-tf="${p.tf}" ${p.on ? 'checked' : ''} ${p.can ? '' : 'disabled'}>
+      <b>${TF_SHORT[p.tf]} ${p.i >= 0 ? LAB_P[p.i] : '—'}</b><span class="lv ${p.v[1]}">${p.v[0]}</span>
+      <small>${p.dup ? 'déjà au radar' : p.mine.length ? 'vous avez déjà ' + p.mine.map(w => TF_SHORT[w.tf] + ' ' + w.period).join(', ') + ' : gardée, celle-ci s’ajouterait à côté' : p.x ? `CAGR ${fmtNum(p.x[0], 1)} % · DD ${fmtNum(p.x[1], 0)} %` : ''}</small></label>`).join('')}</div>
+    <p class="hint">Touchez une case de la grille pour choisir une autre SMA dans sa ligne.</p>
+    <button class="btn primary" data-act="lab-add3" data-t="${esc(t)}" ${on.length ? '' : 'disabled'}>${on.length ? `Ajouter ${on.map(p => TF_SHORT[p.tf] + ' ' + LAB_P[p.i]).join(' · ')} au radar` : 'Rien de coché'}</button></div>`;
 }
 function labCard(t) {
   const r = Lab.res[t];
@@ -2080,7 +2101,7 @@ function labCard(t) {
           ${bx ? `<span><b>Choisie sur les 70 % anciens</b> : ${TF_SHORT[tf]} ${LAB_P[bi]} → sur la période récente CAGR ${x && bx[8] != null ? fmtNum(bx[8], 1) + ' %' : '—'}, DD ${bx[9] == null ? '—' : fmtNum(bx[9], 0) + ' %'}</span>` : ''}</div>
         <div class="row" style="margin-top:10px">${has ? `<span class="pill win">${TF_SHORT[tf]} ${LAB_P[i]} déjà au radar</span>` : `<button class="btn sm primary" data-act="lab-add" data-t="${esc(t)}" data-tf="${tf}" data-i="${i}">Ajouter ${TF_SHORT[tf]} ${LAB_P[i]} au radar</button>`}</div>`;
     }
-    body = `${grid}<p class="hint lleg"><i class="l4"></i>CAGR ÷ DD ≥ 0,5 <i class="l3"></i>≥ 0,35 <i class="l2"></i>≥ 0,2 <i class="l1"></i>faible <i class="l0"></i>perte · ★ meilleure de la ligne · <b class="lmine">○</b> votre SMA actuelle au radar · hachuré : trop peu de trades</p>${det}`;
+    body = `${grid}${labAddBox(t, labAddPlan(t, r, U, best))}<p class="hint lleg"><i class="l4"></i>CAGR ÷ DD ≥ 0,5 <i class="l3"></i>≥ 0,35 <i class="l2"></i>≥ 0,2 <i class="l1"></i>faible <i class="l0"></i>perte · ★ meilleure de la ligne · <b class="lmine">○</b> votre SMA actuelle au radar · hachuré : trop peu de trades</p>${det}`;
   }
   return `<article class="lcard${open ? ' open' : ''}"><button type="button" class="lhead" data-act="lab-open" data-t="${esc(t)}"><span class="tk">${esc(t)}</span>${inR ? `<span class="pill open">Au radar : ${mineL.map(w => TF_SHORT[w.tf] + ' ' + w.period).join(' · ')}</span>` : ''}<span class="lbs">${summary}</span></button>${body}</article>`;
 }
@@ -3077,7 +3098,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.25.1 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.26.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
@@ -3524,7 +3545,17 @@ document.addEventListener('click', e => {
     case 'lab-clear': confirmSheet('Vider le Labo', 'Retirer toutes les actions de la liste ? Leurs résultats disparaîtront au prochain passage du robot.', 'Tout retirer', () => { S.settings.labQueue = []; save('Labo vidé'); }); break;
     case 'lab-fee': labFee = b.dataset.f; try { localStorage.setItem(LAB_FEE_KEY, labFee); } catch (e) {} render(); break;
     case 'lab-open': { const t = b.dataset.t; if (labOpen.has(t)) labOpen.delete(t); else labOpen.add(t); render(); break; }
-    case 'lab-cell': labSel[b.dataset.t] = [b.dataset.tf, +b.dataset.i]; render(); break;
+    case 'lab-cell': labSel[b.dataset.t] = [b.dataset.tf, +b.dataset.i]; (labPick[b.dataset.t] = labPick[b.dataset.t] || {})[b.dataset.tf] = +b.dataset.i; render(); break;
+    case 'lab-chk': (labChk[b.dataset.t] = labChk[b.dataset.t] || {})[b.dataset.tf] = b.checked; render(); break;
+    case 'lab-add3': {
+      const t = b.dataset.t, r = Lab.res[t]; if (!r) break;
+      const U = ['D', 'W', 'M'].filter(tf => r[tf]), best = Object.fromEntries(U.map(tf => [tf, labBest(r[tf][labFee].sma, tf)]));
+      const add = labAddPlan(t, r, U, best).filter(p => p.on && !S.watch.some(w => w.ticker === t && w.tf === p.tf && w.period === LAB_P[p.i]));
+      if (!add.length) break;
+      add.forEach(p => S.watch.push({ id: uid(), ticker: t, period: LAB_P[p.i], tf: p.tf, sym: '', note: 'Labo SMA' }));
+      delete labChk[t];
+      save(`${t} : ${add.map(p => TF_SHORT[p.tf] + ' ' + LAB_P[p.i]).join(' · ')} ajoutée(s) au radar`); refreshRadar(); break;
+    }
     case 'lab-add': {
       const t = b.dataset.t, tf = b.dataset.tf, n = LAB_P[+b.dataset.i];
       if (S.watch.some(w => w.ticker === t && w.tf === tf && w.period === n)) break;
