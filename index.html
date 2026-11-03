@@ -289,6 +289,8 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 .ebar i{position:absolute;top:0;bottom:0;border-radius:5px}
 .ebar i.p{left:50%;background:var(--gain)} .ebar i.n{right:50%;background:var(--loss)}
 .erow b{text-align:right}
+.smal{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:8px 0 0;font-size:.82rem;color:var(--muted)} .smal b{color:var(--ink)} .smal .wrn{color:var(--warn);font-weight:600}
+.smach{display:flex;flex-wrap:wrap;gap:6px} .smach .chip{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:99px;background:var(--surface-2);font-size:.86rem;cursor:pointer} .smach .chip:has(input:checked){background:var(--gain-bg);color:var(--gain);font-weight:600} .smach input{margin:0}
 .swapl{margin:8px 0 0;font-size:.8rem;color:var(--muted)} .swapl.hi{color:var(--warn)}
 .checks{border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin:12px 0}
 .checks.all{border-color:var(--gain)}
@@ -416,7 +418,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.27.0 · licence MIT */
+/* Carnet de positions v1.28.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -1250,6 +1252,16 @@ function perfPrices() {
   }
   return { prices: out, carry };
 }
+// Libellé d'une case : la période elle-même (lundi → vendredi, mois, année civile), ou « depuis le … » si le carnet commence pendant la période.
+const fmtWd = d => new Date(d + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
+function perfSub(k, p) {
+  if (k === 'itd') return 'depuis le ' + fmtDate(p.from).replace(/ \d{4}$/, '');
+  if (k === 'day') return fmtWd(p.to) + ' vs ' + fmtWd(p.from);
+  if (p.from >= p.start) return 'depuis le ' + fmtDate(p.from).replace(/ \d{4}$/, '');   // début du carnet dans la période
+  if (k === 'week') { const fri = addDays(p.start, 4); return `du ${fmtWd(p.start).replace(/ \S+$/, '')} au ${fmtWd(fri)}`; }
+  if (k === 'month') return new Date(p.start + 'T12:00:00').toLocaleDateString('fr-FR', { month: 'long' }) + ', depuis le 1er';
+  return p.start.slice(0, 4) + ', depuis le 1er janv.';
+}
 function perf() {
   const today = todayISO(), pp = perfPrices();
   const obs = Core.observations(Object.assign({}, S, { prices: pp.prices }), today);
@@ -1258,13 +1270,17 @@ function perf() {
   const estD = new Set(obs.filter(o => o.source === 'app' && openOn(o.date).some(t => pp.carry.has(o.date + '|' + t))).map(o => o.date));
   const t = Core.twr(obs, S.flows);
   const pts = t.points.map(p => estD.has(p.date) ? Object.assign({}, p, { est: true }) : p);
-  const y = today.slice(0, 4), m = today.slice(0, 7), lastD = pts.length ? pts[pts.length - 1].date : today;
+  // Jour / semaine / mois / année : séances seulement (samedi et dimanche n'ont pas de cotation). Référence : la dernière clôture
+  // avant le début de la période (vendredi pour la semaine, dernier jour de bourse du mois ou de l'année d'avant).
+  const tp = pts.filter(p => wdOf(p.date) >= 1 && wdOf(p.date) <= 5);
+  const y = today.slice(0, 4), m = today.slice(0, 7), lastD = tp.length ? tp[tp.length - 1].date : today;
+  const per = (from, k) => { const r = Core.periodReturn(tp, from, today); return r && Object.assign(r, { k, start: from }); };
   return {
     obs, pts, broken: t.broken, brokenAt: t.brokenAt,
-    day: Core.periodReturn(pts, lastD, today),
-    week: Core.periodReturn(pts, weekKey(today), today),
-    month: Core.periodReturn(pts, m + '-01', today),
-    year: Core.periodReturn(pts, y + '-01-01', today),
+    day: per(lastD, 'day'),
+    week: per(weekKey(lastD), 'week'),
+    month: per(lastD.slice(0, 7) + '-01', 'month'),
+    year: per(lastD.slice(0, 4) + '-01-01', 'year'),
     itd: pts.length > 1 ? { r: (pts[pts.length - 1].index - 1) * 100, from: pts[0].date, to: pts[pts.length - 1].date, est: pts.some(p => p.est) } : null,
     dd: Core.maxDrawdown(pts), freq: Core.frequency(pts), estCount: pts.filter(p => p.est).length
   };
@@ -2186,15 +2202,29 @@ function lightAt(d) {
 // Stops à remonter : une de vos SMA de l'action est passée entre le stop actuel et le cours.
 const SKIP_KEY = 'carnet-positions:stop-skip';
 const stopSkip = () => { try { return JSON.parse(localStorage.getItem(SKIP_KEY)) || {}; } catch (e) { return {}; } };
+// SMA d'entrée d'une position (lot.smas : ['D|200', 'W|13'…]), choisies à l'achat ou plus tard. Vide : toutes les SMA de l'action.
+const smaKey = w => w.tf + '|' + w.period, smaLbl = k => { const [tf, p] = k.split('|'); return TF_SHORT[tf] + ' ' + p; };
+const posSmas = t => [...new Set(S.lots.filter(l => l.ticker === t && !Core.lotState(l).closed).flatMap(l => l.smas || []))];
+function smaChoices(t, on) {
+  const ks = [...new Set(S.watch.filter(w => w.ticker === t && !w.idx).map(smaKey).concat(on))];
+  return ks.length ? `<div class="smach">${ks.map(k => `<label class="chip"><input type="checkbox" name="sma" value="${esc(k)}" ${on.includes(k) ? 'checked' : ''}> ${smaLbl(k)}</label>`).join('')}</div>`
+    : `<p class="hint">Aucune SMA de ${esc(t || 'cette action')} dans votre radar.</p>`;
+}
+const smaPicked = form => [...form.querySelectorAll('input[name=sma]:checked')].map(i => i.value);
+function sheetPosSma(t) {
+  openSheet({ title: 'SMA de la position ' + t, ok: 'Enregistrer',
+    body: `<p class="lead">Les SMA grâce auxquelles vous êtes entré. Seuls leurs stops vous seront proposés (app et notifications).</p>${smaChoices(t, posSmas(t))}<p class="hint">Rien de coché : toutes les SMA de l'action sont proposées, comme avant.</p>`,
+    onSubmit: form => { const k = smaPicked(form); for (const l of S.lots.filter(l => l.ticker === t && !Core.lotState(l).closed)) l.smas = k; closeSheet(); save(k.length ? `${t} : ${k.map(smaLbl).join(' · ')}` : `${t} : toutes les SMA`); } });
+}
 function stopRaises() {
   const out = [], seen = new Set(), skip = stopSkip();
   for (const v of S.lots.map(lotView)) {
     if (v.ls.closed || seen.has(v.lot.ticker)) continue;
     seen.add(v.lot.ticker);
     const st = isNum(v.lot.stopCurrent) ? v.lot.stopCurrent : 0, px = v.last ? v.last.price : null, rem = S.lots.filter(l => l.ticker === v.lot.ticker).reduce((a, l) => a + Core.lotState(l).rem, 0);
-    const opts = [];
+    const opts = [], mine = posSmas(v.lot.ticker);
     for (const w of S.watch) {
-      if (w.ticker !== v.lot.ticker || w.idx) continue;
+      if (w.ticker !== v.lot.ticker || w.idx || (mine.length && !mine.includes(smaKey(w)))) continue;
       const a = analyzeWatch(w); if (!a || a.short) continue;
       if (a.sma > st * 1.005 && (px == null || a.sma < px) && !skip[`${v.lot.id}|${w.id}|${st}`]) opts.push({ w, sma: a.sma, prot: rem * (a.sma - st) });
     }
@@ -2552,7 +2582,7 @@ function viewDash() {
   // Courbe de la période choisie, repartant de 0 % au début de la période.
   const sel = P[perfRange] || P.itd, rangePts = !sel ? P.pts : P.pts.filter(p => p.date >= sel.from && p.date <= sel.to).map((p, i, a) => Object.assign({}, p, { index: p.index / a[0].index }));
   const DD = Core.maxDrawdown(rangePts);
-  const perfTile = (k, l, sub, p) => `<button type="button" class="ptile" data-act="perf-range" data-f="${k}" aria-pressed="${perfRange === k}"><span>${l}</span><b class="${p ? cls(p.r) : ''}">${p ? pct(p.r, true) : '—'}</b><small>${p ? (k === 'day' ? fmtDate(p.to).replace(/ \d{4}$/, '') + ' vs ' + fmtDate(p.from).replace(/ \d{4}$/, '') : 'depuis le ' + fmtDate(p.from).replace(/ \d{4}$/, '')) + (p.est ? ' · estimé' : '') : sub}</small></button>`;
+  const perfTile = (k, l, sub, p) => `<button type="button" class="ptile" data-act="perf-range" data-f="${k}" aria-pressed="${perfRange === k}"><span>${l}</span><b class="${p ? cls(p.r) : ''}">${p ? pct(p.r, true) : '—'}</b><small>${p ? perfSub(k, p) + (p.est ? ' · estimé' : '') : sub}</small></button>`;
   const method = P.estCount ? `Rendement pondéré dans le temps, ${P.estCount} sous-période(s) estimée(s) par Modified Dietz faute de valorisation à la date d’un flux.` : 'Rendement pondéré dans le temps (valorisations disponibles autour de chaque flux).';
   return `${demoBanner()}
   ${alertsStrip()}
@@ -2929,6 +2959,7 @@ function viewPos() {
         <div><span>Cours du</span><b class="${stale ? 'wrn' : last && last.live ? 'pos' : ''}">${last ? (last.live ? 'direct ' + hhmm(last.at) : fmtDate(last.date).replace(/ \d{4}$/, '')) : '—'}</b></div>
       </div>
       ${swapT > 0.0049 ? (w => `<p class="swapl ${un > 0.5 && swapT / un * 100 >= swapWarnPct() ? 'hi' : ''}">Swap payé <b class="num">${usd(swapT)}</b>${w > 0 ? ` · ≈ <b class="num">${usd(w)}</b> par semaine` : ''}${un > 0.5 ? ` · ${fmtNum(swapT / un * 100, 0)} % du gain latent` : un < -0.5 ? ' · position en perte : le swap s’y ajoute' : ''}</p>`)(swapWeek(q, px == null ? avg : px)) : ''}
+      ${(k => S.watch.some(w => w.ticker === t && !w.idx) || k.length ? `<p class="smal">SMA de la position : ${k.length ? `<b>${k.map(smaLbl).join(' · ')}</b>` : '<span class="wrn">à choisir</span>'} <button class="btn sm" data-act="pos-sma" data-t="${esc(t)}">${k.length ? 'Modifier' : 'Choisir les SMA'}</button></p>` : '')(posSmas(t))}
       ${vs.map(v => lotDetails(v, false, vs.length === 1)).join('')}
     </article>`;
     return { t, html, dist: dist == null ? -1e9 : dist, un, expo };
@@ -3108,7 +3139,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.27.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.28.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
@@ -3185,12 +3216,15 @@ function sheetBuy() {
       ${dec('entryFee', 'Frais réels d’entrée ($)', Core.roundTo(r.feeIn, 4))}
       ${dec('stop', 'Stop initial ($)', d.stop)}
       <div class="fld"><label for="f-motif">Motif</label><select id="f-motif" name="motif">${Object.entries(MOTIFS).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></div>
+      <div class="fld wide"><label>Entrée grâce à quelle(s) SMA ?</label><div id="buySma" data-t="${esc((d.ticker || '').toUpperCase())}">${smaChoices((d.ticker || '').toUpperCase(), [])}</div><p class="hint">Seuls les stops de ces SMA vous seront proposés.</p></div>
       <div class="fld wide"><label for="f-note">Note</label><textarea id="f-note" name="note" placeholder="facultatif"></textarea></div>
       <div class="fld wide"><label class="check"><input type="checkbox" name="auto" ${manualSet().has((d.ticker || '').toUpperCase()) ? '' : 'checked'}> Action US : cours automatiques Finnhub</label><p class="hint">Décochez pour une action hors USA : vous saisirez son cours à la main.</p></div>
       <div class="fld wide"><label for="f-img">Capture du graphique</label><input type="file" id="f-img" name="img" accept="image/*"><p class="hint">Facultatif. Compressée avant sauvegarde.</p></div>
     </div><div id="buyCheck" class="banner info"></div>`,
     onInput: form => {
       const q = num(F(form, 'qty')), p = num(F(form, 'price')), st = num(F(form, 'stop')), fe = numOr(F(form, 'entryFee'), 0), lv = num(F(form, 'leverage'));
+      const bt = F(form, 'ticker').trim().toUpperCase(), bs = $('#buySma');
+      if (bs && bs.dataset.t !== bt) { bs.dataset.t = bt; bs.innerHTML = smaChoices(bt, []); }
       const risk = riskOf(q, p, st, fe, f), box = $('#buyCheck');
       if (risk == null || !(st < p) || !(lv >= 1)) { box.className = 'banner err'; box.textContent = 'Vérifiez prix, quantité, stop (inférieur au prix) et levier.'; return; }
       const rp = risk / ref.value * 100, over = risk > r.budget + 0.005, expo = q * p;
@@ -3214,7 +3248,7 @@ function sheetBuy() {
       const risk = q * (p - st) + fe + estExitFee;
       S.lots.push({ id, ticker: t, date, price: p, qty: q, leverage: lv, entryFee: fe, estExitFee, stopInitial: st, stopCurrent: st,
         refCapital: ref.value, refDate: ref.date, riskInitial: risk, riskInitialPct: risk / ref.value * 100, riskPlan: ref.value * S.settings.riskPct / 100,
-        motif: F(form, 'motif'), note: F(form, 'note').trim(), imgId, planOk: null, planComment: '', events: [] });
+        motif: F(form, 'motif'), note: F(form, 'note').trim(), imgId, planOk: null, planComment: '', events: [], smas: smaPicked(form) });
       const lp = Core.lastPrice(S.prices, t);
       if (!lp || lp.date <= date) addPrice(t, date, p);
       const man = manualSet();
@@ -3550,6 +3584,7 @@ document.addEventListener('click', e => {
     case 'sect-fix': sheetSectorFix(b.dataset.t); break;
     case 'sect-set': sheetSectSet(); break;
     case 'stop-raises': sheetStopRaises(); break;
+    case 'pos-sma': sheetPosSma(b.dataset.t); break;
     case 'lab-go': labGo(); break;
     case 'lab-del': S.settings.labQueue = labQueue().filter(t => t !== b.dataset.t); save(b.dataset.t + ' retiré du Labo'); break;
     case 'lab-clear': confirmSheet('Vider le Labo', 'Retirer toutes les actions de la liste ? Leurs résultats disparaîtront au prochain passage du robot.', 'Tout retirer', () => { S.settings.labQueue = []; save('Labo vidé'); }); break;
