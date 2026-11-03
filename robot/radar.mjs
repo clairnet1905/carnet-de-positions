@@ -5,7 +5,7 @@
 // 3. Envoie une notification groupée aux appareils abonnés pour chaque nouveau croisement de SMA.
 // Les clés ne sont jamais écrites dans le code : elles viennent des secrets du dépôt (Settings › Secrets and variables › Actions).
 import { addDays, days, lastSession, prevWeekday, nextWeekday, weekKey, barsNeeded, symOf, signals, message, analyze, pack, unpack } from './sma.mjs';
-import { labUnit, packUnit, doneBars } from './labsma.mjs';
+import { labUnit, labCombo, packUnit, doneBars, LAB_PERIODS, LAB_MIN_TRADES } from './labsma.mjs';
 
 const { GIST_TOKEN, TWELVEDATA_KEY, FINNHUB_KEY, VAPID_PRIVATE_KEY, TEST_PUSH } = process.env;
 const STATE_FILE = 'carnet-positions.json', RADAR_FILE = 'carnet-radar.json', LAB_FILE = 'carnet-lab.json';
@@ -37,19 +37,26 @@ async function findGists() {
 
 // ----- Cours -----
 let tdCalls = 0, tdLast = 0, ADJ = 'all';
-async function twelve(sym, n, interval = '1day') {
+async function twelve(sym, n, interval = '1day', end = '') {
   if (!TWELVEDATA_KEY) throw new Error('pas de clé Twelve Data');
   if (tdCalls >= TD_DAY_LIMIT) throw new Error('quota Twelve Data du jour réservé');
   for (let attempt = 0; attempt < 3; attempt++) {
     const wait = tdLast + 8000 - Date.now(); if (wait > 0) await sleep(wait);   // 8 requêtes par minute (offre gratuite)
     tdLast = Date.now(); tdCalls++;
-    const r = await fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=${interval}&outputsize=${n}&adjust=${ADJ}&apikey=${encodeURIComponent(TWELVEDATA_KEY)}`);
+    const r = await fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=${interval}&outputsize=${n}&adjust=${ADJ}${end ? '&end_date=' + end : ''}&apikey=${encodeURIComponent(TWELVEDATA_KEY)}`);
     const j = await r.json().catch(() => ({}));
     if (j.code === 429 || r.status === 429) { await sleep(61000); continue; }
     if (j.status === 'error' || !Array.isArray(j.values)) throw new Error(j.message || 'erreur ' + r.status);
     return j.values.map(v => [String(v.datetime).slice(0, 10), +v.close]).filter(v => v[1] > 0).sort((a, b) => a[0] < b[0] ? -1 : 1);
   }
   throw new Error('limite Twelve Data');
+}
+// Journalier sur 40 ans : 5 000 séances par requête au plus (offre gratuite), donc une seconde requête pour les 20 ans d'avant.
+async function twelveLong(sym) {
+  const a = await twelve(sym, 5000, '1day');
+  if (a.length < 4990) return a;
+  try { const b = await twelve(sym, 5000, '1day', addDays(a[0][0], -1)); return b.filter(x => x[0] < a[0][0]).concat(a); }
+  catch (e) { if (/quota|limite/.test(e.message)) throw e; return a; }   // pas d'historique plus ancien : 20 ans suffisent
 }
 let fhLast = 0;
 async function finnhub(sym) {
@@ -125,18 +132,23 @@ for (const s of daily) {
 for (const s of resync.slice(0, RESYNC_PER_RUN)) { try { put(s, await twelve(s, need[s]), true); } catch (e) { errors[s] = e.message; break; } }
 
 // ----- Labo SMA : tickers demandés dans l'app (S.settings.labQueue), radar compris ; le robot n'écrit jamais dans le radar -----
-// 3 requêtes Twelve Data par action (J 5000 séances, S et M depuis le début de l'actif), refaites tous les 30 jours.
+// 4 requêtes Twelve Data par action (J 10 000 séances en deux fois, S et M depuis le début de l'actif), refaites tous les 30 jours.
+// En plus des 15 SMA × J / S / M : test combiné J + S + M (filtre par la meilleure SMA hebdo et mensuelle).
 const labQ = [...new Set((S.settings.labQueue || []).map(t => String(t).toUpperCase()))];
 const labDue = t => { const x = L.res[t]; return !x || x.adj !== ADJ || days(new Date(x.at).toISOString().slice(0, 10), ls) > (x.err ? 7 : LAB_REDO_DAYS); };
 const labTodo = labQ.filter(labDue).sort((a, b) => (L.res[a] ? 1 : 0) - (L.res[b] ? 1 : 0));
-let labDone = 0;
+let labDone = 0; const labNew = [];
 for (const t of labTodo.slice(0, LAB_PER_RUN)) {
-  if (tdCalls + 3 > TD_DAY_LIMIT || Date.now() - T0 > 65 * 60000) break;   // quota du jour et durée maximale du robot
+  if (tdCalls + 4 > TD_DAY_LIMIT || Date.now() - T0 > 65 * 60000) break;   // quota du jour et durée maximale du robot
   try {
-    const one = {};
-    for (const [tf, iv] of [['D', '1day'], ['W', '1week'], ['M', '1month']]) one[tf] = packUnit(labUnit(doneBars(await twelve(t, 5000, iv), tf, ls), tf));
+    const one = {}, bars = {}, units = {};
+    for (const [tf, iv] of [['D', '1day'], ['W', '1week'], ['M', '1month']]) {
+      bars[tf] = doneBars(tf === 'D' ? await twelveLong(t) : await twelve(t, 5000, iv), tf, ls);
+      units[tf] = labUnit(bars[tf], tf); one[tf] = packUnit(units[tf]);
+    }
+    one.C = packUnit(labCombo(bars, units));
     L.res[t] = { at: Date.now(), ls, adj: ADJ, ...one };
-    labDone++;
+    labDone++; labNew.push(t);
   } catch (e) {
     if (/quota|limite/.test(e.message)) break;
     if (/not found|invalid|symbol/i.test(e.message)) L.res[t] = { at: Date.now(), ls, adj: ADJ, err: e.message };   // ticker introuvable : réessayé dans 7 jours
@@ -154,7 +166,7 @@ const sig = signals(S, hist, ls, R.notified, { near: !!S.settings.pushNear });
 let sent = 0, dead = [];
 const payloads = [];
 if (sig.length && !first) payloads.push(message(sig, ls));
-if (labDone && !labLeft) payloads.push({ title: 'Labo SMA terminé', body: `${labQ.filter(t => L.res[t] && !L.res[t].err).length} action(s) testée(s) sur 15 SMA × J / S / M. Résultats dans l’app.`, tag: 'lab-' + ls, url: './#lab' });
+if (labDone && !labLeft) payloads.push({ title: 'Labo SMA terminé', body: `${labQ.filter(t => L.res[t] && !L.res[t].err).length} action(s) testée(s) sur 15 SMA × J / S / M et en combiné J + S + M. Résultats dans l’app.`, tag: 'lab-' + ls, url: './#lab' });
 
 // ----- Aides : stops à remonter, résultats au prochain jour de bourse, bilan du vendredi -----
 const usd = x => x.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' $';
@@ -163,6 +175,23 @@ const remOf = l => l.qty - (l.events || []).filter(e => e.type === 'sell').reduc
 const openLots = (S.lots || []).filter(l => !l.demo && remOf(l) > 1e-9);
 const openT = [...new Set(openLots.map(l => l.ticker))];
 const extra = [];   // clés à mémoriser après envoi
+// SMA faibles : une action du radar vient d'être testée et l'une de vos SMA y est jugée faible (frais IC Markets, assez de trades).
+// Information seulement : le radar n'est jamais modifié.
+if (S.settings.pushWeak !== false && labNew.length) {
+  const sc = x => x[1] > 0 ? x[0] / x[1] : x[0] > 0 ? 99 : 0, lines = [], keys = [];
+  for (const t of labNew) for (const w of S.watch.filter(x => x.ticker === t && !x.idx)) {
+    const u = L.res[t][w.tf], i = LAB_PERIODS.indexOf(w.period), x = u && i >= 0 ? u.ic.sma[i] : null;
+    if (!x || x[0] == null || x[1] == null || x[3] < LAB_MIN_TRADES[w.tf]) continue;
+    if (x[2] >= 1.5 && x[0] >= 5 && sc(x) >= 0.2) continue;   // « À étudier » ou mieux
+    const key = `weak|${t}|${w.tf}|${w.period}`; if (R.notified[key]) continue;
+    const ok = u.ic.sma.map((y, k) => [y, k]).filter(([y]) => y && y[0] != null && y[1] != null && y[3] >= LAB_MIN_TRADES[w.tf]);
+    const b = ok.length ? ok.reduce((p, q) => sc(q[0]) > sc(p[0]) ? q : p) : null;
+    lines.push(`${t} : votre ${TFL[w.tf]} ${w.period} est faible (CAGR ${x[0].toFixed(1).replace('.', ',')} %, DD ${Math.round(x[1])} %)${b && b[1] !== i ? ` · meilleure ${TFL[w.tf]} ${LAB_PERIODS[b[1]]}` : ''}`);
+    keys.push(key);
+  }
+  if (lines.length) { payloads.push({ title: `Labo · ${lines.length} SMA faible(s) au radar`, body: lines.slice(0, 6).join('\n') + '\nVos SMA ne sont pas changées : à vous de voir.', tag: 'weak-' + ls, url: './#lab' }); extra.push(...keys); }
+}
+
 // Stops : une SMA de l'action est passée entre le stop actuel et la dernière clôture (une notification par stop et par SMA).
 if (S.settings.pushStops !== false) {
   const lines = [];

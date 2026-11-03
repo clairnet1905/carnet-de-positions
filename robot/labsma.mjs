@@ -83,6 +83,46 @@ export function labUnit(bars, tf) {
   return out;
 }
 
+// Meilleure SMA d'une unité (comme l'app) : meilleur CAGR ÷ drawdown parmi celles qui ont assez de trades, sinon parmi toutes.
+function bestOf(rows, tf) {
+  const sc = r => r.all.cagr == null || r.all.dd == null ? null : r.all.dd > 0 ? r.all.cagr / r.all.dd : r.all.cagr > 0 ? 99 : 0;
+  const idx = rows.map((r, i) => [r, i]).filter(([r]) => r && (r.all.tr > 0 || r.all.open) && sc(r) != null);
+  const pool = idx.filter(([r]) => r.all.tr >= LAB_MIN_TRADES[tf]).length ? idx.filter(([r]) => r.all.tr >= LAB_MIN_TRADES[tf]) : idx;
+  return pool.length ? pool.reduce((a, b) => sc(b[0]) > sc(a[0]) ? b : a)[1] : -1;
+}
+// Test combiné J + S + M : achat quand la clôture passe au-dessus de la SMA journalière ET qu'elle est au-dessus de la meilleure SMA hebdo
+// et de la meilleure SMA mensuelle (dernière semaine et dernier mois terminés, pas de regard vers l'avenir) ; sortie quand elle repasse sous la SMA journalière.
+// Même période et mêmes frais que l'unité journalière. bars / units : { D, W, M } bougies terminées et résultats de labUnit.
+export function labCombo(bars, units) {
+  if (!units.D || !units.W || !units.M) return null;
+  const d = bars.D.map(b => b[0]), c = bars.D.map(b => b[1]), a = d.indexOf(units.D.from), b = d.length - 1, split = d.indexOf(units.D.split);
+  if (a < 0 || split < 0) return null;
+  const monday = x => { const t = new Date(x + 'T12:00:00Z'); t.setUTCDate(t.getUTCDate() - (t.getUTCDay() + 6) % 7); return t.toISOString().slice(0, 10); };
+  // Pour chaque séance : indice de la dernière semaine (et du dernier mois) terminés avant elle.
+  const wI = [], mI = [];
+  for (let i = 0, j = -1, k = -1; i < d.length; i++) {
+    const mo = monday(d[i]), ym = d[i].slice(0, 7);
+    while (j + 1 < bars.W.length && bars.W[j + 1][0] < mo) j++;
+    while (k + 1 < bars.M.length && bars.M[k + 1][0].slice(0, 7) < ym) k++;
+    wI.push(j); mI.push(k);
+  }
+  const out = { from: units.D.from, to: units.D.to, split: units.D.split, bars: d.length, sma: {}, pick: {}, bh: units.D.bh };
+  for (const fk of ['tv', 'ic']) {
+    const f = LAB_FEES[fk], bw = bestOf(units.W.sma[fk], 'W'), bm = bestOf(units.M.sma[fk], 'M');
+    if (bw < 0 || bm < 0) return null;
+    const sW = smaSeries(bars.W.map(x => x[1]), LAB_PERIODS[bw]), sM = smaSeries(bars.M.map(x => x[1]), LAB_PERIODS[bm]);
+    const filt = i => { const w = wI[i] >= 0 ? sW[wI[i]] : null, m = mI[i] >= 0 ? sM[mI[i]] : null; return w != null && m != null && c[i] > w && c[i] > m; };
+    out.pick[fk] = { w: LAB_PERIODS[bw], m: LAB_PERIODS[bm] };
+    out.sma[fk] = LAB_PERIODS.map((n, pi) => {
+      if (!units.D.sma[fk][pi]) return null;
+      const s = smaSeries(c, n), cond = i => s[i] != null && c[i] > s[i] && filt(i);
+      const sig = i => i < 1 || s[i - 1] == null ? 0 : cond(i) && !cond(i - 1) ? 1 : c[i] < s[i] && c[i - 1] >= s[i - 1] ? -1 : 0;
+      return { all: simulate(d, c, a, b, sig, f), ins: simulate(d, c, a, split, sig, f), oos: simulate(d, c, split, b, sig, f) };
+    });
+  }
+  return out;
+}
+
 // Bougies terminées seulement : la semaine ou le mois en cours (bougie datée du début de période) est retiré.
 export function doneBars(bars, tf, ls) {
   if (!bars.length) return bars;
@@ -107,6 +147,6 @@ const row = x => x && [r1(x.all.cagr), r1(x.all.dd), x.all.pf == null ? null : M
 export function packUnit(u) {
   if (!u) return null;
   const o = { from: u.from, to: u.to, split: u.split, bars: u.bars };
-  for (const fk of ['tv', 'ic']) o[fk] = { sma: u.sma[fk].map(row), bh: [r1(u.bh[fk].all.cagr), r1(u.bh[fk].all.dd), r1(u.bh[fk].oos.cagr), r1(u.bh[fk].oos.dd), r1(u.bh[fk].all.expo)] };
+  for (const fk of ['tv', 'ic']) o[fk] = { sma: u.sma[fk].map(row), bh: [r1(u.bh[fk].all.cagr), r1(u.bh[fk].all.dd), r1(u.bh[fk].oos.cagr), r1(u.bh[fk].oos.dd), r1(u.bh[fk].all.expo)], ...(u.pick ? u.pick[fk] : {}) };
   return o;
 }
