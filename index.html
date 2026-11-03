@@ -250,7 +250,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 .lbs{display:flex;flex-wrap:wrap;gap:6px;flex:1;justify-content:flex-end}
 .lb{display:inline-flex;flex-direction:column;font-size:.72rem;padding:4px 9px;border-radius:10px;background:var(--surface-2);color:var(--muted);line-height:1.25}
 .lb b{font-size:.82rem;color:var(--ink)} .lb.v1{background:var(--gain-bg)} .lb.v1 b{color:var(--gain)} .lb.v2{background:var(--warn-bg)} .lb.v2 b{color:var(--warn)}
-.lgrid{display:grid;grid-template-columns:20px repeat(15,minmax(0,1fr));gap:2px;margin:0 12px;font-size:.62rem;color:var(--muted)}
+.lgrid{display:grid;grid-template-columns:24px repeat(15,minmax(0,1fr));gap:2px;margin:0 12px;font-size:.62rem;color:var(--muted)}
 .lgrid>span{text-align:center;padding:2px 0;overflow:hidden}
 .lgrid button,.lgrid i{height:26px;border:0;border-radius:4px;padding:0;min-width:0;cursor:pointer;font-size:.6rem;display:grid;place-items:center;font-style:normal}
 .lgrid i.na{background:var(--surface-2);color:var(--muted);cursor:default}
@@ -267,6 +267,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 .lkpi div{background:var(--surface-2);border-radius:10px;padding:7px 9px} .lkpi small{display:block;font-size:.7rem;color:var(--muted)} .lkpi b{font-size:.92rem}
 .lcard .hint,.lcard .row{margin-left:12px;margin-right:12px}
 .lchk{display:grid;gap:6px;margin:8px 12px 0;font-size:.82rem}
+.lgrid .lc{font-size:.52rem;font-weight:700;color:var(--ink)} .lweak{font-weight:700;color:var(--loss)}
 .ladd{margin:12px 12px 0;padding:12px;border-radius:14px;background:var(--surface-2)} .ladd h3{margin:0 0 8px;font-size:.95rem} .ladd .btn{width:100%;margin-top:8px}
 .laddl{display:grid;gap:6px} .laddl label{display:grid;grid-template-columns:auto auto 1fr;align-items:center;gap:4px 10px;padding:8px 10px;border-radius:10px;background:var(--surface);cursor:pointer}
 .laddl label.off{opacity:.55;cursor:default} .laddl input{width:18px;height:18px;margin:0} .laddl .lv{justify-self:start} .laddl small{grid-column:2/-1;color:var(--muted);font-size:.78rem}
@@ -415,7 +416,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.26.0 · licence MIT */
+/* Carnet de positions v1.27.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -1169,6 +1170,7 @@ function notifPanel() {
     <label class="check" style="margin-top:6px"><input type="checkbox" data-act="push-opt" data-k="pushStops" ${S.settings.pushStops !== false ? 'checked' : ''}> Stops à remonter sur une de vos SMA</label>
     <label class="check" style="margin-top:6px"><input type="checkbox" data-act="push-opt" data-k="pushEarn" ${S.settings.pushEarn !== false ? 'checked' : ''}> Résultats d’une position le jour de bourse suivant</label>
     <label class="check" style="margin-top:6px"><input type="checkbox" data-act="push-opt" data-k="pushWeekly" ${S.settings.pushWeekly !== false ? 'checked' : ''}> Bilan de la semaine, le vendredi soir</label>
+    <label class="check" style="margin-top:6px"><input type="checkbox" data-act="push-opt" data-k="pushWeak" ${S.settings.pushWeak !== false ? 'checked' : ''}> Labo : une de mes SMA du radar jugée faible</label>
     <p class="hint">Une alerte déjà vue dans l’app n’est jamais notifiée. Le jeton et les clés restent dans les secrets GitHub : ni dans le code, ni dans le Gist.</p>`;
 }
 function readImageFile(file) {
@@ -2022,7 +2024,9 @@ function disciplineCard(T) {
 // ----- Tableau de bord -----
 // ----- Labo SMA : backtest de 15 SMA × J / S / M fait par le robot (robot/labsma.mjs), résultats affichés ici -----
 // La liste à tester (S.settings.labQueue) est synchronisée ; les actions du radar peuvent y être, mais rien n'est jamais ajouté ni changé au radar sans un geste.
-const LAB_P = [5, 8, 13, 21, 34, 50, 55, 89, 100, 144, 200, 233, 377, 610, 987], LAB_MIN = { D: 20, W: 12, M: 8 };
+const LAB_P = [5, 8, 13, 21, 34, 50, 55, 89, 100, 144, 200, 233, 377, 610, 987], LAB_MIN = { D: 20, W: 12, M: 8, C: 20 };
+// « C » : test combiné J + S + M fait par le robot (SMA journalière filtrée par la meilleure SMA hebdo et mensuelle).
+const LT = tf => tf === 'C' ? 'J+S+M' : TF_SHORT[tf], LL = tf => tf === 'C' ? 'combinée' : TF_LONG[tf];
 const LAB_KEY = 'carnet-positions:lab', LAB_FEE_KEY = 'carnet-positions:lab-fee';
 const Lab = (() => { try { return JSON.parse(localStorage.getItem(LAB_KEY)) || { ver: null, res: {} }; } catch (e) { return { ver: null, res: {} }; } })();
 function setLab(L, ver) {
@@ -2068,21 +2072,27 @@ function labAddBox(t, plan) {
     <p class="hint">Touchez une case de la grille pour choisir une autre SMA dans sa ligne.</p>
     <button class="btn primary" data-act="lab-add3" data-t="${esc(t)}" ${on.length ? '' : 'disabled'}>${on.length ? `Ajouter ${on.map(p => TF_SHORT[p.tf] + ' ' + LAB_P[p.i]).join(' · ')} au radar` : 'Rien de coché'}</button></div>`;
 }
+// Une de vos SMA du radar jugée faible par le Labo (assez de trades, verdict « Faible / à écarter »).
+function labWeak(r, w) {
+  const u = r[w.tf], i = LAB_P.indexOf(w.period), x = u && i >= 0 ? u[labFee].sma[i] : null;
+  return !!x && x[3] >= LAB_MIN[w.tf] && labVerdict(x, w.tf)[1] === 'v3';
+}
 function labCard(t) {
   const r = Lab.res[t];
   if (!r || r.err) return '';
   const U = ['D', 'W', 'M'].filter(tf => r[tf]);
   const best = Object.fromEntries(U.map(tf => [tf, labBest(r[tf][labFee].sma, tf)]));
+  if (r.C) best.C = labBest(r.C[labFee].sma, 'C');
   const sel = labSel[t] || (() => { const tf = U.slice().sort((a, b) => { const sa = best[a] >= 0 ? labScore(...r[a][labFee].sma[best[a]].slice(0, 2)) : -9, sb = best[b] >= 0 ? labScore(...r[b][labFee].sma[best[b]].slice(0, 2)) : -9; return sb - sa; })[0]; return [tf, best[tf]]; })();
   const open = labOpen.has(t), mineL = S.watch.filter(w => w.ticker === t && !w.idx), inR = mineL.length > 0;
   const summary = U.map(tf => { const i = best[tf], x = i >= 0 ? r[tf][labFee].sma[i] : null, v = labVerdict(x, tf);
     return `<span class="lb ${v[1]}"><b>${TF_SHORT[tf]} ${i >= 0 ? LAB_P[i] : '—'}</b>${x ? `${fmtNum(x[0], 1)} % · DD ${fmtNum(x[1], 0)} %` : ''}</span>`; }).join('');
   let body = '';
   if (open) {
-    const grid = `<div class="lgrid"><span></span>${LAB_P.map(p => `<span>${p}</span>`).join('')}${['D', 'W', 'M'].map(tf => `<span>${TF_SHORT[tf]}</span>${LAB_P.map((p, i) => {
+    const grid = `<div class="lgrid"><span></span>${LAB_P.map(p => `<span>${p}</span>`).join('')}${['D', 'W', 'M'].concat(r.C ? ['C'] : []).map(tf => `<span${tf === 'C' ? ' class="lc" title="Combiné J + S + M"' : ''}>${tf === 'C' ? 'JSM' : TF_SHORT[tf]}</span>${LAB_P.map((p, i) => {
       const x = r[tf] && r[tf][labFee].sma[i]; if (!x) return '<i class="na" title="Historique insuffisant">·</i>';
       const s = labScore(x[0], x[1]), mine = S.watch.some(w => w.ticker === t && w.tf === tf && w.period === p && !w.idx);
-      return `<button type="button" class="${labCol(s)}${x[3] < LAB_MIN[tf] ? ' few' : ''}${best[tf] === i ? ' best' : ''}${mine ? ' mine' : ''}${sel[0] === tf && sel[1] === i ? ' sel' : ''}" data-act="lab-cell" data-t="${esc(t)}" data-tf="${tf}" data-i="${i}" aria-label="${TF_SHORT[tf]} ${p} : CAGR ${fmtNum(x[0], 1)} %, drawdown ${fmtNum(x[1], 0)} %"></button>`; }).join('')}`).join('')}</div>`;
+      return `<button type="button" class="${labCol(s)}${x[3] < LAB_MIN[tf] ? ' few' : ''}${best[tf] === i ? ' best' : ''}${mine ? ' mine' : ''}${sel[0] === tf && sel[1] === i ? ' sel' : ''}" data-act="lab-cell" data-t="${esc(t)}" data-tf="${tf}" data-i="${i}" aria-label="${LT(tf)} ${p} : CAGR ${fmtNum(x[0], 1)} %, drawdown ${fmtNum(x[1], 0)} %"></button>`; }).join('')}`).join('')}</div>`;
     const [tf, i] = sel, u = r[tf], x = u && i >= 0 ? u[labFee].sma[i] : null;
     let det = '<p class="hint">Touchez une case de la grille.</p>';
     if (x) {
@@ -2092,18 +2102,18 @@ function labCard(t) {
       const bi = labBest(u[labFee].sma, tf, true), bx = bi >= 0 ? u[labFee].sma[bi] : null;
       const has = S.watch.some(w => w.ticker === t && w.tf === tf && w.period === LAB_P[i]);
       const k = (l, val, c) => `<div><small>${l}</small><b class="${c || ''}">${val}</b></div>`;
-      det = `<div class="lsel"><h3>${TF_SHORT[tf]} ${LAB_P[i]} <small>${TF_LONG[tf]}</small></h3><span class="lv ${v[1]}">${v[0]}</span></div>
+      det = `<div class="lsel"><h3>${LT(tf)} ${LAB_P[i]} <small>${LL(tf)}</small></h3><span class="lv ${v[1]}">${v[0]}</span></div>
         <div class="lkpi">${k('CAGR', fmtNum(x[0], 1) + ' %', cls(x[0]))}${k('Drawdown max', fmtNum(x[1], 1) + ' %')}${k('CAGR / DD', s == null ? '—' : fmtNum(s, 2))}${k('Profit factor', x[2] == null ? '—' : x[2] >= 999 ? '∞' : fmtNum(x[2], 2))}
           ${k('Trades / gagnants', `${x[3]}${x[7] ? ' (+1 en cours)' : ''} / ${x[4] == null ? '—' : fmtNum(x[4], 0) + ' %'}`)}${k('Trade moyen', x[6] == null ? '—' : pct(x[6], true), cls(x[6]))}${k('Temps investi', fmtNum(x[5], 0) + ' %')}${k('Acheter et garder', `${fmtNum(bh[0], 1)} % · DD ${fmtNum(bh[1], 0)} %`)}</div>
-        <p class="hint">Période testée : ${fmtDate(u.from)} → ${fmtDate(u.to)} (même période pour toutes les SMA ${TF_LONG[tf]}s). ${x[3] < LAB_MIN[tf] ? `Moins de ${LAB_MIN[tf]} trades : résultat peu fiable. ` : ''}</p>
+        <p class="hint">Période testée : ${fmtDate(u.from)} → ${fmtDate(u.to)} (même période pour toutes les SMA ${LL(tf)}s).${tf === 'C' ? ` Achat quand la clôture passe au-dessus de la SMA ${LAB_P[i]} journalière et qu’elle est au-dessus de S ${u[labFee].w} et M ${u[labFee].m} (meilleures SMA hebdo et mensuelle, semaine et mois terminés) ; sortie sous la SMA journalière.` : ''} ${x[3] < LAB_MIN[tf] ? `Moins de ${LAB_MIN[tf]} trades : résultat peu fiable. ` : ''}</p>
         <div class="lchk"><span class="${holds === true ? 'ok' : holds === false ? 'bad' : ''}"><b>Période récente</b> (${fmtDate(u.split).replace(/ \d{4}$/, '') + ' ' + u.split.slice(0, 4)} → ${u.to.slice(0, 4)}) : CAGR ${x[8] == null ? '—' : fmtNum(x[8], 1) + ' %'}, DD ${x[9] == null ? '—' : fmtNum(x[9], 0) + ' %'} · ${holds == null ? 'non mesurable' : holds ? 'tient toujours' : 'moins bon récemment'} <small>(acheter et garder : ${fmtNum(bh[2], 1)} %)</small></span>
           <span class="${stable === true ? 'ok' : stable === false ? 'bad' : ''}"><b>SMA voisines</b> : ${stable == null ? '—' : stable ? 'zone stable, pas un coup de chance' : 'zone fragile, pic isolé'}</span>
-          ${bx ? `<span><b>Choisie sur les 70 % anciens</b> : ${TF_SHORT[tf]} ${LAB_P[bi]} → sur la période récente CAGR ${x && bx[8] != null ? fmtNum(bx[8], 1) + ' %' : '—'}, DD ${bx[9] == null ? '—' : fmtNum(bx[9], 0) + ' %'}</span>` : ''}</div>
-        <div class="row" style="margin-top:10px">${has ? `<span class="pill win">${TF_SHORT[tf]} ${LAB_P[i]} déjà au radar</span>` : `<button class="btn sm primary" data-act="lab-add" data-t="${esc(t)}" data-tf="${tf}" data-i="${i}">Ajouter ${TF_SHORT[tf]} ${LAB_P[i]} au radar</button>`}</div>`;
+          ${bx ? `<span><b>Choisie sur les 70 % anciens</b> : ${LT(tf)} ${LAB_P[bi]} → sur la période récente CAGR ${x && bx[8] != null ? fmtNum(bx[8], 1) + ' %' : '—'}, DD ${bx[9] == null ? '—' : fmtNum(bx[9], 0) + ' %'}</span>` : ''}</div>
+        <div class="row" style="margin-top:10px">${tf === 'C' ? (d => `<span class="hint" style="margin:0">Comparez avec J ${LAB_P[i]} seule : ${d ? `CAGR ${fmtNum(d[0], 1)} % · DD ${fmtNum(d[1], 0)} %` : '—'}.</span><button class="btn sm primary" data-act="lab-combo" data-t="${esc(t)}" data-i="${i}" data-w="${u[labFee].w}" data-m="${u[labFee].m}">Choisir J ${LAB_P[i]} · S ${u[labFee].w} · M ${u[labFee].m}</button>`)(r.D && r.D[labFee].sma[i]) : has ? `<span class="pill win">${TF_SHORT[tf]} ${LAB_P[i]} déjà au radar</span>` : `<button class="btn sm primary" data-act="lab-add" data-t="${esc(t)}" data-tf="${tf}" data-i="${i}">Ajouter ${TF_SHORT[tf]} ${LAB_P[i]} au radar</button>`}</div>`;
     }
     body = `${grid}${labAddBox(t, labAddPlan(t, r, U, best))}<p class="hint lleg"><i class="l4"></i>CAGR ÷ DD ≥ 0,5 <i class="l3"></i>≥ 0,35 <i class="l2"></i>≥ 0,2 <i class="l1"></i>faible <i class="l0"></i>perte · ★ meilleure de la ligne · <b class="lmine">○</b> votre SMA actuelle au radar · hachuré : trop peu de trades</p>${det}`;
   }
-  return `<article class="lcard${open ? ' open' : ''}"><button type="button" class="lhead" data-act="lab-open" data-t="${esc(t)}"><span class="tk">${esc(t)}</span>${inR ? `<span class="pill open">Au radar : ${mineL.map(w => TF_SHORT[w.tf] + ' ' + w.period).join(' · ')}</span>` : ''}<span class="lbs">${summary}</span></button>${body}</article>`;
+  return `<article class="lcard${open ? ' open' : ''}"><button type="button" class="lhead" data-act="lab-open" data-t="${esc(t)}"><span class="tk">${esc(t)}</span>${inR ? `<span class="pill open">Au radar : ${mineL.map(w => TF_SHORT[w.tf] + ' ' + w.period + (labWeak(r, w) ? ' <b class="lweak" title="Jugée faible par le Labo">faible</b>' : '')).join(' · ')}</span>` : ''}<span class="lbs">${summary}</span></button>${body}</article>`;
 }
 function viewLab() {
   const q = labQueue(), inR = labRadarT(), res = Lab.res || {};
@@ -3098,7 +3108,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.26.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.27.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
@@ -3546,6 +3556,7 @@ document.addEventListener('click', e => {
     case 'lab-fee': labFee = b.dataset.f; try { localStorage.setItem(LAB_FEE_KEY, labFee); } catch (e) {} render(); break;
     case 'lab-open': { const t = b.dataset.t; if (labOpen.has(t)) labOpen.delete(t); else labOpen.add(t); render(); break; }
     case 'lab-cell': labSel[b.dataset.t] = [b.dataset.tf, +b.dataset.i]; (labPick[b.dataset.t] = labPick[b.dataset.t] || {})[b.dataset.tf] = +b.dataset.i; render(); break;
+    case 'lab-combo': { const t = b.dataset.t; labPick[t] = { D: +b.dataset.i, W: LAB_P.indexOf(+b.dataset.w), M: LAB_P.indexOf(+b.dataset.m) }; labChk[t] = { D: true, W: true, M: true }; render(); toast('Les 3 SMA sont cochées dans « Ajouter au radar » : vérifiez puis ajoutez'); break; }
     case 'lab-chk': (labChk[b.dataset.t] = labChk[b.dataset.t] || {})[b.dataset.tf] = b.checked; render(); break;
     case 'lab-add3': {
       const t = b.dataset.t, r = Lab.res[t]; if (!r) break;
