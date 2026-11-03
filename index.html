@@ -290,6 +290,7 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 .ebar i.p{left:50%;background:var(--gain)} .ebar i.n{right:50%;background:var(--loss)}
 .erow b{text-align:right}
 .smal{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:8px 0 0;font-size:.82rem;color:var(--muted)} .smal b{color:var(--ink)} .smal .wrn{color:var(--warn);font-weight:600}
+.smabox{display:grid;gap:8px} .smaadd{display:flex;gap:6px;align-items:center} .smaadd select{flex:1;min-width:0} .smaadd input{width:80px}
 .smach{display:flex;flex-wrap:wrap;gap:6px} .smach .chip{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:99px;background:var(--surface-2);font-size:.86rem;cursor:pointer} .smach .chip:has(input:checked){background:var(--gain-bg);color:var(--gain);font-weight:600} .smach input{margin:0}
 .swapl{margin:8px 0 0;font-size:.8rem;color:var(--muted)} .swapl.hi{color:var(--warn)}
 .checks{border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin:12px 0}
@@ -418,7 +419,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.28.0 · licence MIT */
+/* Carnet de positions v1.28.1 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -2205,16 +2206,29 @@ const stopSkip = () => { try { return JSON.parse(localStorage.getItem(SKIP_KEY))
 // SMA d'entrée d'une position (lot.smas : ['D|200', 'W|13'…]), choisies à l'achat ou plus tard. Vide : toutes les SMA de l'action.
 const smaKey = w => w.tf + '|' + w.period, smaLbl = k => { const [tf, p] = k.split('|'); return TF_SHORT[tf] + ' ' + p; };
 const posSmas = t => [...new Set(S.lots.filter(l => l.ticker === t && !Core.lotState(l).closed).flatMap(l => l.smas || []))];
+// Choix : les SMA de l'action au radar, plus toute autre SMA ajoutée à la main (unité + période).
+const smaChip = (k, on) => `<label class="chip"><input type="checkbox" name="sma" value="${esc(k)}" ${on ? 'checked' : ''}> ${smaLbl(k)}</label>`;
 function smaChoices(t, on) {
   const ks = [...new Set(S.watch.filter(w => w.ticker === t && !w.idx).map(smaKey).concat(on))];
-  return ks.length ? `<div class="smach">${ks.map(k => `<label class="chip"><input type="checkbox" name="sma" value="${esc(k)}" ${on.includes(k) ? 'checked' : ''}> ${smaLbl(k)}</label>`).join('')}</div>`
-    : `<p class="hint">Aucune SMA de ${esc(t || 'cette action')} dans votre radar.</p>`;
+  return `<div class="smabox"><div class="smach">${ks.map(k => smaChip(k, on.includes(k))).join('')}</div>
+    ${ks.length ? '' : `<p class="hint smanone">Aucune SMA de ${esc(t || 'cette action')} dans votre radar : ajoutez la vôtre ci-dessous.</p>`}
+    <div class="smaadd"><select name="smaTf" aria-label="Unité">${['D', 'W', 'M'].map(tf => `<option value="${tf}">${TF_SHORT[tf]} · ${TF_LONG[tf]}</option>`).join('')}</select>
+      <input name="smaP" inputmode="numeric" placeholder="200" aria-label="Période de la SMA"><button type="button" class="btn sm" data-act="sma-add">Ajouter</button></div>
+    <label class="check"><input type="checkbox" name="smaRadar" checked> Ajouter au radar celles qui n’y sont pas (nécessaire pour vous proposer leurs stops)</label></div>`;
 }
 const smaPicked = form => [...form.querySelectorAll('input[name=sma]:checked')].map(i => i.value);
+// SMA cochées absentes du radar : ajoutées au radar si la case est cochée (geste de l'utilisateur, jamais automatique).
+function smaToRadar(form, t, ks) {
+  const box = form.elements.smaRadar; if (!box || !box.checked) return 0;
+  const add = ks.filter(k => !S.watch.some(w => w.ticker === t && !w.idx && smaKey(w) === k));
+  for (const k of add) { const [tf, p] = k.split('|'); S.watch.push({ id: uid(), ticker: t, period: +p, tf, sym: '', note: 'Position' }); }
+  return add.length;
+}
 function sheetPosSma(t) {
   openSheet({ title: 'SMA de la position ' + t, ok: 'Enregistrer',
     body: `<p class="lead">Les SMA grâce auxquelles vous êtes entré. Seuls leurs stops vous seront proposés (app et notifications).</p>${smaChoices(t, posSmas(t))}<p class="hint">Rien de coché : toutes les SMA de l'action sont proposées, comme avant.</p>`,
-    onSubmit: form => { const k = smaPicked(form); for (const l of S.lots.filter(l => l.ticker === t && !Core.lotState(l).closed)) l.smas = k; closeSheet(); save(k.length ? `${t} : ${k.map(smaLbl).join(' · ')}` : `${t} : toutes les SMA`); } });
+    onSubmit: form => { const k = smaPicked(form); for (const l of S.lots.filter(l => l.ticker === t && !Core.lotState(l).closed)) l.smas = k;
+      const n = smaToRadar(form, t, k); closeSheet(); save((k.length ? `${t} : ${k.map(smaLbl).join(' · ')}` : `${t} : toutes les SMA`) + (n ? ` · ${n} ajoutée(s) au radar` : '')); if (n) refreshRadar(); } });
 }
 function stopRaises() {
   const out = [], seen = new Set(), skip = stopSkip();
@@ -2959,7 +2973,7 @@ function viewPos() {
         <div><span>Cours du</span><b class="${stale ? 'wrn' : last && last.live ? 'pos' : ''}">${last ? (last.live ? 'direct ' + hhmm(last.at) : fmtDate(last.date).replace(/ \d{4}$/, '')) : '—'}</b></div>
       </div>
       ${swapT > 0.0049 ? (w => `<p class="swapl ${un > 0.5 && swapT / un * 100 >= swapWarnPct() ? 'hi' : ''}">Swap payé <b class="num">${usd(swapT)}</b>${w > 0 ? ` · ≈ <b class="num">${usd(w)}</b> par semaine` : ''}${un > 0.5 ? ` · ${fmtNum(swapT / un * 100, 0)} % du gain latent` : un < -0.5 ? ' · position en perte : le swap s’y ajoute' : ''}</p>`)(swapWeek(q, px == null ? avg : px)) : ''}
-      ${(k => S.watch.some(w => w.ticker === t && !w.idx) || k.length ? `<p class="smal">SMA de la position : ${k.length ? `<b>${k.map(smaLbl).join(' · ')}</b>` : '<span class="wrn">à choisir</span>'} <button class="btn sm" data-act="pos-sma" data-t="${esc(t)}">${k.length ? 'Modifier' : 'Choisir les SMA'}</button></p>` : '')(posSmas(t))}
+      ${(k => `<p class="smal">SMA de la position : ${k.length ? `<b>${k.map(smaLbl).join(' · ')}</b>` : '<span class="wrn">à choisir</span>'} <button class="btn sm" data-act="pos-sma" data-t="${esc(t)}">${k.length ? 'Modifier' : 'Choisir les SMA'}</button></p>`)(posSmas(t))}
       ${vs.map(v => lotDetails(v, false, vs.length === 1)).join('')}
     </article>`;
     return { t, html, dist: dist == null ? -1e9 : dist, un, expo };
@@ -3139,7 +3153,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.28.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.28.1 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
@@ -3249,6 +3263,7 @@ function sheetBuy() {
       S.lots.push({ id, ticker: t, date, price: p, qty: q, leverage: lv, entryFee: fe, estExitFee, stopInitial: st, stopCurrent: st,
         refCapital: ref.value, refDate: ref.date, riskInitial: risk, riskInitialPct: risk / ref.value * 100, riskPlan: ref.value * S.settings.riskPct / 100,
         motif: F(form, 'motif'), note: F(form, 'note').trim(), imgId, planOk: null, planComment: '', events: [], smas: smaPicked(form) });
+      const smaN = smaToRadar(form, t, smaPicked(form)); if (smaN) refreshRadar();
       const lp = Core.lastPrice(S.prices, t);
       if (!lp || lp.date <= date) addPrice(t, date, p);
       const man = manualSet();
@@ -3585,6 +3600,14 @@ document.addEventListener('click', e => {
     case 'sect-set': sheetSectSet(); break;
     case 'stop-raises': sheetStopRaises(); break;
     case 'pos-sma': sheetPosSma(b.dataset.t); break;
+    case 'sma-add': {
+      const box = b.closest('.smabox'), tf = box.querySelector('[name=smaTf]').value, pi = box.querySelector('[name=smaP]'), p = parseInt(pi.value, 10);
+      if (!(p >= 2 && p <= 2000)) { toast('Période entre 2 et 2000'); break; }
+      const k = tf + '|' + p, ex = box.querySelector(`input[name=sma][value="${k}"]`);
+      if (ex) ex.checked = true; else box.querySelector('.smach').insertAdjacentHTML('beforeend', smaChip(k, true));
+      const none = box.querySelector('.smanone'); if (none) none.remove();
+      pi.value = ''; break;
+    }
     case 'lab-go': labGo(); break;
     case 'lab-del': S.settings.labQueue = labQueue().filter(t => t !== b.dataset.t); save(b.dataset.t + ' retiré du Labo'); break;
     case 'lab-clear': confirmSheet('Vider le Labo', 'Retirer toutes les actions de la liste ? Leurs résultats disparaîtront au prochain passage du robot.', 'Tout retirer', () => { S.settings.labQueue = []; save('Labo vidé'); }); break;
