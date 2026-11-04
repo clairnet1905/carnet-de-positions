@@ -4,7 +4,7 @@
 //    dans un second Gist secret (« carnet-radar.json ») que l'app télécharge.
 // 3. Envoie une notification groupée aux appareils abonnés pour chaque nouveau croisement de SMA.
 // Les clés ne sont jamais écrites dans le code : elles viennent des secrets du dépôt (Settings › Secrets and variables › Actions).
-import { addDays, days, lastSession, prevWeekday, nextWeekday, weekKey, barsNeeded, symOf, signals, message, analyze, pack, unpack, divGaps, fixBars } from './sma.mjs';
+import { addDays, days, lastSession, prevWeekday, nextWeekday, weekKey, barsNeeded, symOf, signals, message, analyze, pack, unpack, divGaps, divLate, fixBars } from './sma.mjs';
 import { labUnit, labCombo, packUnit, doneBars, LAB_PERIODS, LAB_MIN_TRADES } from './labsma.mjs';
 
 const { GIST_TOKEN, TWELVEDATA_KEY, FINNHUB_KEY, VAPID_PRIVATE_KEY, TEST_PUSH } = process.env;
@@ -145,8 +145,9 @@ for (const s of posSym) {
   if (tdCalls + 1 > TD_DAY_LIMIT) break;
   try {
     const raw = await twelve(s, Math.min(5000, hist[s].bars.length), '1day', '', 'splits');
-    DF[s] = { at: Date.now(), fx: divGaps(raw, hist[s].bars) };
+    DF[s] = { at: Date.now(), fx: divGaps(raw, hist[s].bars), late: divLate(raw, hist[s].bars) };
     if (DF[s].fx.length) log(`Dividende(s) estimé(s) ${s} : ${DF[s].fx.map(x => `${x[0]} (${x[2]} $)`).join(', ')}`);
+    if (DF[s].late) log(`Dividende à vérifier ${s} : dernier connu le ${DF[s].late[0]}, suivant attendu vers le ${DF[s].late[1]}`);
   } catch (e) { if (/quota|limite/.test(e.message)) break; }
 }
 for (const s in DF) if (!posSym.includes(s) || !hist[s]) delete DF[s];
@@ -226,7 +227,8 @@ if (S.settings.pushStops !== false) {
       const h = view[symOf(w)]; if (!h) continue;
       const a = analyze(w, h.bars, ls, S.settings.nearPct); if (!a || a.short) continue;
       const key = `stop|${l.id}|${w.id}|${st}`;
-      if (a.sma > st * 1.005 && a.sma < a.lastClose && !R.notified[key]) { lines.push(`${t} : SMA ${w.period} ${TFL[w.tf]} à ${usd(a.sma)} (stop ${st ? usd(st) : 'aucun'})`); extra.push(key); }
+      const late = DF[symOf(w)] && DF[symOf(w)].late;   // dividende peut-être manquant : SMA à vérifier sur TradingView
+      if (a.sma > st * 1.005 && a.sma < a.lastClose && !R.notified[key]) { lines.push(`${t} : SMA ${w.period} ${TFL[w.tf]} à ${usd(a.sma)} (stop ${st ? usd(st) : 'aucun'})${late ? ' · dividende à vérifier' : ''}`); extra.push(key); }
     }
   }
   if (lines.length && !first) payloads.push({ title: `Stops · ${lines.length} à remonter`, body: lines.slice(0, 6).join('\n') + (lines.length > 6 ? `\n+ ${lines.length - 6} autre(s) dans l’app` : ''), tag: 'stops-' + ls, url: './#dash' });

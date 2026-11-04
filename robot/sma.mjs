@@ -111,17 +111,27 @@ export function unpack(p) {
 // Un payeur régulier (mensuel à semestriel) dont il manque un ou deux versements entre deux versements connus
 // reçoit des dividendes estimés : date au milieu de l'écart, montant du versement connu le plus proche (comme TradingView avec ADJ).
 // Renvoie [[ex-date, facteur, montant estimé]] ; les cours ajustés antérieurs à l'ex-date sont à multiplier par le facteur.
-export function divGaps(raw, adj) {
+function divEvents(raw, adj) {
   const A = new Map(adj), pts = raw.filter(b => A.has(b[0]) && b[1] > 0 && A.get(b[0]) > 0).map(b => [b[0], b[1], A.get(b[0]) / b[1]]);
   const ev = [];
   for (let i = 1; i < pts.length; i++) {
     const f = pts[i - 1][2] / pts[i][2];
     if (f < 0.9995 && f > 0.8) ev.push({ d: pts[i][0], amt: (1 - f) * pts[i - 1][1] });
   }
-  if (ev.length < 3) return [];
+  if (ev.length < 3) return null;
   const gaps = ev.slice(1).map((e, i) => days(ev[i].d, e.d)), med = gaps.slice().sort((a, b) => a - b)[gaps.length >> 1];
-  if (med < 25 || med > 200) return [];
-  const out = [];
+  return med < 25 || med > 200 ? null : { pts, ev, gaps, med };
+}
+// Dernier versement en retard (pas de versement connu après lui) : impossible de savoir si l'entreprise a cessé de payer,
+// donc rien n'est corrigé : [dernier versement connu, versement attendu vers], à vérifier à la main.
+export function divLate(raw, adj) {
+  const E = divEvents(raw, adj); if (!E) return null;
+  const last = E.ev[E.ev.length - 1].d, g = days(last, E.pts[E.pts.length - 1][0]);
+  return g >= 1.6 * E.med && g <= 4 * E.med ? [last, addDays(last, E.med)] : null;
+}
+export function divGaps(raw, adj) {
+  const E = divEvents(raw, adj); if (!E) return [];
+  const { pts, ev, gaps, med } = E, out = [];
   for (let i = 0; i < gaps.length; i++) {
     const g = gaps[i], k = Math.round(g / med) - 1;
     if (g < 1.6 * med || k < 1 || k > 3) continue;
