@@ -190,7 +190,7 @@ const first = !R.ls || adjChanged;   // premier passage ou réglage changé : on
 const sig = signals(S, view, ls, R.notified, { near: !!S.settings.pushNear });
 let sent = 0, dead = [];
 const payloads = [];
-if (sig.length && !first) payloads.push(message(sig, ls));
+if (sig.length && !first) payloads.push({ ...message(sig, ls), badge: sig.filter(x => x.kind !== 'near').length });
 if (labDone && !labLeft) payloads.push({ title: 'Labo SMA terminé', body: `${labQ.filter(t => L.res[t] && !L.res[t].err).length} action(s) testée(s) sur 15 SMA × J / S / M et en combiné J + S + M. Résultats dans l’app.`, tag: 'lab-' + ls, url: './#lab' });
 
 // ----- Aides : stops à remonter, résultats au prochain jour de bourse, bilan du vendredi -----
@@ -231,7 +231,7 @@ if (S.settings.pushStops !== false) {
       if (a.sma > st * 1.005 && a.sma < a.lastClose && !R.notified[key]) { lines.push(`${t} : SMA ${w.period} ${TFL[w.tf]} à ${usd(a.sma)} (stop ${st ? usd(st) : 'aucun'})${late ? ' · dividende à vérifier' : ''}`); extra.push(key); }
     }
   }
-  if (lines.length && !first) payloads.push({ title: `Stops · ${lines.length} à remonter`, body: lines.slice(0, 6).join('\n') + (lines.length > 6 ? `\n+ ${lines.length - 6} autre(s) dans l’app` : ''), tag: 'stops-' + ls, url: './#dash' });
+  if (lines.length && !first) payloads.push({ title: `Stops · ${lines.length} à remonter`, body: lines.slice(0, 6).join('\n') + (lines.length > 6 ? `\n+ ${lines.length - 6} autre(s) dans l’app` : ''), tag: 'stops-' + ls, url: './#dash', badge: lines.length });
 }
 // Résultats : positions ouvertes qui publient d'ici le prochain jour de bourse (week-end compris le vendredi).
 if (S.settings.pushEarn !== false && FINNHUB_KEY && openT.length) {
