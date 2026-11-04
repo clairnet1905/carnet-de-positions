@@ -4,7 +4,7 @@
 //    dans un second Gist secret (« carnet-radar.json ») que l'app télécharge.
 // 3. Envoie une notification groupée aux appareils abonnés pour chaque nouveau croisement de SMA.
 // Les clés ne sont jamais écrites dans le code : elles viennent des secrets du dépôt (Settings › Secrets and variables › Actions).
-import { addDays, days, lastSession, prevWeekday, nextWeekday, weekKey, barsNeeded, symOf, signals, message, analyze, pack, unpack } from './sma.mjs';
+import { addDays, days, lastSession, prevWeekday, nextWeekday, weekKey, barsNeeded, symOf, signals, message, analyze, pack, unpack, divGaps, fixBars } from './sma.mjs';
 import { labUnit, labCombo, packUnit, doneBars, LAB_PERIODS, LAB_MIN_TRADES } from './labsma.mjs';
 
 const { GIST_TOKEN, TWELVEDATA_KEY, FINNHUB_KEY, VAPID_PRIVATE_KEY, TEST_PUSH } = process.env;
@@ -37,13 +37,13 @@ async function findGists() {
 
 // ----- Cours -----
 let tdCalls = 0, tdLast = 0, ADJ = 'all';
-async function twelve(sym, n, interval = '1day', end = '') {
+async function twelve(sym, n, interval = '1day', end = '', adj = ADJ) {
   if (!TWELVEDATA_KEY) throw new Error('pas de clé Twelve Data');
   if (tdCalls >= TD_DAY_LIMIT) throw new Error('quota Twelve Data du jour réservé');
   for (let attempt = 0; attempt < 3; attempt++) {
     const wait = tdLast + 8000 - Date.now(); if (wait > 0) await sleep(wait);   // 8 requêtes par minute (offre gratuite)
     tdLast = Date.now(); tdCalls++;
-    const r = await fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=${interval}&outputsize=${n}&adjust=${ADJ}${end ? '&end_date=' + end : ''}&apikey=${encodeURIComponent(TWELVEDATA_KEY)}`);
+    const r = await fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=${interval}&outputsize=${n}&adjust=${adj}${end ? '&end_date=' + end : ''}&apikey=${encodeURIComponent(TWELVEDATA_KEY)}`);
     const j = await r.json().catch(() => ({}));
     if (j.code === 429 || r.status === 429) { await sleep(61000); continue; }
     if (j.status === 'error' || !Array.isArray(j.values)) throw new Error(j.message || 'erreur ' + r.status);
@@ -134,6 +134,25 @@ for (const s of daily) {
 }
 for (const s of resync.slice(0, RESYNC_PER_RUN)) { try { put(s, await twelve(s, need[s]), true); } catch (e) { errors[s] = e.message; break; } }
 
+// ----- Dividendes manquants (cours ajustés seulement) : actions en position, vérifiées une fois par semaine (1 requête chacune) -----
+// Le cours brut comparé au cours ajusté donne les dividendes connus de Twelve Data ; un versement manquant est estimé (sma.mjs : divGaps).
+// L'historique gardé reste celui de Twelve Data : la correction s'applique au calcul des SMA (ici et dans l'app).
+const isOpen = l => !l.demo && l.qty - (l.events || []).filter(e => e.type === 'sell').reduce((a, e) => a + e.qty, 0) > 1e-9;
+const posSym = ADJ === 'all' ? [...new Set((S.lots || []).filter(isOpen).flatMap(l => S.watch.filter(w => w.ticker === l.ticker && !w.idx).map(symOf)))] : [];
+const DF = ADJ === 'all' && R.adj === ADJ ? Object.assign({}, R.divfix) : {};
+for (const s of posSym) {
+  if (!hist[s] || (DF[s] && now - DF[s].at < WEEK && !adjusted.includes(s))) continue;
+  if (tdCalls + 1 > TD_DAY_LIMIT) break;
+  try {
+    const raw = await twelve(s, Math.min(5000, hist[s].bars.length), '1day', '', 'splits');
+    DF[s] = { at: Date.now(), fx: divGaps(raw, hist[s].bars) };
+    if (DF[s].fx.length) log(`Dividende(s) estimé(s) ${s} : ${DF[s].fx.map(x => `${x[0]} (${x[2]} $)`).join(', ')}`);
+  } catch (e) { if (/quota|limite/.test(e.message)) break; }
+}
+for (const s in DF) if (!posSym.includes(s) || !hist[s]) delete DF[s];
+const view = {};   // historique utilisé pour les SMA (signaux, stops, feu)
+for (const s in hist) view[s] = DF[s] && DF[s].fx.length ? Object.assign({}, hist[s], { bars: fixBars(hist[s].bars, DF[s].fx) }) : hist[s];
+
 // ----- Labo SMA : tickers demandés dans l'app (S.settings.labQueue), radar compris ; le robot n'écrit jamais dans le radar -----
 // 3 à 6 requêtes Twelve Data par action (J jusqu'à 20 000 séances en quatre fois, S et M depuis le début de l'actif), refaites tous les 30 jours.
 // En plus des 15 SMA × J / S / M : test combiné J + S + M (filtre par la meilleure SMA hebdo et mensuelle).
@@ -167,7 +186,7 @@ L = { v: 1, at: Date.now(), ls, res: L.res };
 // ----- Notifications -----
 const subs = (S.push && S.push.subs) || [], pub = S.push && S.push.vapid;
 const first = !R.ls || adjChanged;   // premier passage ou réglage changé : on mémorise les croisements sans notifier (pas d'avalanche)
-const sig = signals(S, hist, ls, R.notified, { near: !!S.settings.pushNear });
+const sig = signals(S, view, ls, R.notified, { near: !!S.settings.pushNear });
 let sent = 0, dead = [];
 const payloads = [];
 if (sig.length && !first) payloads.push(message(sig, ls));
@@ -204,7 +223,7 @@ if (S.settings.pushStops !== false) {
     const l = openLots.find(x => x.ticker === t), st = l.stopCurrent > 0 ? l.stopCurrent : 0;
     const mine = [...new Set(openLots.filter(x => x.ticker === t).flatMap(x => x.smas || []))];   // SMA d'entrée choisies dans l'app (vide : toutes)
     for (const w of S.watch.filter(x => x.ticker === t && !x.idx && (!mine.length || mine.includes(x.tf + '|' + x.period)))) {
-      const h = hist[symOf(w)]; if (!h) continue;
+      const h = view[symOf(w)]; if (!h) continue;
       const a = analyze(w, h.bars, ls, S.settings.nearPct); if (!a || a.short) continue;
       const key = `stop|${l.id}|${w.id}|${st}`;
       if (a.sma > st * 1.005 && a.sma < a.lastClose && !R.notified[key]) { lines.push(`${t} : SMA ${w.period} ${TFL[w.tf]} à ${usd(a.sma)} (stop ${st ? usd(st) : 'aucun'})`); extra.push(key); }
@@ -241,7 +260,7 @@ if (S.settings.pushWeekly !== false && new Date(ls + 'T12:00:00Z').getUTCDay() =
     n++; net += g; if (u > 0) { sumR += g / u; nR++; }
   }
   let up = 0, k = 0;
-  for (const w of S.watch.filter(x => x.idx)) { const h = hist[symOf(w)]; if (!h) continue; const a = analyze(w, h.bars, ls, 2); if (!a || a.short) continue; k++; if (a.above) up++; }
+  for (const w of S.watch.filter(x => x.idx)) { const h = view[symOf(w)]; if (!h) continue; const a = analyze(w, h.bars, ls, 2); if (!a || a.short) continue; k++; if (a.above) up++; }
   const feu = k ? (up / k >= 0.7 ? 'vert' : up / k <= 0.3 ? 'rouge' : 'orange') : null;
   const lines = [n ? `${n} trade(s) clôturé(s) : ${net >= 0 ? '+' : ''}${usd(net)}${nR ? ` · ${sumR >= 0 ? '+' : ''}${sumR.toFixed(2).replace('.', ',')} R` : ''} (swap estimé non compris)` : 'Aucun trade clôturé cette semaine',
     `${openT.length} position(s) ouverte(s) · ${raised} stop(s) remonté(s)`, feu ? `Feu ${feu} : ${up}/${k} de vos SMA d’indices au-dessus` : ''].filter(Boolean);
@@ -264,7 +283,7 @@ for (const k in R.notified) if (days(R.notified[k], ls) > 60) delete R.notified[
 // ----- Enregistrement -----
 const packed = {};
 for (const s in hist) if (need[s]) packed[s] = pack(hist[s]);   // les actions retirées du radar sont oubliées
-R = { v: 1, ls, adj: ADJ, at: Date.now(), hist: packed, notified: R.notified, deadSubs: dead, errors,
+R = { v: 1, ls, adj: ADJ, at: Date.now(), hist: packed, divfix: DF, notified: R.notified, deadSubs: dead, errors,
   log: [{ at: Date.now(), ls, full: full.length, daily: daily.length, resync: Math.min(resync.length, RESYNC_PER_RUN), signals: sig.length, sent, td: tdCalls, errors: Object.keys(errors).length }].concat(R.log || []).slice(0, 30) };
 const body = JSON.stringify(R);
 const labBody = JSON.stringify(L);

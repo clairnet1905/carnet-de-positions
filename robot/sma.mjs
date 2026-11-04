@@ -105,3 +105,37 @@ export function unpack(p) {
   for (let i = 0; i < p.c.length; i++) { d = i ? addDays(d, p.o[i]) : d; bars.push([d, p.c[i]]); }
   return { bars, n: p.n, full: p.full || 0, last: bars.length ? bars[bars.length - 1][0] : '' };
 }
+
+// ----- Dividendes manquants dans les cours ajustés -----
+// Les dividendes connus de la source se lisent dans le rapport cours ajusté / cours brut : il baisse d'un cran à chaque ex-date.
+// Un payeur régulier (mensuel à semestriel) dont il manque un ou deux versements entre deux versements connus
+// reçoit des dividendes estimés : date au milieu de l'écart, montant du versement connu le plus proche (comme TradingView avec ADJ).
+// Renvoie [[ex-date, facteur, montant estimé]] ; les cours ajustés antérieurs à l'ex-date sont à multiplier par le facteur.
+export function divGaps(raw, adj) {
+  const A = new Map(adj), pts = raw.filter(b => A.has(b[0]) && b[1] > 0 && A.get(b[0]) > 0).map(b => [b[0], b[1], A.get(b[0]) / b[1]]);
+  const ev = [];
+  for (let i = 1; i < pts.length; i++) {
+    const f = pts[i - 1][2] / pts[i][2];
+    if (f < 0.9995 && f > 0.8) ev.push({ d: pts[i][0], amt: (1 - f) * pts[i - 1][1] });
+  }
+  if (ev.length < 3) return [];
+  const gaps = ev.slice(1).map((e, i) => days(ev[i].d, e.d)), med = gaps.slice().sort((a, b) => a - b)[gaps.length >> 1];
+  if (med < 25 || med > 200) return [];
+  const out = [];
+  for (let i = 0; i < gaps.length; i++) {
+    const g = gaps[i], k = Math.round(g / med) - 1;
+    if (g < 1.6 * med || k < 1 || k > 3) continue;
+    for (let j = 1; j <= k; j++) {
+      const target = addDays(ev[i].d, Math.round(g * j / (k + 1)));
+      const at = pts.findIndex(p => p[0] >= target); if (at < 1) continue;
+      const amt = Math.round((j / (k + 1) <= 0.5 ? ev[i].amt : ev[i + 1].amt) * 100) / 100;   // montant du versement connu le plus proche
+      out.push([pts[at][0], 1 - amt / pts[at - 1][1], amt]);
+    }
+  }
+  return out;
+}
+// Cours ajustés corrigés des dividendes estimés.
+export function fixBars(bars, fx) {
+  if (!fx || !fx.length) return bars;
+  return bars.map(([d, c]) => { let k = 1; for (const x of fx) if (d < x[0]) k *= x[1]; return [d, c * k]; });
+}
