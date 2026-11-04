@@ -1,16 +1,21 @@
 // Page : réseau d'abord (sans cache HTTP) pour voir chaque mise à jour dès l'ouverture, copie locale si hors ligne.
 // Icônes et polices : cache d'abord, mises à jour en arrière-plan.
-const CACHE = 'carnet-v1.32.0';
+const CACHE = 'carnet-v1.33.0';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './apple-touch-icon.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE && k !== 'carnet-badge').map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
 // Notifications du robot radar (GitHub Actions) : affichées même app fermée ; un toucher ouvre le radar.
 self.addEventListener('push', e => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch (err) { d = { body: e.data ? e.data.text() : '' }; }
-  e.waitUntil(self.registration.showNotification(d.title || 'Carnet de positions', { body: d.body || '', tag: d.tag || 'radar', icon: 'icon-192.png', badge: 'icon-192.png', data: { url: d.url || './#radar' } }));
+  // Pastille sur l'icône : compte gardé par l'app + éléments de cette notification (stops, croisements).
+  const bump = d.badge > 0 && self.navigator.setAppBadge ? caches.open('carnet-badge').then(async c => {
+    const r = await c.match('./badge-n'), n = (r ? parseInt(await r.text(), 10) || 0 : 0) + d.badge;
+    await c.put('./badge-n', new Response(String(n))); await self.navigator.setAppBadge(n);
+  }).catch(() => {}) : Promise.resolve();
+  e.waitUntil(Promise.all([bump, self.registration.showNotification(d.title || 'Carnet de positions', { body: d.body || '', tag: d.tag || 'radar', icon: 'icon-192.png', badge: 'icon-192.png', data: { url: d.url || './#radar' } })]));
 });
 self.addEventListener('notificationclick', e => {
   e.notification.close();

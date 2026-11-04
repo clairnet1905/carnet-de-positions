@@ -168,6 +168,7 @@ tr:last-child td{border-bottom:0}
 .pcard header{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
 .pcard .tk{font-size:1.15rem}
 .rlist{display:grid;gap:10px}
+.elist{display:grid} .erow{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 0;border-top:1px solid var(--line);font-size:.9rem} .erow .muted{color:var(--muted);font-size:.84rem} .ewk{font-size:.78rem;color:var(--muted);margin:14px 0 2px;font-weight:600} .hint.warn-t{color:var(--warn)}
 .rrow{min-width:0;border:1px solid var(--line);border-radius:12px;padding:12px;display:grid;gap:8px;background:var(--surface);position:relative;overflow:hidden}
 .rrow::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:var(--line)}
 .rrow.win::before{background:var(--gain)} .rrow.loss::before{background:var(--loss)} .rrow.warn::before{background:var(--warn)} .rrow.open::before{background:var(--accent)}
@@ -430,7 +431,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.32.0 · licence MIT */
+/* Carnet de positions v1.33.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -1385,6 +1386,68 @@ function earnPill(t) {
   const when = n === 0 ? 'aujourd’hui' : n === 1 ? 'demain' : `dans ${n} j`;
   return ` <span class="pill earn" title="Résultats le ${fmtDate(e[0])}${EARN_H[e[1]] ? ' ' + EARN_H[e[1]] : ''} (date annoncée, peut bouger)">Résultats ${when}</span>`;
 }
+// ----- Calendrier des résultats : positions ouvertes et actions du radar (dates Finnhub, peuvent bouger) -----
+const EARN_F_KEY = 'carnet-positions:earn-f';
+let earnF = (() => { try { return localStorage.getItem(EARN_F_KEY) || 'all'; } catch (e) { return 'all'; } })();
+const fmtEarnD = memo(d => new Date(d + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }));
+const EARN_HS = { bmo: 'avant ouv.', amc: 'après clôt.', dmh: 'en séance' };
+function earnRows(maxDays) {
+  const today = todayISO(), openT = new Set(S.lots.filter(l => !Core.lotState(l).closed).map(l => l.ticker));
+  const radT = new Set(S.watch.filter(w => !w.idx).map(w => w.ticker)), out = [];
+  for (const t of new Set([...openT, ...radT])) {
+    const e = nextEarn(t); if (!e) continue;
+    const n = Core.days(today, e[0]); if (maxDays != null && n > maxDays) continue;
+    const near = !openT.has(t) && S.watch.some(w => w.ticker === t && !w.idx && radarRank(analyzeWatch(w)) <= 2);
+    out.push({ t, d: e[0], h: e[1], n, pos: openT.has(t), rad: radT.has(t), near });
+  }
+  return out.sort((a, b) => a.d < b.d ? -1 : a.d > b.d ? 1 : (b.pos - a.pos) || (a.t < b.t ? -1 : 1));
+}
+function earnRow(x) {
+  const tag = x.pos ? ' <span class="pill open">Position</span>' : x.near ? ' <span class="pill warn">Proche SMA</span>' : '';
+  return `<div class="erow"><span><strong>${esc(x.t)}</strong>${tag}</span><span class="muted">${fmtEarnD(x.d)}${EARN_HS[x.h] ? ' · ' + EARN_HS[x.h] : ''}${x.n <= 1 ? ` <b class="new">${x.n === 0 ? 'aujourd’hui' : 'demain'}</b>` : ''}</span></div>`;
+}
+function earnCard() {
+  const xs = earnRows(7); if (!xs.length) return '';
+  const pos = xs.filter(x => x.pos).map(x => esc(x.t));
+  return `<section class="card"><div class="sec-head"><h2>Résultats <small>· 7 prochains jours</small></h2><button class="btn sm" data-tab="earn">Calendrier</button></div>
+    <div class="elist">${xs.slice(0, 6).map(earnRow).join('')}</div>${xs.length > 6 ? `<p class="hint">+ ${xs.length - 6} autre(s) dans le calendrier.</p>` : ''}
+    ${pos.length ? `<p class="hint warn-t">${pos.join(', ')} : risque d’écart à l’ouverture (le stop ne protège pas d’un trou de cours). Garder, alléger ou resserrer : à vous de voir.</p>` : ''}</section>`;
+}
+function viewEarn() {
+  if (!Radar.loaded && S.watch.length) loadRadarCache().then(() => { if (tab === 'earn') render(); });
+  const all = earnRows(null), today = todayISO();
+  const xs = all.filter(x => earnF === 'pos' ? x.pos : earnF === 'radar' ? !x.pos : true);
+  const sun = addDays(today, (7 - wdOf(today)) % 7), sun2 = addDays(sun, 7);
+  const grp = [['Cette semaine', xs.filter(x => x.d <= sun)], ['Semaine prochaine', xs.filter(x => x.d > sun && x.d <= sun2)], ['Plus tard', xs.filter(x => x.d > sun2)]].filter(g => g[1].length);
+  const nPos = all.filter(x => x.pos).length;
+  const fB = (k, l, n) => `<button class="btn sm" data-act="earn-f" data-f="${k}" aria-pressed="${earnF === k}">${l} (${n})</button>`;
+  const known = new Set(all.map(x => x.t)), every = new Set([...S.lots.filter(l => !Core.lotState(l).closed).map(l => l.ticker), ...S.watch.filter(w => !w.idx).map(w => w.ticker)]);
+  const none = [...every].filter(t => !known.has(t)).sort();
+  const body = !quoteKey() ? '<p class="lead">Ajoutez la clé Finnhub (Réglages › Cours automatiques) pour charger le calendrier des résultats.</p>'
+    : !Earn.day ? '<p class="lead">Calendrier en cours de chargement…</p>'
+    : grp.length ? grp.map(([h, g]) => `<h3 class="ewk">${h}</h3><div class="elist">${g.map(earnRow).join('')}</div>`).join('')
+    : '<p class="lead">Aucune date de résultats connue pour ce filtre dans les 100 prochains jours.</p>';
+  return `<section class="card">
+    <div class="sec-head"><h2>Calendrier des résultats</h2><button class="btn sm" data-tab="radar">← Radar</button></div>
+    <p class="lead">Positions ouvertes et actions du radar, sur 100 jours. Dates annoncées par les sociétés (Finnhub) : elles peuvent bouger. Mis à jour une fois par jour.</p>
+    <div class="row">${fB('all', 'Tout', all.length)}${fB('pos', 'Positions', nPos)}${fB('radar', 'Radar', all.length - nPos)}</div>
+    ${body}
+    ${none.length && Earn.day ? `<p class="hint">Sans date connue : ${none.map(esc).join(', ')}.</p>` : ''}
+  </section>`;
+}
+// Pastille sur l'icône (écran d'accueil) : stops à remonter + nouveaux croisements de SMA non vus.
+// Le service worker y ajoute les éléments des notifications reçues app fermée ; l'app remet le vrai compte à chaque affichage.
+let badgeT = 0, badgeN = -1;
+function badgeSoon() { clearTimeout(badgeT); badgeT = setTimeout(updateBadge, 800); }
+function updateBadge() {
+  if (!('setAppBadge' in navigator) || document.visibilityState !== 'visible') return;
+  let n = 0;
+  try { if (S.watch.length && Radar.loaded) n = stopRaises().length + radarAlerts().filter(x => !x.seen && x.lvl !== 'near').length; else return; } catch (e) { return; }
+  if (n === badgeN) return;
+  badgeN = n;
+  (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
+  if (window.caches) caches.open('carnet-badge').then(c => c.put('./badge-n', new Response(String(n)))).catch(() => {});
+}
 // Sortie « autour des résultats » : vente entre le jour de publication et 4 jours après (publication après la clôture, week-end).
 const nearEarn = (t, d) => (Earn.map[t] || []).some(([e]) => e <= d && d <= addDays(e, 4));
 // hotOnly : pendant la séance, entre deux mises à jour complètes, seulement les positions ouvertes
@@ -1844,7 +1907,7 @@ function viewRadar() {
   const fBtn = (k, l, n) => `<button class="btn sm" data-act="radar-filter" data-f="${k}" aria-pressed="${radarFilter === k}">${l} (${n})</button>`;
   return `${key ? '' : setup}
   <section class="card">
-    <div class="sec-head"><h2>Radar SMA <small title="${adjMode() === 'all' ? 'Cours ajustés des dividendes, comme le bouton ADJ de TradingView' : 'Cours non ajustés des dividendes'}">· ${adjMode() === 'all' ? 'ADJ' : 'brut'}</small></h2><div class="row"><button class="btn sm" data-act="radar-refresh" ${key && S.watch.length ? '' : 'disabled'}>Actualiser</button><button class="btn sm" data-tab="lab">Labo SMA</button><button class="btn sm primary" data-act="radar-add">+ Ajouter</button></div></div>
+    <div class="sec-head"><h2>Radar SMA <small title="${adjMode() === 'all' ? 'Cours ajustés des dividendes, comme le bouton ADJ de TradingView' : 'Cours non ajustés des dividendes'}">· ${adjMode() === 'all' ? 'ADJ' : 'brut'}</small></h2><div class="row"><button class="btn sm" data-act="radar-refresh" ${key && S.watch.length ? '' : 'disabled'}>Actualiser</button><button class="btn sm" data-tab="lab">Labo SMA</button><button class="btn sm" data-tab="earn">Résultats</button><button class="btn sm primary" data-act="radar-add">+ Ajouter</button></div></div>
     <p class="lead">${cards.length} action(s), ${S.watch.filter(w => !w.idx).length} SMA. Alerte « proche » à ${fmtNum(S.settings.nearPct || 2)} % de la SMA. ${adjMode() === 'all' ? 'Cours ajustés des dividendes (ADJ de TradingView). ' : 'Cours non ajustés des dividendes. '}${quoteKey() ? 'Historique Twelve Data (une fois, puis vérifié chaque semaine) complété chaque soir par la clôture Finnhub.' : 'Sans clé Finnhub sur cet appareil, l’historique est retéléchargé chaque jour sur Twelve Data (plus lent).'}</p>
     ${prog}${Radar.err ? `<div class="banner err">${esc(Radar.err)}</div>` : ''}
     ${errs.length ? `<p class="hint">Sans historique : ${errs.map(esc).join(', ')}.</p>` : ''}
@@ -1998,7 +2061,7 @@ function sheetRadarSettings() {
 // Swap des CFD estimé chaque nuit (Réglages › Compte) : voir Core.setSwap.
 function syncSwap() { const w = S.settings.swap || {}; Core.setSwap({ pct: w.pct || 0, triple: w.triple == null ? 5 : w.triple, prices: S.prices, today: todayISO() }); }
 function render() {
-  document.querySelectorAll('nav.tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === (tab === 'lab' ? 'radar' : tab) ? 'true' : 'false'));
+  document.querySelectorAll('nav.tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === (tab === 'lab' || tab === 'earn' ? 'radar' : tab) ? 'true' : 'false'));
   const v = $('#view'), saved = S.prices;
   if (Object.keys(Live.prices).length) S.prices = withLive(saved);
   syncSwap();
@@ -2008,8 +2071,10 @@ function render() {
     else if (tab === 'pos') { v.innerHTML = viewPos(); applyPosQuery(); loadThumbs(); }
     else if (tab === 'radar') { v.innerHTML = viewRadar(); applyRadarQuery(); }
     else if (tab === 'lab') v.innerHTML = viewLab();
+    else if (tab === 'earn') v.innerHTML = viewEarn();
     else v.innerHTML = viewSettings();
   } finally { S.prices = saved; }
+  badgeSoon();
 }
 const kv = (label, value, extra, c) => `<div><dt>${label}</dt><dd class="${c || ''}">${value}${extra ? `<small>${extra}</small>` : ''}</dd></div>`;
 function demoBanner() {
@@ -2665,6 +2730,7 @@ function viewDash() {
   const method = P.estCount ? `Rendement pondéré dans le temps, ${P.estCount} sous-période(s) estimée(s) par Modified Dietz faute de valorisation à la date d’un flux.` : 'Rendement pondéré dans le temps (valorisations disponibles autour de chaque flux).';
   return `${demoBanner()}
   ${alertsStrip()}
+  ${earnCard()}
   ${liveBar()}
   ${marketCard()}
   <div class="hero-card">
@@ -3218,7 +3284,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.32.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.33.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
@@ -3679,6 +3745,7 @@ document.addEventListener('click', e => {
     case 'lab-del': S.settings.labQueue = labQueue().filter(t => t !== b.dataset.t); save(b.dataset.t + ' retiré du Labo'); break;
     case 'lab-clear': confirmSheet('Vider le Labo', 'Retirer toutes les actions de la liste ? Leurs résultats disparaîtront au prochain passage du robot.', 'Tout retirer', () => { S.settings.labQueue = []; save('Labo vidé'); }); break;
     case 'lab-fee': labFee = b.dataset.f; try { localStorage.setItem(LAB_FEE_KEY, labFee); } catch (e) {} render(); break;
+    case 'earn-f': earnF = b.dataset.f; try { localStorage.setItem(EARN_F_KEY, earnF); } catch (e) {} render(); break;
     case 'lab-open': { const t = b.dataset.t; if (labOpen.has(t)) labOpen.delete(t); else labOpen.add(t); render(); break; }
     case 'lab-cell': labSel[b.dataset.t] = [b.dataset.tf, +b.dataset.i]; (labPick[b.dataset.t] = labPick[b.dataset.t] || {})[b.dataset.tf] = +b.dataset.i; render(); break;
     case 'lab-combo': { const t = b.dataset.t; labPick[t] = { D: +b.dataset.i, W: LAB_P.indexOf(+b.dataset.w), M: LAB_P.indexOf(+b.dataset.m) }; labChk[t] = { D: true, W: true, M: true }; render(); toast('Les 3 SMA sont cochées dans « Ajouter au radar » : vérifiez puis ajoutez'); break; }
@@ -3927,7 +3994,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet
 (function boot() {
   const local = readLocal();
   if (local) S = normalize(local);
-  try { const h = location.hash.slice(1); if (['dash', 'calc', 'pos', 'radar', 'set', 'lab'].includes(h)) tab = h; } catch (e) {}
+  try { const h = location.hash.slice(1); if (['dash', 'calc', 'pos', 'radar', 'set', 'lab', 'earn'].includes(h)) tab = h; } catch (e) {}
   Store.cfg = readJSON(SYNC_KEY, null);
   if (!local) { loadDemo(); S.updatedAt = 0; writeLocal(); }
   migrateSeen();
@@ -3935,14 +4002,14 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet
   migrateIdx();
   render();
   if (Store.cfg) { setSync('saving'); syncNow(); } else setSync('local');
-  window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (['dash', 'calc', 'pos', 'radar', 'set', 'lab'].includes(h) && h !== tab) { tab = h; render(); window.scrollTo(0, 0); } });
+  window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (['dash', 'calc', 'pos', 'radar', 'set', 'lab', 'earn'].includes(h) && h !== tab) { tab = h; render(); window.scrollTo(0, 0); } });
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   // Cours automatiques : à l'ouverture, au retour sur l'app, puis toutes les 2 minutes pendant la séance.
   refreshQuotes();
   // Historique du radar : d'abord celui du robot (Gist), puis Twelve Data seulement pour ce qui manque.
   const radarUp = throttle => (Store.cfg ? pullSharedRadar(throttle).catch(() => {}) : Promise.resolve()).then(() => refreshRadar());
   loadRadarCache().then(() => { render(); radarUp(false); });
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { if (Date.now() - Live.at > 60000) refreshQuotes(); radarUp(true); } });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { badgeN = -1; badgeSoon(); if (Date.now() - Live.at > 60000) refreshQuotes(); radarUp(true); } });
   setInterval(() => { if (document.visibilityState === 'visible' && tab !== 'calc' && marketOpen(Date.now())) refreshQuotes(false, Date.now() - (Live.fullAt || 0) < 600000); }, 120000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Store.cfg) scheduleSync(200); });
   window.addEventListener('online', () => { if (Store.cfg) scheduleSync(200); });
