@@ -175,7 +175,7 @@ i.p{background:var(--accent)!important} i.n{background:var(--warn)!important} i.
 .eitem{display:flex;gap:12px;align-items:center;padding:10px;border:1px solid var(--line);border-radius:12px;margin-top:8px;background:var(--surface)} .eitem.pos{border:1.5px solid var(--accent)}
 .etile{width:48px;flex-shrink:0;text-align:center;background:var(--surface-2);border-radius:10px;padding:5px 0;font-size:.7rem;color:var(--muted);line-height:1.25} .etile b{display:block;font-size:1.2rem;color:var(--ink);font-weight:600}
 .ebody{flex:1;min-width:0} .ehead{display:flex;justify-content:space-between;align-items:center;gap:8px} .ehead strong{font-size:1rem} .emeta{margin:3px 0 0;font-size:.8rem;color:var(--muted)} .ewarn{margin:2px 0 0;font-size:.8rem;color:var(--warn)}
-.eic{font-style:normal} .eic.bmo{color:var(--warn)} .eic.amc{color:var(--accent)} .echips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px} .echip{font-size:.8rem;padding:4px 10px;border:1px solid var(--line);border-radius:99px} .echip.pos{border-color:var(--accent)}
+.eic{font-style:normal} .eic.bmo{color:var(--warn)} .eic.amc{color:var(--accent)} .echips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px} .echip{font-size:.8rem;padding:4px 10px;border:1px solid var(--line);border-radius:99px} .echip.pos{border-color:var(--accent)} .egrid{display:grid;grid-template-columns:auto auto 1fr;gap:2px 10px;font-size:.8rem;margin-top:6px;align-items:center} .egrid>span:nth-child(3n+1),.egrid>span:nth-child(3n+2){white-space:nowrap} .egrid>span:nth-child(3n){text-align:right;font-size:.74rem} .egrid .k,.egrid .muted,.ebody .muted{color:var(--muted)} .egrid .gain{color:var(--gain)} .egrid .loss,.emeta .loss{color:var(--loss)} .emeta .gain{color:var(--gain)} .edot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:2px;vertical-align:0} .edot.up{background:var(--gain)} .edot.dn{background:var(--loss)}
 .rrow{min-width:0;border:1px solid var(--line);border-radius:12px;padding:12px;display:grid;gap:8px;background:var(--surface);position:relative;overflow:hidden}
 .rrow::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:var(--line)}
 .rrow.win::before{background:var(--gain)} .rrow.loss::before{background:var(--loss)} .rrow.warn::before{background:var(--warn)} .rrow.open::before{background:var(--accent)}
@@ -438,7 +438,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.34.0 · licence MIT */
+/* Carnet de positions v1.35.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -1345,17 +1345,20 @@ async function fetchQuote(sym, key) {
   return r.json();
 }
 // ----- Résultats trimestriels (calendrier Finnhub) : information seulement, gardés sur cet appareil -----
-// Earn.map : { TICKER: [[date, heure], …] } ; heure « bmo » avant l'ouverture, « amc » après la clôture.
+// Earn.map : { TICKER: [[date, heure, BPA attendu, BPA publié, CA attendu, CA publié, trimestre, exercice], …] } ; heure « bmo » avant l'ouverture, « amc » après la clôture.
+// Earn.hist : { TICKER: { at, q: [[période, BPA publié, BPA attendu, trimestre, exercice], …] } } (4 derniers trimestres, Finnhub /stock/earnings).
 const EARN_KEY = 'carnet-positions:earnings', EARN_SOON = 14;
 const Earn = (() => { try { return JSON.parse(localStorage.getItem(EARN_KEY)) || {}; } catch (e) { return {}; } })();
-Earn.map = Earn.map || {};
+Earn.map = Earn.map || {}; Earn.hist = Earn.hist || {};
 async function refreshEarnings() {
   const key = quoteKey(), today = todayISO();
-  if (!key || Earn.busy || Earn.day === today) return;
+  // Une fois par jour ; plus souvent (toutes les 3 h) tant qu'une publication récente attend ses chiffres.
+  const waiting = Object.values(Earn.map).some(l => l.some(e => e[0] >= addDays(today, -3) && e[0] <= today && e[3] == null));
+  if (!key || Earn.busy || (Earn.day === today && !(waiting && Date.now() - (Earn.at || 0) > 3 * 3600e3))) return;
   Earn.busy = true;
   const want = new Set([...S.lots.map(l => l.ticker), ...S.watch.map(w => w.ticker)]);
   // La première fois, on remonte jusqu'aux sorties sous le stop (statistique) ; ensuite 10 jours suffisent.
-  let from = addDays(today, -10);
+  let from = addDays(today, -15);
   if (!Earn.day) for (const l of S.lots) for (const e of l.events) if (e.type === 'sell' && e.date < from) from = e.date;
   if (!Earn.day) from = addDays(from, -7);
   const end = addDays(today, 100);
@@ -1373,14 +1376,30 @@ async function refreshEarnings() {
         const t = String(x.symbol || '').toUpperCase();
         if (!want.has(t) || !/^\d{4}-\d{2}-\d{2}$/.test(x.date || '')) continue;
         const list = Earn.map[t] = Earn.map[t] || [];
-        if (!list.some(([d]) => d === x.date)) list.push([x.date, x.hour || '']);
+        const nb = v => isNum(v) ? v : null;
+        if (!list.some(([d]) => d === x.date)) list.push([x.date, x.hour || '', nb(x.epsEstimate), nb(x.epsActual), nb(x.revenueEstimate), nb(x.revenueActual), x.quarter || 0, x.year || 0]);
       }
       ok++;
     }
     if (ok) {
       for (const t in Earn.map) { Earn.map[t].sort((x, y) => x[0] < y[0] ? -1 : 1); if (!Earn.map[t].length) delete Earn.map[t]; }
-      Earn.day = today;
-      try { localStorage.setItem(EARN_KEY, JSON.stringify({ day: Earn.day, map: Earn.map })); } catch (e) {}
+      Earn.day = today; Earn.at = Date.now();
+      // Historique des surprises : actions qui publient dans les 14 jours (ou viennent de publier), au plus 8 appels.
+      let calls = 0;
+      for (const t of want) {
+        if (calls >= 8) break;
+        const l = Earn.map[t] || [], soon = l.some(([d]) => d >= addDays(today, -14) && d <= addDays(today, 14)), h = Earn.hist[t];
+        const last = l.filter(([d]) => d < today).map(([d]) => d).pop();
+        if (!soon || (h && Core.days(h.at, today) < 20 && !(last && h.at <= last))) continue;
+        calls++;
+        try {
+          const r = await fetch(`https://finnhub.io/api/v1/stock/earnings?symbol=${encodeURIComponent(t)}&limit=4&token=${encodeURIComponent(key)}`, { cache: 'no-store' });
+          if (r.status === 401 || r.status === 429) break;
+          const j = r.ok ? await r.json() : null;
+          if (Array.isArray(j)) Earn.hist[t] = { at: today, q: j.filter(x => isNum(x.actual)).slice(0, 4).map(x => [x.period, x.actual, isNum(x.estimate) ? x.estimate : null, x.quarter || 0, x.year || 0]) };
+        } catch (e) { break; }
+      }
+      try { localStorage.setItem(EARN_KEY, JSON.stringify({ day: Earn.day, at: Earn.at, map: Earn.map, hist: Earn.hist })); } catch (e) {}
       if (tab !== 'calc' && tab !== 'set') render();
     }
   } catch (e) { /* hors ligne : on réessaiera */ } finally { Earn.busy = false; }
@@ -1404,7 +1423,7 @@ function earnRows(maxDays) {
   for (const t of new Set([...openT, ...radT])) {
     const e = nextEarn(t); if (!e) continue;
     const n = Core.days(today, e[0]); if (maxDays != null && n > maxDays) continue;
-    const x = { t, d: e[0], h: e[1], n, pos: openT.has(t), rad: radT.has(t), near: false, sec: sectorOf(t) || '' };
+    const x = { t, d: e[0], h: e[1], e, n, pos: openT.has(t), rad: radT.has(t), near: false, sec: sectorOf(t) || '' };
     if (x.pos) {
       const v = lotView(openL.find(l => l.ticker === t)), st = v.lot.stopCurrent, p = v.last ? v.last.price : null;
       if (isNum(st) && st > 0 && p > 0) x.stopPct = (st - p) / p * 100;
@@ -1425,15 +1444,64 @@ function earnRow(x) {
   return `<div class="erow"><span><strong>${esc(x.t)}</strong>${tag}</span><span class="muted">${fmtEarnD(x.d)}${EARN_HS[x.h] ? ' · ' + EARN_HS[x.h] : ''} ${earnWhen(x.n)}</span></div>`;
 }
 // Fiche du calendrier : tuile de date, moment, secteur, distance au stop ou à la SMA
+const fmt2 = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const eps$ = v => isNum(v) ? fmt2.format(v).replace('-', '−') + ' $' : '—';
+const rev$ = v => !isNum(v) ? '—' : Math.abs(v) >= 1e9 ? fmtNum(v / 1e9, 1) + ' Md$' : fmtNum(v / 1e6, 0) + ' M$';
+const surp = (a, e) => isNum(a) && isNum(e) && e !== 0 ? (a - e) / Math.abs(e) * 100 : null;
+const surpTxt = v => v == null ? '' : `<span class="${v >= 0 ? 'gain' : 'loss'}">${v >= 0 ? '+' : '−'}${fmtNum(Math.abs(v), 1)} %</span>`;
+// Avant publication : attentes du consensus, BPA d'il y a un an, 4 derniers trimestres (au-dessus / en dessous)
+function earnEst(x) {
+  const [, , ee, , re, , q, y] = x.e, h = Earn.hist[x.t];
+  const ago = h && q && y ? h.q.find(r => r[3] === q && r[4] === y - 1) : null;
+  const rows = [isNum(ee) ? `<span class="k">BPA attendu</span><span>${eps$(ee)}</span><span class="muted">${ago ? 'il y a 1 an ' + eps$(ago[1]) : ''}</span>` : '',
+    isNum(re) ? `<span class="k">CA attendu</span><span>${rev$(re)}</span><span></span>` : ''].join('');
+  const past = h ? h.q.filter(r => isNum(r[2])) : [];
+  const beats = past.filter(r => r[1] >= r[2]).length;
+  const dots = past.length ? `<p class="emeta">${past.length} derniers : ${past.slice().reverse().map(r => `<i class="edot ${r[1] >= r[2] ? 'up' : 'dn'}" title="${esc(r[0])} : ${eps$(r[1])} publié, ${eps$(r[2])} attendu"></i>`).join('')} ${beats} au-dessus des attentes</p>` : '';
+  return (q && y ? `<p class="emeta">Trimestre T${q} ${y} (exercice de la société)</p>` : '') + (rows ? `<div class="egrid">${rows}</div>` : '') + dots;
+}
+// Après publication : chiffres contre attentes, réaction du cours (historique du radar), croisement de SMA depuis
+function earnReact(t, d, h) {
+  const w = S.watch.find(w => w.ticker === t && !w.idx); if (!w) return null;
+  const hh = histFixed(symOf(w), Radar.hist[symOf(w)]); if (!hh || !hh.bars.length) return null;
+  const b = hh.bars, after = h === 'amc';
+  let i = -1; for (let k = b.length - 1; k >= 0; k--) if (after ? b[k][0] <= d : b[k][0] < d) { i = k; break; }
+  if (i < 0) return null;
+  const nx = b[i + 1];
+  return nx ? { pct: (nx[1] / b[i][1] - 1) * 100, date: nx[0] } : { wait: true };
+}
+function earnDone(t, e, pos) {
+  const [d, h, ee, ea, re, ra] = e, se = surp(ea, ee), sr = surp(ra, re);
+  const dt = new Date(d + 'T12:00:00');
+  const tag = pos ? ' <span class="pill open">Position</span>' : '';
+  const verdict = !isNum(ea) ? '<span class="ecd">chiffres à venir</span>' : se == null ? '<span class="ecd">publié</span>' : se >= 0 ? '<span class="pill win">Au-dessus</span>' : '<span class="pill loss">En dessous</span>';
+  let body = '';
+  if (isNum(ea) || isNum(ra)) body = `<div class="egrid">${isNum(ea) ? `<span class="k">BPA</span><span>${eps$(ea)} <span class="muted">/ ${eps$(ee)}</span></span>${surpTxt(se) || '<span></span>'}` : ''}${isNum(ra) ? `<span class="k">CA</span><span>${rev$(ra)} <span class="muted">/ ${rev$(re)}</span></span>${surpTxt(sr) || '<span></span>'}` : ''}</div>`;
+  else body = '<p class="emeta">Publié, chiffres pas encore reçus (souvent le lendemain).</p>';
+  const r = earnReact(t, d, h), cr = [];
+  for (const w of S.watch.filter(w => w.ticker === t && !w.idx)) { const a = analyzeWatch(w); if (a && !a.short && a.lastCross && a.lastCross.date >= d) cr.push(`${a.lastCross.dir === 'down' ? 'passé sous' : 'passé au-dessus de'} sa SMA ${w.period} ${TF_SHORT[w.tf]}`); }
+  const rl = r && !r.wait ? `Réaction du cours : ${surpTxt(r.pct)} à la clôture du ${fmtDate(r.date).replace(/ \d{4}$/, '')}` : r && r.wait ? 'Réaction du cours : à la prochaine clôture' : '';
+  return `<div class="eitem${pos ? ' pos' : ''}"><div class="etile"><span>${dt.toLocaleDateString('fr-FR', { weekday: 'short' })}</span><b>${dt.getDate()}</b><span>${dt.toLocaleDateString('fr-FR', { month: 'short' })}</span></div>
+    <div class="ebody"><div class="ehead"><span><strong>${esc(t)}</strong>${tag}</span>${verdict}</div>${body}${rl || cr.length ? `<p class="emeta">${[rl, ...cr].filter(Boolean).join(' · ')}</p>` : ''}</div></div>`;
+}
+function earnRecent(f) {
+  const today = todayISO(), openT = new Set(S.lots.filter(l => !Core.lotState(l).closed).map(l => l.ticker)), out = [];
+  for (const t of new Set([...openT, ...S.watch.filter(w => !w.idx).map(w => w.ticker)])) {
+    if (f === 'pos' && !openT.has(t)) continue; if (f === 'radar' && openT.has(t)) continue;
+    for (const e of Earn.map[t] || []) if (e[0] >= addDays(today, -14) && (e[0] < today || (e[0] === today && isNum(e[3])))) out.push({ t, e, pos: openT.has(t) });
+  }
+  return out.sort((a, b) => a.e[0] > b.e[0] ? -1 : 1);
+}
 function earnItem(x) {
   const dt = new Date(x.d + 'T12:00:00'), ic = EARN_IC[x.h];
   const wd = dt.toLocaleDateString('fr-FR', { weekday: 'short' }), mo = dt.toLocaleDateString('fr-FR', { month: 'short' });
   const tag = x.pos ? ' <span class="pill open">Position</span>' : x.near ? ' <span class="pill warn">Proche SMA</span>' : '';
   const meta = [ic ? `<i class="eic ${x.h}">${x.h === 'bmo' ? '☀' : x.h === 'amc' ? '☾' : '◷'}</i> ${ic[1]}` : 'heure non annoncée', x.sec ? esc(x.sec) : ''].filter(Boolean).join(' · ');
   let extra = '';
-  if (x.pos && x.stopPct != null) extra = `<p class="${x.n <= 7 ? 'ewarn' : 'emeta'}">Stop à ${fmtNum(x.stopPct, 1)} % du cours${x.n <= 7 ? ' · risque de trou à l’ouverture' : ''}</p>`;
-  else if (x.pos) extra = '<p class="ewarn">Aucun stop enregistré</p>';
-  else if (x.near) extra = `<p class="emeta">à ${fmtNum(Math.abs(x.sma.a.dist), 1)} % de sa SMA ${x.sma.w.period} ${TF_SHORT[x.sma.w.tf]}${x.sma.a.dist >= 0 ? ' (au-dessus)' : ' (en dessous)'}</p>`;
+  extra += earnEst(x);
+  if (x.pos && x.stopPct != null) extra += `<p class="${x.n <= 7 ? 'ewarn' : 'emeta'}">Stop à ${fmtNum(x.stopPct, 1)} % du cours${x.n <= 7 ? ' · risque de trou à l’ouverture' : ''}</p>`;
+  else if (x.pos) extra += '<p class="ewarn">Aucun stop enregistré</p>';
+  else if (x.near) extra += `<p class="emeta">à ${fmtNum(Math.abs(x.sma.a.dist), 1)} % de sa SMA ${x.sma.w.period} ${TF_SHORT[x.sma.w.tf]}${x.sma.a.dist >= 0 ? ' (au-dessus)' : ' (en dessous)'}</p>`;
   return `<div class="eitem${x.pos ? ' pos' : ''}"><div class="etile"><span>${wd}</span><b>${dt.getDate()}</b><span>${mo}</span></div>
     <div class="ebody"><div class="ehead"><span><strong>${esc(x.t)}</strong>${tag}</span>${earnWhen(x.n)}</div><p class="emeta">${meta}</p>${extra}</div></div>`;
 }
@@ -1471,13 +1539,15 @@ function viewEarn() {
   const body = !quoteKey() ? '<p class="lead">Ajoutez la clé Finnhub (Réglages › Cours automatiques) pour charger le calendrier des résultats.</p>'
     : !Earn.day ? '<p class="lead">Calendrier en cours de chargement…</p>'
     : `${earnStrip(all, today)}<div class="row">${fB('all', 'Tout', all.length)}${fB('pos', 'Positions', nPos)}${fB('radar', 'Radar', all.length - nPos)}</div>
-      ${xs.length ? sec('Cette semaine', wk, g => g.map(earnItem).join('')) + sec('Semaine prochaine', nx, g => g.map(earnItem).join('')) + sec('Plus tard', later, g => `<div class="echips">${g.map(chip).join('')}</div>`)
-        : '<p class="lead">Aucune date de résultats connue pour ce filtre dans les 100 prochains jours.</p>'}`;
+      ${xs.length ? sec('Cette semaine', wk, g => g.map(earnItem).join('')) + sec('Semaine prochaine', nx, g => g.map(earnItem).join('')) : ''}
+      ${sec('Publiés récemment · 14 jours', earnRecent(earnF), g => g.map(x => earnDone(x.t, x.e, x.pos)).join(''))}
+      ${xs.length ? sec('Plus tard', later, g => `<div class="echips">${g.map(chip).join('')}</div>`) : '<p class="lead">Aucune date de résultats à venir pour ce filtre dans les 100 prochains jours.</p>'}
+      <p class="hint">BPA = bénéfice par action, CA = chiffre d’affaires. Attentes : consensus des analystes (Finnhub), parfois absent pour les petites valeurs.</p>`;
   return `<section class="card">
     <div class="sec-head"><h2>Résultats</h2><button class="btn sm" data-tab="radar">← Radar</button></div>
     <p class="lead">${Earn.day && quoteKey() ? `${wkAll.length ? `${wkAll.length} cette semaine${wkPos ? ` · dont ${wkPos} position${wkPos > 1 ? 's' : ''}` : ''}` : 'Rien cette semaine'}. ` : ''}Positions et radar sur 100 jours · dates Finnhub, elles peuvent bouger.</p>
     ${body}
-    ${none.length && Earn.day ? `<p class="hint">Sans date connue : ${none.map(esc).join(', ')}.</p>` : ''}
+    ${none.length && Earn.day ? `<p class="hint">Sans prochaine date connue : ${none.map(esc).join(', ')}.</p>` : ''}
   </section>`;
 }
 // Pastille sur l'icône (écran d'accueil) : stops à remonter + nouveaux croisements de SMA non vus.
@@ -3329,7 +3399,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.34.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.35.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
