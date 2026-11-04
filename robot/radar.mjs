@@ -51,12 +51,15 @@ async function twelve(sym, n, interval = '1day', end = '') {
   }
   throw new Error('limite Twelve Data');
 }
-// Journalier sur 40 ans : 5 000 séances par requête au plus (offre gratuite), donc une seconde requête pour les 20 ans d'avant.
+// Journalier depuis le début de l'actif, jusqu'à 80 ans : 5 000 séances par requête au plus (offre gratuite),
+// donc une requête de plus par tranche de 20 ans tant que la précédente était pleine (4 au plus).
 async function twelveLong(sym) {
-  const a = await twelve(sym, 5000, '1day');
-  if (a.length < 4990) return a;
-  try { const b = await twelve(sym, 5000, '1day', addDays(a[0][0], -1)); return b.filter(x => x[0] < a[0][0]).concat(a); }
-  catch (e) { if (/quota|limite/.test(e.message)) throw e; return a; }   // pas d'historique plus ancien : 20 ans suffisent
+  let a = await twelve(sym, 5000, '1day');
+  for (let k = 1, got = a.length; k < 4 && got >= 4990; k++) {
+    try { const b = (await twelve(sym, 5000, '1day', addDays(a[0][0], -1))).filter(x => x[0] < a[0][0]); got = b.length; a = b.concat(a); }
+    catch (e) { if (/quota|limite/.test(e.message)) throw e; break; }   // pas d'historique plus ancien
+  }
+  return a;
 }
 let fhLast = 0;
 async function finnhub(sym) {
@@ -132,14 +135,15 @@ for (const s of daily) {
 for (const s of resync.slice(0, RESYNC_PER_RUN)) { try { put(s, await twelve(s, need[s]), true); } catch (e) { errors[s] = e.message; break; } }
 
 // ----- Labo SMA : tickers demandés dans l'app (S.settings.labQueue), radar compris ; le robot n'écrit jamais dans le radar -----
-// 4 requêtes Twelve Data par action (J 10 000 séances en deux fois, S et M depuis le début de l'actif), refaites tous les 30 jours.
+// 3 à 6 requêtes Twelve Data par action (J jusqu'à 20 000 séances en quatre fois, S et M depuis le début de l'actif), refaites tous les 30 jours.
 // En plus des 15 SMA × J / S / M : test combiné J + S + M (filtre par la meilleure SMA hebdo et mensuelle).
 const labQ = [...new Set((S.settings.labQueue || []).map(t => String(t).toUpperCase()))];
-const labDue = t => { const x = L.res[t]; return !x || x.adj !== ADJ || (!x.err && !('C' in x)) || days(new Date(x.at).toISOString().slice(0, 10), ls) > (x.err ? 7 : LAB_REDO_DAYS); };
+// Refait une fois : résultats sans test combiné (C) ou sans date de début des données (avant le journalier sur 80 ans).
+const labDue = t => { const x = L.res[t]; return !x || x.adj !== ADJ || (!x.err && (!('C' in x) || (x.D && !('first' in x.D)))) || days(new Date(x.at).toISOString().slice(0, 10), ls) > (x.err ? 7 : LAB_REDO_DAYS); };
 const labTodo = labQ.filter(labDue).sort((a, b) => (L.res[a] ? 1 : 0) - (L.res[b] ? 1 : 0));
 let labDone = 0; const labNew = [];
 for (const t of labTodo.slice(0, LAB_PER_RUN)) {
-  if (tdCalls + 4 > TD_DAY_LIMIT || Date.now() - T0 > 65 * 60000) break;   // quota du jour et durée maximale du robot
+  if (tdCalls + 6 > TD_DAY_LIMIT || Date.now() - T0 > 65 * 60000) break;   // quota du jour et durée maximale du robot
   try {
     const one = {}, bars = {}, units = {};
     for (const [tf, iv] of [['D', '1day'], ['W', '1week'], ['M', '1month']]) {
@@ -147,6 +151,7 @@ for (const t of labTodo.slice(0, LAB_PER_RUN)) {
       units[tf] = labUnit(bars[tf], tf); one[tf] = packUnit(units[tf]);
     }
     one.C = packUnit(labCombo(bars, units));
+    log(`Labo ${t} : données depuis ${['D', 'W', 'M'].map(tf => `${tf} ${bars[tf].length ? bars[tf][0][0] : '-'}`).join(', ')}`);
     L.res[t] = { at: Date.now(), ls, adj: ADJ, ...one };
     labDone++; labNew.push(t);
   } catch (e) {

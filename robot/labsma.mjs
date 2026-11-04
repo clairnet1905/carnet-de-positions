@@ -66,7 +66,7 @@ export function labUnit(bars, tf) {
   if (!testable.length) return null;
   const start = Math.max(...testable), end = N - 1;                 // même période pour toutes les SMA testables
   const split = start + Math.floor((end - start) * 0.7);           // 70 % pour choisir, 30 % les plus récents pour vérifier
-  const out = { from: d[start], to: d[end], split: d[split], bars: N, sma: {}, bh: {} };
+  const out = { first: d[0], from: d[start], to: d[end], split: d[split], bars: N, sma: {}, bh: {} };
   for (const fk of ['tv', 'ic']) {
     const f = LAB_FEES[fk], rows = [];
     for (const n of LAB_PERIODS) {
@@ -106,7 +106,7 @@ export function labCombo(bars, units) {
     while (k + 1 < bars.M.length && bars.M[k + 1][0].slice(0, 7) < ym) k++;
     wI.push(j); mI.push(k);
   }
-  const out = { from: units.D.from, to: units.D.to, split: units.D.split, bars: d.length, sma: {}, pick: {}, bh: units.D.bh };
+  const out = { first: d[0], from: units.D.from, to: units.D.to, split: units.D.split, bars: d.length, sma: {}, pick: {}, bh: units.D.bh };
   for (const fk of ['tv', 'ic']) {
     const f = LAB_FEES[fk], bw = bestOf(units.W.sma[fk], 'W'), bm = bestOf(units.M.sma[fk], 'M');
     if (bw < 0 || bm < 0) return null;
@@ -146,7 +146,7 @@ const row = x => x && [r1(x.all.cagr), r1(x.all.dd), x.all.pf == null ? null : M
   r1(x.oos.cagr), r1(x.oos.dd), r1(x.ins.cagr), r1(x.ins.dd)];
 export function packUnit(u) {
   if (!u) return null;
-  const o = { from: u.from, to: u.to, split: u.split, bars: u.bars };
+  const o = { first: u.first, from: u.from, to: u.to, split: u.split, bars: u.bars };
   for (const fk of ['tv', 'ic']) o[fk] = { sma: u.sma[fk].map(row), bh: [r1(u.bh[fk].all.cagr), r1(u.bh[fk].all.dd), r1(u.bh[fk].oos.cagr), r1(u.bh[fk].oos.dd), r1(u.bh[fk].all.expo)], ...(u.pick ? u.pick[fk] : {}) };
   return o;
 }
