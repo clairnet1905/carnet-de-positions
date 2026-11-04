@@ -318,6 +318,17 @@ details.lot .body{padding:0 12px 12px;display:grid;gap:12px}
 .cpair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) 44px;gap:10px;align-items:center;font-size:.86rem}
 .cpair b{text-align:right} .cpair .sbar i{background:var(--muted)} .cpair.hi .sbar i{background:var(--warn)} .cpair.hi b{color:var(--warn)}
 .pill.sec{text-transform:none;letter-spacing:0;display:inline-flex;align-items:center;gap:5px}
+.rs-head{display:flex;justify-content:space-between;align-items:center;width:100%;padding:0;border:0;background:transparent;color:var(--ink);font:inherit;text-align:left;cursor:pointer}
+.rs-head small{color:var(--muted)} .rs-head .chev{color:var(--muted);font-size:1rem}
+.sseg{display:flex;height:8px;border-radius:5px;overflow:hidden;margin:9px 0 4px;gap:1px}
+.sseg i{display:block;height:100%;min-width:3px}
+.rsect .rs-sum{margin:2px 0 0}
+.rsect .srows{margin-top:10px}
+.srow.rs.on{background:var(--accent-soft)}
+.sbar.force i{background:var(--gain)}
+.sdot{display:inline-block;width:8px;height:8px;border-radius:3px;margin-right:5px}
+.al-sec{display:block;margin-top:3px;color:var(--muted);font-size:.78rem}
+.al-sec.warn{color:var(--warn)}
 .secsel{font:600 .8rem var(--f-body);padding:5px 8px;border-radius:99px;border:1px solid var(--line);background:var(--surface);color:var(--ink);max-width:100%}
 @media (max-width:420px){.srow{grid-template-columns:minmax(0,1fr) auto}.srow .sbar{grid-column:1/-1;order:3}}
 .near-al{margin-top:12px} .near-h{margin:0 0 8px;font-size:.84rem;font-weight:600;color:var(--warn)}
@@ -419,7 +430,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.28.1 · licence MIT */
+/* Carnet de positions v1.29.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -1761,7 +1772,7 @@ function viewRadar() {
     const dist = ok.length ? Math.min(...ok.map(l => Math.abs(l.a.dist))) : 1e9;
     // Croisements : clôture de l'autre côté de la SMA depuis moins de ALERT_DAYS jours, ou en train de passer. Proches : sans croisement récent.
     const signal = ok.some(l => l.a.pending || (l.a.lastCross && l.a.lastCross.date >= recent));
-    return { t, lines, ok, rank: signal ? Math.min(rank, 0) : rank, dist, signal, near: !signal && ok.some(l => l.a.near) };
+    return { t, lines, ok, rank: signal ? Math.min(rank, 0) : rank, dist, signal, near: !signal && ok.some(l => l.a.near), up: ok.length ? ok[0].a.p > ok[0].a.smaNow : null };
   }).sort((x, y) => x.rank - y.rank || x.dist - y.dist || (x.t < y.t ? -1 : 1));
   const secCount = {}; for (const c of cards) { const x = sectorOf(c.t) || 'Non classé'; secCount[x] = (secCount[x] || 0) + 1; }
   const shown = cards.filter(c => (radarFilter === 'signal' ? c.signal : radarFilter === 'near' ? c.near : true) && (!radarSector || (sectorOf(c.t) || 'Non classé') === radarSector));
@@ -1771,7 +1782,15 @@ function viewRadar() {
   const alertOrder = (x, y) => tfOrder[x.w.tf] - tfOrder[y.w.tf] || y.w.period - x.w.period || (x.date < y.date ? 1 : x.date > y.date ? -1 : 0) || (x.w.ticker < y.w.ticker ? -1 : 1);
   const AL_TF = { D: 'SMA journalières', W: 'SMA hebdo', M: 'SMA mensuelles' };
   const alertList = list => list.sort(alertOrder).map((x, i) => (i === 0 || x.w.tf !== list[i - 1].w.tf ? `<p class="al-tf">${AL_TF[x.w.tf]}</p>` : '') + alertRow(x)).join('');
-  const alertRow = x => `<div class="alert ${x.lvl === 'up' ? 'ok up' : x.lvl === 'down' ? 'err' : 'warn'} ${x.seen ? 'seen' : ''}"><span>${x.seen ? '' : '<b class="new">Nouveau</b> '}${x.txt}${x.seen ? '' : earnPill(x.w.ticker)}</span>${x.seen ? '' : `<button class="btn sm" data-act="radar-seen" data-k="${esc(x.key)}">Vu</button>`}</div>`;
+  // Croisement à la hausse : rappel des positions déjà ouvertes dans le même secteur (information seulement).
+  let SB = null; const sb = () => SB || (SB = sectorBook());
+  const secNote = x => {
+    const s = x.lvl === 'up' && !x.seen && sectorOf(x.w.ticker); if (!s) return '';
+    const B = sb(), g = B.groups.find(y => y.s === s); if (!g) return '';
+    const share = B.tot > 0 ? g.expo / B.tot * 100 : 0, warn = B.n >= 3 && share > sectSet().expo;
+    return `<small class="al-sec${warn ? ' warn' : ''}">${esc(s)} : déjà ${g.list.length} position(s), ${fmtNum(share, 0)} % de l’exposition${g.list.some(k => k.t === x.w.ticker) ? ` (dont ${esc(x.w.ticker)})` : ''}</small>`;
+  };
+  const alertRow = x => `<div class="alert ${x.lvl === 'up' ? 'ok up' : x.lvl === 'down' ? 'err' : 'warn'} ${x.seen ? 'seen' : ''}"><span>${x.seen ? '' : '<b class="new">Nouveau</b> '}${x.txt}${x.seen ? '' : earnPill(x.w.ticker)}${secNote(x)}</span>${x.seen ? '' : `<button class="btn sm" data-act="radar-seen" data-k="${esc(x.key)}">Vu</button>`}</div>`;
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const prog = Radar.busy ? `<div class="alert live on"><span>Historique : ${Radar.done} / ${Radar.todo} action(s)… (8 par minute, offre gratuite). Gardez l’app ouverte : le chargement s’arrête quand elle passe en arrière-plan.</span></div>`
     : key && Radar.loaded && nHave < nSym.size ? `<div class="alert warn"><span>Historique présent sur cet appareil pour ${nHave} action(s) sur ${nSym.size}. Il se télécharge sur chaque appareil, app ouverte.</span><button class="btn sm" data-act="radar-refresh">Continuer</button></div>` : '';
@@ -1824,11 +1843,38 @@ function viewRadar() {
     }).join('')}</div>` : ''}
     <p class="hint">Une alerte disparaît ${ALERT_DAYS} jours après la clôture qui l’a déclenchée.</p>
   </section>` : ''}
+  ${radarSectCard(cards)}
   <section class="card">
     ${cards.length ? `<div class="search"><input type="search" id="radar-q" value="${esc(radarQuery)}" placeholder="Rechercher une action" autocomplete="off" autocapitalize="characters" aria-label="Rechercher une action"></div>
-      <div class="filters">${fBtn('all', 'Toutes', cards.length)}${fBtn('signal', 'Croisements', cards.filter(c => c.signal).length)}${fBtn('near', 'Proches', cards.filter(c => c.near).length)}<select id="radar-sec" class="secsel" aria-label="Secteur"><option value="">Tous les secteurs</option>${[...SECTORS, 'Autre', 'Non classé'].filter(x => secCount[x]).map(x => `<option value="${esc(x)}" ${radarSector === x ? 'selected' : ''}>${esc(x)} (${secCount[x]})</option>`).join('')}</select></div>
+      <div class="filters">${fBtn('all', 'Toutes', cards.length)}${fBtn('signal', 'Croisements', cards.filter(c => c.signal).length)}${fBtn('near', 'Proches', cards.filter(c => c.near).length)}${radarSector && secCount[radarSector] ? `<button class="btn sm" data-act="radar-sect" data-s="${esc(radarSector)}" aria-pressed="true" aria-label="Retirer le filtre ${esc(radarSector)}"><i class="sdot" style="background:${SECT_COL[radarSector] || SECT_COL.Autre}"></i>${esc(radarSector)} (${secCount[radarSector]}) ✕</button>` : ''}</div>
       <div class="rlist">${shown.length ? shown.map(card).join('') : '<p class="lead">Aucune action pour ce filtre.</p>'}</div>`
       : '<p class="lead">Aucune action suivie. Touchez « + Ajouter » pour saisir une action et sa SMA, ou « Importer une liste » pour en coller plusieurs d’un coup.</p>'}
+  </section>`;
+}
+// Secteurs du radar : répartition des actions suivies, force (part au-dessus de leur SMA principale) et croisements récents.
+// Replié par défaut (choix gardé sur l'appareil) ; toucher un secteur filtre la liste.
+const RSECT_KEY = 'carnet-positions:radar-sect';
+let rsectOpen = (() => { try { return localStorage.getItem(RSECT_KEY) === '1'; } catch (e) { return false; } })();
+function radarSectCard(cards) {
+  if (cards.length < 2) return '';
+  const by = {};
+  for (const c of cards) { const s = sectorOf(c.t) || 'Non classé', g = by[s] = by[s] || { s, n: 0, up: 0, k: 0, sig: 0 }; g.n++; if (c.up != null) { g.k++; if (c.up) g.up++; } if (c.signal) g.sig++; }
+  const rank = s => s === 'Non classé' ? 2 : s === 'Autre' ? 1 : 0;
+  const G = Object.values(by).sort((a, b) => rank(a.s) - rank(b.s) || b.n - a.n || (a.s < b.s ? -1 : 1));
+  const col = s => s === 'Non classé' ? 'var(--line)' : SECT_COL[s] || SECT_COL.Autre, f = g => g.k ? g.up / g.k * 100 : null;
+  const real = G.filter(g => SECTORS.includes(g.s) && g.k >= 2 && g.n >= 2).sort((a, b) => f(b) - f(a));
+  const sum = real.length >= 2 ? `Plus fort : ${esc(real[0].s)} ${fmtNum(f(real[0]), 0)} % · plus faible : ${esc(real[real.length - 1].s)} ${fmtNum(f(real[real.length - 1]), 0)} %` : `${G.filter(g => g.s !== 'Non classé').length} secteur(s)`;
+  const rows = G.map(g => `<button type="button" class="srow rs${radarSector === g.s ? ' on' : ''}" data-act="radar-sect" data-s="${esc(g.s)}">
+      <span class="sn"><i style="background:${col(g.s)}"></i>${esc(g.s)} <small>${g.n}</small></span>
+      <span class="sbar force"><i style="width:${f(g) == null ? 0 : f(g).toFixed(0)}%"></i></span>
+      <span class="sv num">${f(g) == null ? '–' : fmtNum(f(g), 0) + ' %'}${g.sig ? ` · ${g.sig} crois.` : ''}</span></button>`).join('');
+  const nc = by['Non classé'];
+  return `<section class="card rsect">
+    <button type="button" class="rs-head" data-act="radar-sect-tog" aria-expanded="${rsectOpen}"><span><b>Secteurs du radar</b> <small>· ${cards.length} actions</small></span><span class="chev">${rsectOpen ? '▴' : '▾'}</span></button>
+    <div class="sseg">${G.map(g => `<i style="flex:${g.n};background:${col(g.s)}" title="${esc(g.s)} : ${g.n}"></i>`).join('')}</div>
+    <p class="hint rs-sum">${sum}</p>
+    ${rsectOpen ? `<div class="srows">${rows}</div>
+    <p class="hint">Force : part des actions du secteur au-dessus de leur SMA principale (la J la plus longue, sinon S ou M). Crois. : croisements des ${ALERT_DAYS} derniers jours. Touchez un secteur pour filtrer la liste, encore une fois pour tout revoir.${nc ? ` Secteur en attente pour ${nc.n} action(s)${quoteKey() ? ' (récupéré automatiquement)' : ' : clé Finnhub nécessaire'}.` : ''}</p>` : ''}
   </section>`;
 }
 // Groupes « proches » : journalière ouverte, hebdo ouverte du vendredi au dimanche, mensuelle fermée.
@@ -3153,7 +3199,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.28.1 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.29.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
@@ -3591,6 +3637,8 @@ document.addEventListener('click', e => {
     case 'radar-add': sheetWatch(); break;
     case 'radar-add-sma': sheetWatch(null, b.dataset.t); break;
     case 'radar-filter': radarFilter = b.dataset.f; render(); break;
+    case 'radar-sect': radarSector = radarSector === b.dataset.s ? '' : b.dataset.s; render(); break;
+    case 'radar-sect-tog': rsectOpen = !rsectOpen; try { localStorage.setItem(RSECT_KEY, rsectOpen ? '1' : '0'); } catch (e) {} render(); break;
     case 'radar-import': sheetWatchImport(); break;
     case 'idx-detail': sheetIdxDetail(b.dataset.t); break;
     case 'idx-edit': sheetIdxEdit(); break;
@@ -3803,7 +3851,6 @@ document.addEventListener('toggle', e => {
 document.addEventListener('input', e => {
   if (e.target.id === 'pos-q') { posQuery = e.target.value; applyPosQuery(); return; }
   if (e.target.id === 'radar-q') { radarQuery = e.target.value; applyRadarQuery(); return; }
-  if (e.target.id === 'radar-sec') { radarSector = e.target.value; render(); return; }
   if (e.target.id === 'price-q') {
     const q = e.target.value.trim().toLowerCase();
     for (const r of document.querySelectorAll('#sheet .pr')) r.hidden = !!q && !r.dataset.t.includes(q);
