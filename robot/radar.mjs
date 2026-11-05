@@ -223,13 +223,15 @@ if (S.settings.pushStops !== false) {
   for (const t of openT) {
     const l = openLots.find(x => x.ticker === t), st = l.stopCurrent > 0 ? l.stopCurrent : 0;
     const mine = [...new Set(openLots.filter(x => x.ticker === t).flatMap(x => x.smas || []))];   // SMA d'entrée choisies dans l'app (vide : toutes)
+    const got = [];   // SMA proposées pour cette action, rangées ensuite de la plus haute à la plus basse (comme dans l'app)
     for (const w of S.watch.filter(x => x.ticker === t && !x.idx && (!mine.length || mine.includes(x.tf + '|' + x.period)))) {
       const h = view[symOf(w)]; if (!h) continue;
       const a = analyze(w, h.bars, ls, S.settings.nearPct); if (!a || a.short) continue;
       const key = `stop|${l.id}|${w.id}|${st}`;
       const late = DF[symOf(w)] && DF[symOf(w)].late;   // dividende peut-être manquant : SMA à vérifier sur TradingView
-      if (a.sma > st * 1.005 && a.sma < a.lastClose && !R.notified[key]) { lines.push(`${t} : SMA ${w.period} ${TFL[w.tf]} à ${usd(a.sma)} (stop ${st ? usd(st) : 'aucun'})${late ? ' · dividende à vérifier' : ''}`); extra.push(key); }
+      if (a.sma > st * 1.005 && a.sma < a.lastClose && !R.notified[key]) { got.push([a.sma, `${t} : SMA ${w.period} ${TFL[w.tf]} à ${usd(a.sma)} (stop ${st ? usd(st) : 'aucun'})${late ? ' · dividende à vérifier' : ''}`]); extra.push(key); }
     }
+    lines.push(...got.sort((x, y) => y[0] - x[0]).map(x => x[1]));
   }
   if (lines.length && !first) payloads.push({ title: `Stops · ${lines.length} à remonter`, body: lines.slice(0, 6).join('\n') + (lines.length > 6 ? `\n+ ${lines.length - 6} autre(s) dans l’app` : ''), tag: 'stops-' + ls, url: './#dash', badge: lines.length });
 }
