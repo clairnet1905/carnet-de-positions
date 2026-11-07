@@ -438,7 +438,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.36.0 · licence MIT */
+/* Carnet de positions v1.37.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -3402,7 +3402,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.36.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.37.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
@@ -3614,9 +3614,15 @@ function sheetSellImg(lot, ev) {
   });
 }
 function sheetEdit(lot) {
+  // Ventes déjà saisies : corrigeables ici (date, quantité, prix, frais). Position clôturée : les ventes d'abord.
+  const sells = lot.events.filter(e => e.type === 'sell').sort((a, b) => a.date < b.date ? -1 : 1), closed = Core.lotState(lot).closed;
+  const sellBox = sells.length ? `<h3 class="chart-t">${sells.length > 1 ? 'Ventes' : 'Vente'}</h3>${sells.map((e, i) => `<div class="fields">
+      ${dateInp(`s${i}_date`, sells.length > 1 ? `Date de la vente ${i + 1}` : 'Date de vente', e.date)}${dec(`s${i}_qty`, 'Quantité vendue', e.qty)}
+      ${dec(`s${i}_price`, 'Prix de vente ($)', e.price)}${dec(`s${i}_fee`, 'Frais de sortie ($)', Core.roundTo(e.fee || 0, 4))}</div>`).join('')}` : '';
   openSheet({
     title: 'Corriger ' + lot.ticker, ok: 'Enregistrer la correction',
-    body: `<p class="lead">Pour corriger une erreur de saisie. Le risque initial est recalculé à partir des valeurs d’entrée corrigées.</p><div class="fields">
+    body: `<p class="lead">Pour corriger une erreur de saisie${sells.length ? ', à l’achat comme à la vente' : ''}. Le risque initial est recalculé à partir des valeurs d’entrée corrigées.</p>
+      ${closed ? sellBox : ''}${sells.length ? '<h3 class="chart-t">Achat</h3>' : ''}<div class="fields">
       ${inp('ticker', 'Ticker', lot.ticker, 'autocapitalize="characters"')}${dateInp('date', 'Date d’achat', lot.date)}
       ${dec('price', 'Prix d’achat ($)', lot.price)}${dec('qty', 'Quantité achetée', lot.qty)}${dec('leverage', 'Levier (×)', lot.leverage)}
       ${dec('entryFee', 'Frais d’entrée ($)', lot.entryFee)}${dec('estExitFee', 'Frais de sortie estimés ($)', Core.roundTo(lot.estExitFee || 0, 4), '', 'pour le risque initial')}
@@ -3625,14 +3631,18 @@ function sheetEdit(lot) {
       <div class="fld"><label for="f-motif">Motif</label><select id="f-motif" name="motif">${Object.entries(MOTIFS).map(([k, l]) => `<option value="${k}" ${lot.motif === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
       <div class="fld wide"><label for="f-note">Note</label><textarea id="f-note" name="note">${esc(lot.note || '')}</textarea></div>
       <div class="fld wide"><label for="f-img">${lot.imgId ? 'Remplacer la capture' : 'Ajouter une capture'}</label><input type="file" id="f-img" name="img" accept="image/*">
-      ${lot.imgId ? '<label class="check"><input type="checkbox" name="rmImg"> supprimer la capture actuelle</label>' : ''}</div></div>`,
+      ${lot.imgId ? '<label class="check"><input type="checkbox" name="rmImg"> supprimer la capture actuelle</label>' : ''}</div></div>${closed ? '' : sellBox}`,
     onSubmit: async form => {
       const t = F(form, 'ticker').trim().toUpperCase(), p = num(F(form, 'price')), q = num(F(form, 'qty')), lv = num(F(form, 'leverage'));
       const fe = numOr(F(form, 'entryFee'), 0), xf = numOr(F(form, 'estExitFee'), 0), si = num(F(form, 'stopInitial'));
       const scv = F(form, 'stopCurrent').trim(), sc = scv === '' ? null : num(scv), rc = num(F(form, 'refCapital')), date = F(form, 'date');
-      const sold = Core.lotState(lot).sold;
+      const sv = sells.map((e, i) => ({ e, date: F(form, `s${i}_date`), qty: num(F(form, `s${i}_qty`)), price: num(F(form, `s${i}_price`)), fee: numOr(F(form, `s${i}_fee`), 0) }));
+      sv.forEach((x, i) => { const n = sells.length > 1 ? ` (vente ${i + 1})` : '';
+        need(x.date, 'Date de vente requise' + n + '.'); need(x.qty > 0, 'Quantité vendue invalide' + n + '.'); need(x.price > 0, 'Prix de vente invalide' + n + '.'); need(isNum(x.fee) && x.fee >= 0, 'Frais de sortie invalides' + n + '.'); });
+      const sold = sv.reduce((a, x) => a + x.qty, 0);
       need(/^[A-Z0-9.\-]{1,12}$/.test(t), 'Ticker invalide.'); need(date, 'Date requise.');
-      need(lot.events.every(e => e.date >= date), 'Des mouvements sont antérieurs à cette date d’achat.');
+      need(sv.every(x => x.date >= date), 'Une vente ne peut pas précéder la date d’achat.');
+      need(lot.events.filter(e => e.type !== 'sell').every(e => e.date >= date), 'Des mouvements sont antérieurs à cette date d’achat.');
       need(p > 0 && q > 0, 'Prix et quantité doivent être positifs.'); need(q >= sold - 1e-9, `Quantité inférieure aux ventes déjà saisies (${qty(sold)}).`);
       need(lv >= 1, 'Levier invalide.'); need(fe >= 0 && xf >= 0, 'Frais invalides.');
       need(si > 0 && si < p, 'Stop initial positif et inférieur au prix.'); need(sc === null || sc > 0, 'Stop actuel invalide.'); need(rc > 0, 'Capital de référence invalide.');
@@ -3641,7 +3651,8 @@ function sheetEdit(lot) {
       else if (form.elements.rmImg && form.elements.rmImg.checked && lot.imgId) { await delImage(lot.imgId); lot.imgId = null; }
       Object.assign(lot, { ticker: t, date, price: p, qty: q, leverage: lv, entryFee: fe, estExitFee: xf, stopInitial: si, stopCurrent: sc, refCapital: rc, motif: F(form, 'motif'), note: F(form, 'note').trim() });
       lot.riskInitial = q * (p - si) + fe + xf; lot.riskInitialPct = lot.riskInitial / rc * 100;
-      save('Correction enregistrée');
+      for (const x of sv) Object.assign(x.e, { date: x.date, qty: x.qty, price: x.price, fee: x.fee });
+      save(closed && !Core.lotState(lot).closed ? 'Correction enregistrée · la position est de nouveau ouverte (ventes inférieures à l’achat)' : 'Correction enregistrée');
     }
   });
 }
