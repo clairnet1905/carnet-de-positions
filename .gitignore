@@ -1,0 +1,4 @@
+# Fichiers générés à l’assemblage (GitHub Actions les recrée)
+src/pwa-src/app.js
+_site/
+node_modules/
