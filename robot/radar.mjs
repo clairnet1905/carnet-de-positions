@@ -50,7 +50,7 @@ async function twelve(sym, n, interval = '1day', end = '', adj = ADJ) {
     const j = await r.json().catch(() => ({}));
     if (j.code === 429 || r.status === 429) { await sleep(61000); continue; }
     if (j.status === 'error' || !Array.isArray(j.values)) throw new Error(j.message || 'erreur ' + r.status);
-    return j.values.map(v => [String(v.datetime).slice(0, 10), +v.close]).filter(v => v[1] > 0).sort((a, b) => a[0] < b[0] ? -1 : 1);
+    return j.values.map(v => [String(v.datetime).slice(0, 10), +v.close, +v.open, +v.high, +v.low]).filter(v => v[1] > 0).map(v => v.every(x => x === v[0] || x > 0) ? v : v.slice(0, 2)).sort((a, b) => a[0] < b[0] ? -1 : 1);
   }
   throw new Error('limite Twelve Data');
 }
@@ -99,6 +99,10 @@ const adjChanged = (R.adj || 'splits') !== ADJ;   // réglage changé (ou premie
 const need = {}, usSym = {};
 for (const w of S.watch) { const s = symOf(w); need[s] = Math.max(need[s] || 0, barsNeeded(w)); if (!w.sym) usSym[s] = true; }
 const manual = new Set((S.settings.manualTickers || []).map(t => String(t).toUpperCase()));
+// Bougies (graphique de l'app) : actions de vos trades, positions ouvertes et clôturées depuis moins de 200 jours.
+const CANDLE_N = 130, CANDLE_PER_RUN = 30;
+const candleSym = new Set((S.lots || []).filter(l => !l.demo && (l.qty - (l.events || []).filter(e => e.type === 'sell').reduce((a, e) => a + e.qty, 0) > 1e-9 || days((l.events || []).map(e => e.date).sort().pop() || l.date, ls) <= 200))
+  .flatMap(l => S.watch.filter(w => w.ticker === l.ticker && !w.idx).map(symOf)));
 log(`Séance du ${ls} · ${Object.keys(need).length} action(s), ${S.watch.length} SMA · cours ${ADJ === 'all' ? 'ajustés des dividendes' : 'ajustés des divisions seulement'}${adjChanged ? ' (réglage changé : tout est retéléchargé)' : ''}`);
 
 // Ordre : historique absent ou trop court (Twelve Data complet), puis clôture du jour (Twelve Data court, qui recale l’historique ajusté ; Finnhub si les cours ne sont pas ajustés),
@@ -120,8 +124,8 @@ const put = (s, bars, isFull) => {
   // on le mesure sur une clôture commune aux deux séries et on l'applique à l'historique gardé.
   const same = old.find(b => b[0] === from), k = same ? bars[0][1] / same[1] : 1, shift = Math.abs(k - 1) > 2e-4;
   if (shift) adjusted.push(s);
-  const older = old.filter(b => b[0] < from).map(([d, c]) => [d, shift ? c * k : c]);
-  const merged = older.concat(bars).slice(-Math.max(need[s] + 30, 60));
+  const older = old.filter(b => b[0] < from).map(b => shift ? [b[0], ...b.slice(1).map(v => v * k)] : b);
+  const merged = older.concat(bars).slice(-Math.max(need[s] + 30, candleSym.has(s) ? CANDLE_N + 10 : 60));
   hist[s] = { bars: merged, n: need[s], full: isFull ? Date.now() : (hist[s] && hist[s].full) || 0, last: merged.length ? merged[merged.length - 1][0] : '' };
 };
 for (const s of full) { try { put(s, await twelve(s, need[s]), true); } catch (e) { errors[s] = e.message; } }
@@ -130,12 +134,28 @@ for (const s of daily) {
     if (ADJ === 'splits' && FINNHUB_KEY && usSym[s] && !manual.has(s)) {
       const q = await finnhub(s);
       const d = q && q.t ? new Date(q.t * 1000).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) : '';
-      if (q && q.c > 0 && d === ls && hist[s].last === prev) { put(s, [[d, q.c]], false); continue; }
+      if (q && q.c > 0 && d === ls && hist[s].last === prev) { put(s, [q.o > 0 && q.h > 0 && q.l > 0 ? [d, q.c, q.o, q.h, q.l] : [d, q.c]], false); continue; }
     }
     put(s, await twelve(s, Math.min(need[s], days(hist[s].last, ls) + 5)), false);
   } catch (e) { errors[s] = e.message; }
 }
 for (const s of resync.slice(0, RESYNC_PER_RUN)) { try { put(s, await twelve(s, need[s]), true); } catch (e) { errors[s] = e.message; break; } }
+
+// ----- Bougies : ouverture, haut et bas des 130 dernières séances pour les actions de vos trades (rattrapage ci-dessous) -----
+let candleDone = 0;
+for (const s of candleSym) {
+  const h = hist[s]; if (!h || candleDone >= CANDLE_PER_RUN || tdCalls + 1 > TD_DAY_LIMIT) continue;
+  if (h.bars.slice(-CANDLE_N).filter(b => b.length >= 5).length >= CANDLE_N * 0.8) continue;
+  try {
+    const f = new Map((await twelve(s, CANDLE_N + 5)).map(b => [b[0], b]));
+    for (const b of h.bars.slice(-CANDLE_N)) { const x = f.get(b[0]); if (x && x.length >= 5 && x[1] > 0) { b.length = 2; b.push(...[x[2], x[3], x[4]].map(v => b[1] * v / x[1])); } }
+    // Historique gardé plus court que 130 séances (SMA courtes) : on ajoute les séances plus anciennes, recalées sur une clôture commune.
+    const first = h.bars[0], ref = first && f.get(first[0]), k = ref ? first[1] / ref[1] : null;
+    if (k) { h.bars = [...f.values()].filter(x => x[0] < first[0]).map(x => [x[0], ...x.slice(1).map(v => v * k)]).concat(h.bars).slice(-Math.max(h.bars.length, CANDLE_N + 10)); }
+    candleDone++;
+  } catch (e) { if (/quota|limite/.test(e.message)) break; }
+}
+if (candleDone) log(`Bougies : ${candleDone} action(s) complétée(s) (ouverture, haut, bas sur ${CANDLE_N} séances)`);
 
 // ----- Dividendes manquants (cours ajustés seulement) : actions en position, vérifiées une fois par semaine (1 requête chacune) -----
 // Le cours brut comparé au cours ajusté donne les dividendes connus de Twelve Data ; un versement manquant est estimé (sma.mjs : divGaps).
@@ -301,7 +321,7 @@ for (const k in R.notified) if (days(R.notified[k], ls) > 60) delete R.notified[
 
 // ----- Enregistrement -----
 const packed = {};
-for (const s in hist) if (need[s]) packed[s] = pack(hist[s]);   // les actions retirées du radar sont oubliées
+for (const s in hist) if (need[s]) packed[s] = pack(hist[s], candleSym.has(s) ? CANDLE_N : 0);   // les actions retirées du radar sont oubliées
 R = { v: 1, ls, adj: ADJ, at: Date.now(), hist: packed, divfix: DF, notified: R.notified, risk: riskState, deadSubs: dead, errors,
   log: [{ at: Date.now(), ls, full: full.length, daily: daily.length, resync: Math.min(resync.length, RESYNC_PER_RUN), signals: sig.length, sent, td: tdCalls, errors: Object.keys(errors).length }].concat(R.log || []).slice(0, 30) };
 const body = JSON.stringify(R);

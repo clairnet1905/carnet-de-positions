@@ -94,15 +94,27 @@ export function message(sig, ls) {
 }
 
 // Historique compact pour le Gist : dates en écarts de jours, clôtures arrondies.
-export function pack(h) {
+// Barre : [date, clôture] ou [date, clôture, ouverture, haut, bas] (bougies, pour le graphique de l'app).
+// xk : nombre de dernières séances dont on garde ouverture, haut et bas, en écarts à la clôture (dix-millièmes) : x = [o, h, l, o, h, l, …].
+export function pack(h, xk = 0) {
   const o = [], c = [];
   let prev = null;
   for (const [d, x] of h.bars) { o.push(prev ? days(prev, d) : 0); c.push(Math.round(x * 1e4) / 1e4); prev = d; }
-  return { s: h.bars.length ? h.bars[0][0] : '', o, c, n: h.n, full: h.full || 0 };
+  const p = { s: h.bars.length ? h.bars[0][0] : '', o, c, n: h.n, full: h.full || 0 };
+  if (xk > 0) {
+    const t = h.bars.slice(-xk), x = [];
+    for (const b of t) if (b.length >= 5 && b[1] > 0) x.push(...[b[2], b[3], b[4]].map(v => Math.round((v / b[1] - 1) * 1e4))); else x.push(null, null, null);
+    if (x.some(v => v != null)) { p.x = x; p.xn = t.length; }
+  }
+  return p;
 }
 export function unpack(p) {
   const bars = []; let d = p.s;
   for (let i = 0; i < p.c.length; i++) { d = i ? addDays(d, p.o[i]) : d; bars.push([d, p.c[i]]); }
+  if (p.x && p.xn) for (let j = 0, i0 = bars.length - p.xn; j < p.xn; j++) {
+    const b = bars[i0 + j], q = p.x.slice(3 * j, 3 * j + 3); if (!b || q[0] == null) continue;
+    b.push(...q.map(v => b[1] * (1 + v / 1e4)));
+  }
   return { bars, n: p.n, full: p.full || 0, last: bars.length ? bars[bars.length - 1][0] : '' };
 }
 
@@ -147,5 +159,5 @@ export function divGaps(raw, adj) {
 // Cours ajustés corrigés des dividendes estimés.
 export function fixBars(bars, fx) {
   if (!fx || !fx.length) return bars;
-  return bars.map(([d, c]) => { let k = 1; for (const x of fx) if (d < x[0]) k *= x[1]; return [d, c * k]; });
+  return bars.map(b => { let k = 1; for (const x of fx) if (b[0] < x[0]) k *= x[1]; return [b[0], ...b.slice(1).map(v => v * k)]; });
 }
