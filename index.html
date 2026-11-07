@@ -385,6 +385,7 @@ button.ptile.whole{cursor:pointer}button.ptile.whole small{color:var(--accent)}
 .chart .zero{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
 .chart .line{fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linejoin:round}
 .chart .area{fill:url(#gArea)}
+.mt5c{margin:8px 0 0;padding-left:18px;font-size:.86rem;display:grid;gap:6px}.mt5c small{display:block;color:var(--muted)}
 .chart .bench{fill:none;stroke:var(--muted);stroke-width:2;stroke-dasharray:5 4;stroke-linejoin:round}
 .blegend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.76rem;color:var(--muted);margin:4px 0 6px}.blegend i{display:inline-block;width:16px;vertical-align:middle;margin-right:6px}.blegend i.me{height:3px;background:var(--accent);border-radius:2px}.blegend i.sp{border-top:2px dashed var(--muted)}
 .btiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 0 10px}.btiles>div{background:var(--surface-2);border-radius:10px;padding:8px 10px;min-width:0}.btiles small{display:block;font-size:.72rem;color:var(--muted)}.btiles b{font-size:.95rem;font-weight:600;white-space:nowrap}
@@ -446,7 +447,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.40.0 · licence MIT */
+/* Carnet de positions v1.41.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -2917,8 +2918,8 @@ function viewDash() {
   const ref = referenceCapital(), acc = ref.acc, lb = latestBroker(), P = perf(), T = Core.tradeStats(S, planR);
   let gap = '';
   if (lb) {
-    const atDate = Core.accountState(S, lb.date, 'exact');
-    const appV = atDate.missing.length ? null : atDate.equity;
+    const atDate = Core.accountState(S, lb.date, 'last');
+    const appV = atDate.equity;
     gap = appV == null
       ? `Écart non calculable : cours manquants au ${fmtDate(lb.date)}.`
       : `Écart avec le calcul à cette date : <span class="${cls(lb.netValue - appV)}">${usd(lb.netValue - appV, true)}</span> (courtier − application).`;
@@ -2936,6 +2937,7 @@ function viewDash() {
   const method = P.estCount ? `Rendement pondéré dans le temps, ${P.estCount} sous-période(s) estimée(s) par Modified Dietz faute de valorisation à la date d’un flux.` : 'Rendement pondéré dans le temps (valorisations disponibles autour de chaque flux).';
   return `${demoBanner()}
   ${alertsStrip()}
+  ${mt5Remind()}
   ${earnCard()}
   ${liveBar()}
   ${marketCard()}
@@ -3461,9 +3463,9 @@ function viewSettings() {
   const flows = S.flows.slice().sort((a, b) => a.date < b.date ? 1 : -1);
   const snaps = S.snapshots.slice().sort((a, b) => a.date < b.date ? 1 : -1);
   const snapRows = snaps.map(b => {
-    const a = Core.accountState(S, b.date, 'exact');
-    const gap = a.missing.length ? 'Non calculable' : usd(b.netValue - a.equity, true);
-    return `<tr><td>${fmtDate(b.date)}</td><td class="n">${usd(b.netValue)}</td><td class="n">${isNum(b.marginAvail) ? usd(b.marginAvail) : '—'}</td><td class="n">${gap}</td><td>${b.demo ? '<span class="pill demo">Démo</span>' : ''}</td><td><button class="btn sm" data-act="del-snap" data-id="${b.id}">Suppr.</button></td></tr>`;
+    const a = Core.accountState(S, b.date, 'last'), g = b.netValue - a.equity;
+    const gap = a.equity > 0 ? `<span class="${Math.abs(g / a.equity * 100) < 0.5 ? '' : cls(g)}">${usd(g, true)} · ${pct(g / a.equity * 100, true)}</span>` : '—';
+    return `<tr><td>${fmtDate(b.date)}</td><td class="n">${usd(b.netValue)}</td><td class="n">${usd(a.equity)}</td><td class="n">${isNum(b.marginUsed) ? usd(b.marginUsed) : isNum(b.marginAvail) ? usd(b.netValue - b.marginAvail) : '—'}</td><td class="n">${gap}</td><td>${b.demo ? '<span class="pill demo">Démo</span>' : ''}</td><td><button class="btn sm" data-act="del-snap" data-id="${b.id}">Suppr.</button></td></tr>`;
   }).join('');
   return `${demoBanner()}
   <section class="card">
@@ -3505,9 +3507,9 @@ function viewSettings() {
     ${flows.length ? `<div class="tbl"><table><thead><tr><th>Date</th><th>Type</th><th class="n">Montant</th><th></th><th></th></tr></thead><tbody>${flows.map(x => `<tr><td>${fmtDate(x.date)}</td><td>${x.amount >= 0 ? 'Versement' : 'Retrait'}${x.note ? ' · ' + esc(x.note) : ''}</td><td class="n">${usd(x.amount, true)}</td><td>${x.demo ? '<span class="pill demo">Démo</span>' : ''}</td><td><button class="btn sm" data-act="del-flow" data-id="${x.id}">Suppr.</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">Aucun flux saisi.</p>'}
   </section>
   <section class="card">
-    <div class="sec-head"><h2>Valeurs courtier</h2><button class="btn sm primary" data-act="add-snap">Ajouter</button></div>
-    <p class="lead">Valeur nette et marge disponible lues chez le courtier, en fin de journée. L’écart avec le calcul est affiché sans rien écraser.</p>
-    ${snaps.length ? `<div class="tbl"><table><thead><tr><th>Date</th><th class="n">Valeur nette</th><th class="n">Marge dispo</th><th class="n">Écart</th><th></th><th></th></tr></thead><tbody>${snapRows}</tbody></table></div>` : '<p class="hint">Aucune valeur saisie.</p>'}
+    <div class="sec-head"><h2>Valeurs courtier</h2><button class="btn sm primary" data-act="add-snap">Rapprochement MT5</button></div>
+    <p class="lead">Rapprochements MT5 : fonds propres et marge lus dans MT5, comparés au calcul de l’app à la même date. Un écart qui grandit d’une semaine à l’autre signale une saisie oubliée ou un swap mal estimé.</p>
+    ${snaps.length ? `<div class="tbl"><table><thead><tr><th>Date</th><th class="n">MT5</th><th class="n">App</th><th class="n">Marge</th><th class="n">Écart</th><th></th><th></th></tr></thead><tbody>${snapRows}</tbody></table></div>` : '<p class="hint">Aucune valeur saisie.</p>'}
   </section>
   </div>
   ${quotesPanel()}
@@ -3534,7 +3536,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.40.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.41.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
@@ -3837,20 +3839,83 @@ function sheetFlow() {
     }
   });
 }
+// ----- Rapprochement avec MT5 : fonds propres, marge et swap lus dans MT5, comparés au calcul de l'app -----
+const MT5_SNOOZE = 'carnet-positions:mt5-plus-tard';
+const lastWeekday = d => { while (wdOf(d) === 0 || wdOf(d) === 6) d = addDays(d, -1); return d; };
+// Swap des positions ouvertes à la date D : saisi (Financement) + estimé, et la part saisie à la main.
+function swapBook(D) {
+  const nx = addDays(D, 1), rows = [];
+  for (const lot of S.lots) {
+    if (lot.date > D) continue;
+    const ls = Core.lotState(lot, nx); if (ls.rem <= 1e-9) continue;
+    const man = lot.events.filter(e => e.type === 'funding' && e.date <= nx).reduce((a, e) => a + e.amount, 0);
+    rows.push({ lot, cur: ls.funding, man, est: ls.fundingEst, expo: ls.rem * lot.price });
+  }
+  return { rows, tot: rows.reduce((a, r) => a + r.cur, 0), allEst: rows.every(r => Math.abs(r.man) < 0.005) };
+}
+function mt5Due() {
+  if (!S.lots.some(l => !l.demo && !Core.lotState(l).closed)) return null;
+  const t = todayISO(); try { if (localStorage.getItem(MT5_SNOOZE) === t) return null; } catch (e) {}
+  let fri = t; while (wdOf(fri) !== 5) fri = addDays(fri, -1);
+  const lb = latestBroker();
+  return lb && lb.date >= fri ? null : (lb || true);
+}
+function mt5Remind() {
+  const due = mt5Due(); if (!due) return '';
+  return `<div class="banner warn"><span><strong>Rapprochement MT5</strong> : ${due === true ? 'jamais fait' : 'dernier le ' + fmtDate(due.date)}. Recopiez les fonds propres et la marge de MT5 (onglet Trade) pour vérifier les calculs de l’app.</span><span class="row"><button class="btn sm primary" data-act="add-snap">Faire</button><button class="btn sm" data-act="mt5-snooze">Plus tard</button></span></div>`;
+}
+function mt5Compare(form) {
+  const box = $('#mt5Out'); if (!box) return;
+  const v = num(F(form, 'netValue')), mu = numOr(F(form, 'marginUsed'), null), swv = F(form, 'swap').trim(), sw = swv === '' ? null : num(swv), D = F(form, 'date');
+  if (!D || !(v > 0)) { box.innerHTML = '<p class="hint">Saisissez au moins les fonds propres pour voir la comparaison.</p>'; return; }
+  const a = Core.accountState(S, D, 'last'), bk = swapBook(D), appSw = -bk.tot, mtSw = sw == null || !isNum(sw) ? null : -Math.abs(sw);
+  const gEq = v - a.equity, gPct = a.equity > 0 ? gEq / a.equity * 100 : 0, gM = mu == null ? null : mu - a.margin, gSw = mtSw == null ? null : mtSw - appSw;
+  const td = (x, c) => `<td class="n ${c || ''}">${x}</td>`;
+  const row = (l, app, mt, g, est) => `<tr><td>${l}</td>${td(usd(app) + (est ? ' <small class="muted">est.</small>' : ''))}${td(mt == null ? '—' : usd(mt))}${td(g == null ? '—' : usd(g, true), g == null || Math.abs(g) < 0.005 ? '' : cls(g))}</tr>`;
+  const causes = [];
+  if (gSw != null && Math.abs(gEq) >= 0.01) {
+    const share = gEq !== 0 ? gSw / gEq * 100 : 0;
+    causes.push(`Swap ${gSw < 0 ? 'sous-estimé' : 'surestimé'} de ${usd(Math.abs(gSw))}${share > 0 ? ` : explique ${fmtNum(Math.min(100, share), 0)} % de l’écart` : ''}.${bk.allEst && bk.tot > 0 && (S.settings.swap || {}).pct > 0 ? ` <small>Taux de swap annuel équivalent : environ ${fmtNum(S.settings.swap.pct * Math.abs(mtSw) / bk.tot, 2)} % (réglé à ${fmtNum(S.settings.swap.pct, 2)} %).</small>` : ''}`);
+  } else if (gSw == null) causes.push('Saisissez le swap total des positions (colonne Swap de MT5, somme) pour savoir quelle part de l’écart il explique.');
+  causes.push(`Cours : l’app valorise à la clôture${a.minPriceDate ? ` (cours au ${fmtDate(a.minPriceDate)} au plus ancien)` : ''}, MT5 au dernier prix CFD. Petit écart normal hors séance.`);
+  const rest = gEq - (gSw || 0);
+  if (a.equity > 0 && Math.abs(rest / a.equity * 100) >= 0.5) causes.push(`Reste ${usd(rest, true)} sans explication : vérifiez ventes, commissions et dividendes ou ajustements CFD non saisis.`);
+  if (gM != null && a.margin > 0 && Math.abs(gM / a.margin * 100) >= 5) causes.push(`Marge différente de ${fmtNum(gM / a.margin * 100, 0)} % : vérifiez le levier enregistré pour vos positions.`);
+  box.innerHTML = `<div class="sec-head" style="margin-top:8px"><h3 class="chart-t" style="margin:0">App vs MT5</h3><span class="pill ${Math.abs(gPct) < 0.5 ? 'win' : 'warn'}">écart ${fmtNum(Math.abs(gPct), 2)} %</span></div>
+    <div class="tbl"><table><thead><tr><th></th><th class="n">App</th><th class="n">MT5</th><th class="n">Écart</th></tr></thead><tbody>
+    ${row('Valeur nette', a.equity, v, gEq)}${row('Marge', a.margin, mu, gM)}${row('Swap des positions', appSw, mtSw, gSw, !bk.allEst ? false : true)}</tbody></table></div>
+    <ul class="mt5c">${causes.map(c => `<li>${c}</li>`).join('')}</ul>`;
+}
 function sheetSnap() {
-  openSheet({
-    title: 'Valeur courtier', ok: 'Enregistrer',
-    body: `<p class="lead">Recopiez la valeur nette (equity) et la marge disponible affichées par le courtier.</p><div class="fields">${dateInp('date', 'Date', todayISO())}
-      ${dec('netValue', 'Valeur nette ($)', '')}${dec('marginAvail', 'Marge disponible ($)', '', 'placeholder="facultatif"')}</div>`,
+  const D0 = lastWeekday(todayISO());
+  openSheet({ title: 'Rapprochement MT5', ok: 'Enregistrer',
+    body: `<p class="lead">Recopiez les chiffres de MT5, onglet Trade (en bas). La valeur MT5 devient une observation exacte de la performance à cette date.</p><div class="fields">
+      ${dateInp('date', 'Date (dernière séance)', D0)}${dec('netValue', 'Fonds propres MT5 (Equity, $)', '')}
+      ${dec('marginUsed', 'Marge MT5 (Margin, $)', '', 'placeholder="facultatif"')}${dec('swap', 'Swap total des positions ($)', '', 'placeholder="facultatif"', 'somme de la colonne Swap')}</div>
+      <label class="check"><input type="checkbox" name="fixSwap"> Remplacer le swap estimé par le swap réel (réparti sur les positions ouvertes, au prorata de leur swap estimé)</label>
+      <div id="mt5Out"></div>`,
+    onInput: mt5Compare,
     onSubmit: form => {
-      const v = num(F(form, 'netValue')), m = numOr(F(form, 'marginAvail'), null), date = F(form, 'date');
-      need(v > 0, 'Valeur nette positive requise.'); need(m === null || m >= 0, 'Marge invalide.'); need(date, 'Date requise.');
+      const v = num(F(form, 'netValue')), mu = numOr(F(form, 'marginUsed'), null), swv = F(form, 'swap').trim(), sw = swv === '' ? null : num(swv), date = F(form, 'date');
+      need(date, 'Date requise.'); need(date <= todayISO(), 'Date dans le futur.'); need(v > 0, 'Fonds propres positifs requis.');
+      need(mu === null || mu >= 0, 'Marge invalide.'); need(sw === null || isNum(sw), 'Swap invalide.');
+      const fix = form.elements.fixSwap.checked; need(!fix || sw !== null, 'Saisissez le swap total pour le remplacer.');
+      let n = 0;
+      if (fix) {
+        const bk = swapBook(date), T = Math.abs(sw), base = bk.tot > 0 ? bk.tot : bk.rows.reduce((a, r) => a + r.expo, 0);
+        need(bk.rows.length && base > 0, 'Aucune position ouverte à cette date.');
+        for (const r of bk.rows) {
+          const amt = Core.roundTo(T * (bk.tot > 0 ? r.cur : r.expo) / base - r.man, 2);
+          if (Math.abs(amt) < 0.005) continue;
+          r.lot.events.push({ id: uid(), type: 'funding', date, amount: amt, note: 'Swap réel MT5 (rapprochement)' }); n++;
+        }
+      }
       S.snapshots = S.snapshots.filter(s => s.date !== date);
-      S.snapshots.push({ id: uid(), date, netValue: v, marginAvail: m });
-      if (calcDraft && m !== null) calcDraft.marginAvail = String(m);
-      save('Valeur courtier enregistrée');
-    }
-  });
+      S.snapshots.push({ id: uid(), date, netValue: v, marginUsed: mu, marginAvail: mu === null ? null : Core.roundTo(v - mu, 2), swap: sw });
+      if (calcDraft && mu !== null) calcDraft.marginAvail = String(Core.roundTo(v - mu, 2));
+      try { localStorage.removeItem(MT5_SNOOZE); } catch (e) {}
+      save('Rapprochement enregistré' + (n ? ` · swap réel réparti sur ${n} position(s)` : ''));
+    } });
 }
 
 // ---------- Exports et restauration ----------
@@ -4121,6 +4186,7 @@ document.addEventListener('click', e => {
     }
     case 'add-flow': sheetFlow(); break;
     case 'add-snap': sheetSnap(); break;
+    case 'mt5-snooze': try { localStorage.setItem(MT5_SNOOZE, todayISO()); } catch (e) {} render(); break;
     case 'del-flow': confirmSheet('Supprimer ce flux ?', 'Le versement ou retrait sera retiré des calculs.', 'Supprimer', () => { S.flows = S.flows.filter(x => x.id !== b.dataset.id); save('Flux supprimé'); }); break;
     case 'del-snap': confirmSheet('Supprimer cette valeur courtier ?', 'Elle ne servira plus d’observation.', 'Supprimer', () => { S.snapshots = S.snapshots.filter(x => x.id !== b.dataset.id); save('Valeur supprimée'); }); break;
     case 'export-csv': offerFile('journal-trading-' + todayISO() + '.csv', buildCSV()); break;
