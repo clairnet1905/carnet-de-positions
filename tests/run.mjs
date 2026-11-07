@@ -34,6 +34,15 @@ results.push(...ctx.__r.map(r => ({ ...r, name: 'Moteur · ' + r.name })));
     return c.state.over.join() === 'level' && c.payload && !d.payload ? true : JSON.stringify([c.state, d.payload]); });
 }
 
+// 1 ter. Robot : bougies (ouverture, haut, bas) compressées puis relues à l'identique, et recalées avec les dividendes estimés.
+{
+  const { pack, unpack, fixBars } = await import('../robot/sma.mjs');
+  const h = { bars: [['2026-11-02', 100], ['2026-11-03', 102, 101, 103.5, 100.2], ['2026-11-04', 101, 102, 102.5, 99.8]], n: 3, full: 1 };
+  const u = unpack(JSON.parse(JSON.stringify(pack(h, 2)))), f = fixBars(u.bars, [['2026-11-04', 0.99, 1]]);
+  const ok = u.bars[0].length === 2 && Math.abs(u.bars[1][3] - 103.5) < 0.01 && Math.abs(u.bars[2][4] - 99.8) < 0.01 && Math.abs(f[1][3] - 103.5 * 0.99) < 0.01 && f[2][3] === u.bars[2][3] && !pack(h, 0).x;
+  results.push({ name: 'Robot · bougies gardées et relues sans perte', ok, msg: ok ? '' : JSON.stringify(u.bars) });
+}
+
 // 2. Application assemblée, dans Chromium.
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
 const server = createServer((req, res) => {

@@ -172,6 +172,24 @@ window.__appTests = async function () {
     return near(S.lots[0].stopCurrent, v) && S.lots[0].events.some(e => e.type === 'stop' && e.to === v) ? true : 'stop ' + S.lots[0].stopCurrent;
   });
 
+  await t('Graphique : bougies du robot, SMA, stop et ventes ; clôtures sans bougies', async () => {
+    const D = days(90);
+    const u = unpackHist({ s: D[0], o: D.map((d, i) => i ? Core.days(D[i - 1], d) : 0), c: D.map((d, i) => 100 + i), n: 90, x: D.slice(-70).flatMap(() => [-50, 120, -130]), xn: 70 });
+    if (u.ohlc !== 70 || u.bars[89].length !== 5 || Math.abs(u.bars[89][3] - 189 * 1.012) > 1e-6) return 'décodage bougies ' + u.ohlc;
+    Radar.hist.AAA = u; S.watch = [{ id: 'w5', ticker: 'AAA', period: 5, tf: 'D', sym: '' }];
+    S.lots = [lot({ date: D[40], price: 140, events: [{ id: 'st', type: 'stop', date: D[60], from: 90, to: 150 }, { id: 's', type: 'sell', date: D[70], qty: 4, price: 170, fee: 0 }] })];
+    sheetChart('AAA'); await wait(30);
+    const svg = $('#chSvg'); if (!svg) return 'graphique absent';
+    const nR = svg.querySelectorAll('rect').length;
+    if (nR < 60 || !svg.querySelector('.sm') || !svg.querySelector('.stp') || !svg.querySelector('.m-in') || !svg.querySelector('.m-out')) return `éléments manquants (${nR} bougies)`;
+    $('[data-act="ch-range"][data-n="22"]').click(); await wait(30);
+    if ($('#chSvg').querySelectorAll('rect').length !== 22) return '1 M : ' + $('#chSvg').querySelectorAll('rect').length;
+    Radar.hist.AAA = { bars: D.map((d, i) => [d, 100 + i]), n: 90, last: D[89] }; anaMemo.clear();
+    sheetChart('AAA'); await wait(30);
+    const ok = $('#chSvg .cl') && !$('#chSvg rect'); closeSheet();
+    return ok ? true : 'pas de ligne de clôtures';
+  });
+
   reset(); tab = 'dash';
   return out;
 };
