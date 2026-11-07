@@ -106,6 +106,12 @@ function coreTests(Core) {
     const T = Core.tradeStats(s, () => 10);
     return near(T.winRate, 50) && near(T.avgR, 0.5) && near(T.profitFactor, 2) ? true : JSON.stringify({ w: T.winRate, r: T.avgR, pf: T.profitFactor });
   });
+  t('Rattrapage : compté dans la valeur et le résultat, pas comme un retrait, et dans la performance', () => {
+    const s = st({ flows: [{ id: 'c', kind: 'pnl', date: '2026-11-03', amount: -100 }] });
+    const A = Core.accountState(s, null, 'last');
+    const tw = Core.twr([{ date: '2026-11-02', value: 1000 }, { date: '2026-11-03', value: 900 }], s.flows);
+    return near(A.equity, s.settings.initialCapital - 100) && A.withdrawals === 0 && near(A.catchup, -100) && near(tw.points[1].r, -0.1) ? true : JSON.stringify({ e: A.equity, w: A.withdrawals, r: tw.points[1].r });
+  });
   t('Risque : perte si tous les stops sautent, frais de sortie compris ; position sans stop à part', () => {
     const s = st({ lots: [lot({ stopCurrent: 90 }), lot({ ticker: 'BBB', qty: 5, price: 200, stopCurrent: 180 }), lot({ ticker: 'CCC', stopCurrent: null })],
       prices: { AAA: [{ date: '2026-11-05', price: 110 }], BBB: [{ date: '2026-11-05', price: 210 }], CCC: [{ date: '2026-11-05', price: 50 }] } });

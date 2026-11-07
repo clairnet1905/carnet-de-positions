@@ -137,6 +137,18 @@ window.__appTests = async function () {
     return S.settings.pushRisk === false && o.back === true && o.level === true && S.settings.riskLim.heat === 5 && near(portfolioRisk().heat, before) && near(before, 200) ? true : JSON.stringify({ p: S.settings.pushRisk, o, before });
   });
 
+  await t('Rattrapage : perte enregistrée, valeur et performance baissent, statistiques inchangées', async () => {
+    const D = days(10); S.settings.startDate = addDays(D[0], -1);
+    S.lots = [lot({ date: D[0], events: [{ id: 's', type: 'sell', date: D[2], qty: 10, price: 110, fee: 0 }] })];
+    const n0 = Core.tradeStats(S, planR).count, e0 = Core.accountState(S, null, 'last').equity;
+    sheetCatchup(); await wait(50);
+    const f = $('#sheetForm'); f.elements.date.value = D[5]; f.elements.sign.value = '-1'; f.elements.amount.value = '101,38';
+    $('#sheetOk').click(); await wait(300);
+    const fl = S.flows[0], e1 = Core.accountState(S, null, 'last').equity, P = perf();
+    tab = 'set'; render(); const shown = /Rattrapage/.test($('#view').textContent);
+    return fl && fl.kind === 'pnl' && fl.amount === -101.38 && near(e1, e0 - 101.38, 1e-6) && Core.tradeStats(S, planR).count === n0 && P.itd && P.itd.r < 0 && shown ? true : JSON.stringify({ fl, e0, e1, r: P.itd && P.itd.r, shown });
+  });
+
   reset(); tab = 'dash';
   return out;
 };
