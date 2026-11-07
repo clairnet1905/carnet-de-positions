@@ -223,6 +223,14 @@ i.p{background:var(--accent)!important} i.n{background:var(--warn)!important} i.
 .rail .mk.stop{background:var(--loss)}
 .rail .mk.entry{background:var(--ink);opacity:.55}
 .rail .mk.px{top:5px;width:16px;height:16px;margin-left:-8px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+.xbox{margin:10px 0 4px}.xrail{position:relative;height:56px;margin:4px 8px 6px}
+.xrail::before{content:"";position:absolute;left:0;right:0;top:26px;height:4px;border-radius:99px;background:var(--surface-2)}
+.xrail .xz{position:absolute;top:26px;height:4px;border-radius:99px;background:var(--accent-soft)}
+.xrail .xm{position:absolute;top:19px;width:2px;height:18px;margin-left:-1px;border-radius:2px;background:var(--muted)}
+.xrail .xm.stop{background:var(--loss)}.xrail .xm.entry{background:var(--ink);opacity:.55}.xrail .xm.max{background:var(--gain)}.xrail .xm.out{background:var(--accent);width:3px}
+.xrail .xt{position:absolute;top:40px;font:500 .68rem var(--f-num);color:var(--muted);transform:translateX(-50%);white-space:nowrap}.xrail .xt.up{top:2px}
+.xrail .xt.al{transform:translateX(-2px)}.xrail .xt.ar{transform:translateX(calc(-100% + 2px))}
+.xrail .xt.stop{color:var(--loss)}.xrail .xt.max{color:var(--gain)}.xrail .xt.out{color:var(--accent)}
 .rail-leg{display:flex;justify-content:space-between;gap:6px;font:500 .72rem var(--f-num);color:var(--muted);flex-wrap:wrap}
 .rail-leg .s{color:var(--loss)} .rail-leg .p{color:var(--accent)}
 details.lot{border:1px solid var(--line);border-radius:12px;background:var(--surface)}
@@ -447,7 +455,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.41.0 · licence MIT */
+/* Carnet de positions v1.42.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -2538,6 +2546,74 @@ function edgeKey(dim, c) {
   if (dim === 'mkt') return lightAt(l.date) ? lightAt(l.date) + ' à l’achat' : 'Historique indices manquant';
   return l.planOk === true ? 'Plan respecté' : l.planOk === false ? 'Plan non respecté' : 'Non renseigné';
 }
+// ----- Qualité des sorties (MAE / MFE) : clôtures journalières de l'historique du radar pendant chaque trade clôturé -----
+// En R (1 R = risque prévu au plan), sur la quantité achetée. Clôtures seulement : pas les plus hauts et plus bas de séance.
+let exitRadarAsked = false;
+function exitNeedRadar() { if (S.watch.length && !Radar.loaded && !exitRadarAsked) { exitRadarAsked = true; loadRadarCache().then(() => render()); } }
+function tickerBars(t) {
+  const w = S.watch.find(x => x.ticker === t && !x.idx), h = w && histFixed(symOf(w), Radar.hist[symOf(w)]);
+  return h && h.bars && h.bars.length ? h.bars : null;
+}
+// Meilleure SMA (de la position, ou toutes celles de l'action) sous le cours à la date d : stop qu'elle permettait.
+function bestSma(lot, d, px) {
+  const all = S.watch.filter(w => w.ticker === lot.ticker && !w.idx), mine = lot.smas && lot.smas.length ? all.filter(w => lot.smas.includes(smaKey(w))) : all;
+  const bars = tickerBars(lot.ticker); if (!bars) return null;
+  let best = null;
+  for (const w of mine) {
+    const c = []; let k0 = null;
+    for (const [dd, x] of bars) { if (dd > d) break; const k = periodKey(w.tf, dd); if (k === k0) c[c.length - 1] = x; else { c.push(x); k0 = k; } }
+    if (w.tf !== 'D') c.pop();   // bougie S ou M en cours : pas encore complétée
+    if (c.length < w.period) continue;
+    const sma = c.slice(-w.period).reduce((a, v) => a + v, 0) / w.period;
+    if (sma < px && (!best || sma > best.sma)) best = { w, sma };
+  }
+  return best;
+}
+function exitStats(lot) {
+  const ls = Core.lotState(lot), u = planR(lot); if (!ls.closed || !(u > 0)) return null;
+  const all = tickerBars(lot.ticker); if (!all) return { none: true, R: ls.netRealized / u };
+  const end = ls.closeDate, bars = all.filter(b => b[0] >= lot.date && b[0] <= end); if (!bars.length) return { none: true, R: ls.netRealized / u };
+  const q = lot.qty, sells = lot.events.filter(e => e.type === 'sell'), sq = sells.reduce((a, e) => a + e.qty, 0);
+  const exitPx = sq > 0 ? sells.reduce((a, e) => a + e.qty * e.price, 0) / sq : null;
+  let hi = bars[0], lo = bars[0]; for (const b of bars) { if (b[1] > hi[1]) hi = b; if (b[1] < lo[1]) lo = b; }
+  const R = ls.netRealized / u, mfe = Math.max(0, (hi[1] - lot.price) * q / u), mae = Math.min(0, (lo[1] - lot.price) * q / u);
+  const after = all.filter(b => b[0] > end).slice(0, 10);
+  const rebound = R < 0 && exitPx != null && after.length >= 5 && Math.max(...after.map(b => b[1])) >= exitPx + 2 * u / q;
+  const sm = mfe > 0 ? bestSma(lot, hi[0], hi[1]) : null;
+  const sma = sm && sm.sma > lot.price ? { w: sm.w, sma: sm.sma, r: (sm.sma - lot.price) * q / u, used: exitPx != null && exitPx >= sm.sma * 0.995 } : null;
+  return { mfe, mae, R, given: Math.max(0, mfe - R), u, q, hi, lo, exitPx, rebound, afterN: after.length, sma, stopR: isNum(lot.stopInitial) ? (lot.stopInitial - lot.price) * q / u : -1 };
+}
+const fR = r => Math.abs(r) < 0.05 ? '0 R' : (r > 0 ? '+' : '−') + fmtNum(Math.abs(r), 1) + ' R';
+function exitBlock(lot) {
+  exitNeedRadar();
+  const x = exitStats(lot); if (!x) return '';
+  if (x.none) return `<p class="hint">Qualité de la sortie : ${esc(lot.ticker)} n’est pas au radar (ou historique en attente), le gain et le recul maximaux ne sont pas calculables.</p>`;
+  const lo = Math.min(x.stopR, x.mae, x.R, -0.2), hi = Math.max(x.mfe, x.R, 0.5), pad = (hi - lo) * 0.06, X = r => ((r - lo + pad) / (hi - lo + 2 * pad) * 100).toFixed(1);
+  const mk = (r, c, lab, top) => { const p = +X(r), al = p < 18 ? ' al' : p > 82 ? ' ar' : '';
+    return `<b class="xm ${c}" style="left:${p}%"></b><span class="xt${top ? ' up' : ''}${al} ${c}" style="left:${p}%">${lab}</span>`; };
+  return `<div class="xbox"><p class="chart-t" style="margin:0">Qualité de la sortie <small>· clôtures journalières</small></p>
+    <div class="xrail"><i class="xz" style="left:${X(x.mae)}%;width:${(X(x.mfe) - X(x.mae)).toFixed(1)}%"></i>${mk(x.stopR, 'stop', 'stop ' + fR(x.stopR), false)}${mk(0, 'entry', 'achat', false)}${mk(x.R, 'out', 'sortie ' + fR(x.R), true)}${x.mfe > 0 ? mk(x.mfe, 'max', 'max ' + fR(x.mfe), true) : ''}</div>
+    <dl class="kv">${kv('Gain maximal (MFE)', `${fR(x.mfe)} · ${usd(x.mfe * x.u, true)}`, `meilleure clôture : ${fmtDate(x.hi[0])} à ${usd(x.hi[1])}`, x.mfe > 0 ? 'pos' : '')}
+      ${kv('Recul maximal (MAE)', `${fR(x.mae)} · ${usd(x.mae * x.u, true)}`, `pire clôture : ${fmtDate(x.lo[0])} à ${usd(x.lo[1])}`)}
+      ${kv('Rendu', x.given > 0.05 ? `${fmtNum(x.given, 1)} R · ${usd(x.given * x.u)}` : 'Rien', 'du meilleur moment à la sortie', x.given >= 1 ? 'neg' : '')}
+      ${x.sma ? kv('Votre SMA ce jour-là', x.sma.used ? 'Utilisée' : 'Non remontée', `SMA ${TF_SHORT[x.sma.w.tf]} ${x.sma.w.period} à ${usd(x.sma.sma)} le ${fmtDate(x.hi[0])} : stop possible à ${fR(x.sma.r)}`, x.sma.used ? '' : 'neg') : ''}
+      ${x.rebound ? kv('Après la sortie', 'Reparti', 'plus de 2 R au-dessus du prix de sortie dans les 10 séances suivantes') : ''}</dl></div>`;
+}
+function exitCard() {
+  exitNeedRadar();
+  const st = S.lots.map(exitStats).filter(Boolean), ok = st.filter(x => !x.none);
+  if (st.length < 3) return '';
+  const avg = (a, f) => a.length ? a.reduce((t, x) => t + f(x), 0) / a.length : null;
+  const losers = ok.filter(x => x.R < 0), wins = ok.filter(x => x.R > 0), beyond = st.filter(x => x.R < -1.2);
+  const tile = (l, v, c) => `<div><small>${l}</small><b class="num ${c || ''}">${v}</b></div>`;
+  return `<section class="card"><div class="sec-head"><h2>Qualité des sorties</h2><small>${ok.length} trade(s) analysé(s)${st.length > ok.length ? ` sur ${st.length}` : ''}</small></div>
+    ${ok.length ? `<div class="btiles">${tile('Gain max. moyen', fR(avg(ok, x => x.mfe)), 'pos')}${tile('Gardé à la sortie', fR(avg(ok, x => x.R)), cls(avg(ok, x => x.R)))}${tile('Rendu en moyenne', fmtNum(avg(ok, x => x.given), 1) + ' R', 'neg')}</div>
+    <dl class="kv">${kv('Allés à +1 R puis clôturés en perte', `${ok.filter(x => x.mfe >= 1 && x.R < 0).length} / ${ok.length}`, 'le stop n’avait pas été remonté assez haut', ok.some(x => x.mfe >= 1 && x.R < 0) ? 'neg' : '')}
+      ${kv('Stoppés puis repartis', `${losers.filter(x => x.rebound).length} / ${losers.length}`, 'plus de 2 R au-dessus de la sortie dans les 10 séances suivantes')}
+      ${wins.length ? kv('Recul max. moyen des gagnants', fR(avg(wins, x => x.mae)), 'avant de finir en gain') : ''}
+      ${kv('Pertes au-delà du stop', beyond.length ? `${beyond.length} · pire ${fR(Math.min(...beyond.map(x => x.R)))}` : 'Aucune', 'perte de plus de 1,2 R : trou à l’ouverture ou sortie tardive', beyond.length ? 'neg' : '')}</dl>` : '<p class="hint">Historique du radar en attente pour ces actions.</p>'}
+    <p class="hint">Clôtures journalières de l’historique du radar (pas les plus hauts et plus bas de séance), cours ajustés des dividendes.${st.length > ok.length ? ` ${st.length - ok.length} trade(s) sans historique : action absente du radar.` : ''} Détail dans chaque position clôturée du journal.</p></section>`;
+}
 function edgeCard() {
   const all = Core.tradeStats(S, planR).closed.filter(c => c.R != null);
   if (all.length < 3) return '';
@@ -2627,12 +2703,22 @@ function mapIndustry(ind) {
 }
 const Sect = (() => { try { return JSON.parse(localStorage.getItem(SECT_KEY)) || {}; } catch (e) { return {}; } })();
 const sectFix = () => S.settings.sectorFix || {};
-const industryOf = t => (Sect[String(t).toUpperCase()] || [''])[0];
+const industryOf = t => (sectGet(String(t).toUpperCase()) || [''])[0];
+// Secteurs : cache de l'appareil, complété par ceux trouvés sur vos autres appareils (S.settings.sect, synchronisé).
+const sectGet = t => Sect[t] || (S.settings.sect || {})[t] || null;
 function sectorOf(t) {
   t = String(t || '').toUpperCase();
-  return sectFix()[t] || (Sect[t] ? mapIndustry(Sect[t][0]) : null);
+  const x = sectGet(t);
+  return sectFix()[t] || (x ? mapIndustry(x[0]) : null);
 }
-const sectMissing = t => !sectFix()[t] && (!Sect[t] || (!Sect[t][0] && Core.days(Sect[t][1], todayISO()) > 30));
+const sectMissing = t => { const x = sectGet(t); return !sectFix()[t] && (!x || (!x[0] && Core.days(x[1], todayISO()) > 30)); };
+// Recopie dans les données synchronisées les secteurs connus de cet appareil (une fois par changement).
+function sectShare() {
+  const sh = S.settings.sect || {}, add = {};
+  for (const t in Sect) if (Sect[t] && Sect[t][0] && !(sh[t] && sh[t][0] === Sect[t][0])) add[t] = Sect[t];
+  if (!Object.keys(add).length) return false;
+  S.settings.sect = Object.assign({}, sh, add); save(); return true;
+}
 let sectBusy = false;
 // Une douzaine de profils par passage (positions d'abord) : la clé gratuite sert aussi aux cours en direct.
 async function refreshSectors(only) {
@@ -2640,7 +2726,7 @@ async function refreshSectors(only) {
   const openT = S.lots.filter(l => !Core.lotState(l).closed).map(l => l.ticker);
   const want = only ? [String(only).toUpperCase()] : [...new Set([...openT, ...S.watch.filter(w => !w.sym && !w.idx).map(w => w.ticker)])];
   const todo = want.filter(sectMissing).slice(0, 12);
-  if (!todo.length) return false;
+  if (!todo.length) { setTimeout(sectShare, 0); return false; }
   sectBusy = true; let got = 0;
   try {
     for (const t of todo) {
@@ -2654,6 +2740,7 @@ async function refreshSectors(only) {
   } catch (e) { /* hors ligne : on réessaiera */ } finally { sectBusy = false; }
   if (got) {
     try { localStorage.setItem(SECT_KEY, JSON.stringify(Sect)); } catch (e) {}
+    sectShare();
     if (tab === 'calc') updateCalc(); else if (tab === 'dash' || tab === 'radar') render();
   }
   return got > 0;
@@ -2975,6 +3062,7 @@ function viewDash() {
   ${closedCard()}
   ${disciplineCard(T)}
   ${edgeCard()}
+  ${exitCard()}
   <section class="card">
     <details class="more"><summary>Détail du calcul de la valeur nette</summary>
     <dl class="kv">
@@ -3436,6 +3524,7 @@ function lotDetails(v, inJournal, compact) {
         ${ls.closed && R != null ? kv('Résultat en R', fmtR(R), `1 R = ${usd(u)} (${fmtNum(S.settings.riskPct, 2)} % du capital à l’achat)`, cls(R)) : ''}
         ${kv('Plan respecté', lot.planOk === true ? 'Oui' : lot.planOk === false ? 'Non' : 'Non renseigné', esc(lot.planComment || ''))}
       </dl>
+      ${ls.closed ? exitBlock(lot) : ''}
       ${!ls.closed && sa && sa.missing ? '<div class="banner err">Stop manquant : risque non borné.</div>' : ''}
       ${lot.note ? `<p class="lead">${esc(lot.note)}</p>` : ''}
       ${lotImgIds(lot).length ? `<div class="shots">${lot.imgId ? `<figure><img class="thumb" data-img="${lot.imgId}" alt="Capture à l’achat ${esc(lot.ticker)}"><figcaption>Achat du ${fmtDate(lot.date)}</figcaption></figure>` : ''}${lot.events.filter(e => e.imgId).sort((a, b) => a.date < b.date ? -1 : 1).map(e => `<figure><img class="thumb" data-img="${e.imgId}" alt="Capture à la vente ${esc(lot.ticker)}"><figcaption>Vente du ${fmtDate(e.date)}</figcaption></figure>`).join('')}</div>` : ''}
@@ -3536,7 +3625,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.41.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.42.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
