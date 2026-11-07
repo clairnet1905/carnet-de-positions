@@ -2828,11 +2828,12 @@ function sheetFlow() {
 }
 // ----- Santé des données : contrôles à chaque affichage, rien n'est corrigé sans l'utilisateur -----
 // lvl : 'imp' (fausse la valeur ou la performance), 'chk' (fausse un détail), 'stat' (statistiques).
+const radarSkip = () => new Set((S.settings.radarSkip || []).map(t => String(t).toUpperCase()));
 function healthChecks() {
   const out = [], today = todayISO(), start = S.settings.startDate, real = S.lots.filter(l => !l.demo);
   const open = real.filter(l => !Core.lotState(l).closed), closed = real.filter(l => Core.lotState(l).closed && l.date >= start);
   const btn = (label, act, data) => ({ label, act, data: data || {} });
-  const inRadar = t => S.watch.some(w => w.ticker === t && !w.idx);
+  const inRadar = t => S.watch.some(w => w.ticker === t && !w.idx), skip = radarSkip();   // skip : actions que vous ne voulez pas au radar (hors USA…)
   const lb = latestBroker();
   if (lb && !lb.demo) {
     const a = Core.accountState(S, lb.date, 'last'), g = a.equity > 0 ? (lb.netValue - a.equity) / a.equity * 100 : 0;
@@ -2852,7 +2853,7 @@ function healthChecks() {
     const miss = days.filter(d => d >= l.date && d < end && !have.has(d)).length;
     if (miss >= 3) gaps.push([l, miss]);
   }
-  if (gaps.length) out.push({ lvl: 'imp', title: `${gaps.length} position(s) avec des jours sans cours`, sub: gaps.slice(0, 6).map(([l, n]) => `${esc(l.ticker)} : ${n} jour(s)`).join(' · ') + '. Ces jours sont écartés de la performance. L’historique du radar les complète si l’action y est.', btn: inRadar(gaps[0][0].ticker) ? btn('Mettre à jour les cours', 'prices') : btn(`Ajouter ${gaps[0][0].ticker} au radar`, 'health-radar', { t: gaps[0][0].ticker }) });
+  if (gaps.length) out.push({ lvl: 'imp', title: `${gaps.length} position(s) avec des jours sans cours`, sub: gaps.slice(0, 6).map(([l, n]) => `${esc(l.ticker)} : ${n} jour(s)`).join(' · ') + '. Ces jours sont écartés de la performance. L’historique du radar les complète si l’action y est.', btn: inRadar(gaps[0][0].ticker) || skip.has(gaps[0][0].ticker) ? btn('Mettre à jour les cours', 'prices') : btn(`Ajouter ${gaps[0][0].ticker} au radar`, 'health-radar', { t: gaps[0][0].ticker }) });
   // Cours enregistré le jour d'une vente (saisie à la main) différent du prix de vente : reste d'une saisie corrigée.
   for (const l of real) for (const e of l.events.filter(x => x.type === 'sell')) {
     const pr = (S.prices[l.ticker] || []).find(x => x.date === e.date); if (!pr || pr.src) continue;
@@ -2860,8 +2861,8 @@ function healthChecks() {
     if (sales.every(p => Math.abs(pr.price / p - 1) > 0.005) && !out.some(o => o.key === l.ticker + e.date))
       out.push({ key: l.ticker + e.date, lvl: 'chk', title: `${esc(l.ticker)} : cours du ${fmtDate(e.date)} (${usd(pr.price)}) ≠ prix de vente (${usd(e.price)})`, sub: 'Reste d’une saisie corrigée. Sans effet sur le résultat de la position, mais faux dans l’historique des cours.', btn: btn(`Remplacer par ${usd(e.price)}`, 'health-px', { t: l.ticker, d: e.date, p: e.price }) });
   }
-  const noRadar = [...new Set(closed.concat(open).map(l => l.ticker))].filter(t => !inRadar(t));
-  if (noRadar.length) out.push({ lvl: 'chk', title: `${noRadar.length} action(s) de vos trades absente(s) du radar`, sub: noRadar.map(esc).join(', ') + ' : pas d’analyse de sortie, pas de cours de secours pour la performance.', btn: btn(`Ajouter ${noRadar[0]} au radar`, 'health-radar', { t: noRadar[0] }) });
+  const noRadar = [...new Set(closed.concat(open).map(l => l.ticker))].filter(t => !inRadar(t) && !skip.has(t));
+  if (noRadar.length) out.push({ lvl: 'chk', title: `${noRadar.length} action(s) de vos trades absente(s) du radar`, sub: noRadar.map(esc).join(', ') + ' : pas d’analyse de sortie, pas de cours de secours pour la performance.', btn: btn(`Ajouter ${noRadar[0]} au radar`, 'health-radar', { t: noRadar[0] }), btn2: btn(`Ne plus signaler ${noRadar[0]}`, 'health-noradar', { t: noRadar[0] }) });
   if (open.length && (S.settings.swap || {}).pct > 0 && !open.some(l => l.events.some(e => e.type === 'funding')))
     out.push({ lvl: 'chk', title: 'Swap jamais remplacé par le réel', sub: `Estimé à ${fmtNum(S.settings.swap.pct, 2)} % par an. Saisissez le swap total de MT5 dans le rapprochement et cochez « Remplacer le swap estimé ».`, btn: btn('Saisir le swap MT5', 'add-snap') });
   const lim = S.settings.staleDays || 4, stale = open.filter(l => { const lp = Core.lastPrice(S.prices, l.ticker); return !lp || Core.days(lp.date, lastWeekday(today)) > lim; });
@@ -2882,11 +2883,15 @@ function healthChecks() {
 const HLVL = { imp: ['Important · fausse la valeur et la performance', 'err'], chk: ['À vérifier · fausse un détail', 'warn'], stat: ['Pour les statistiques', 'mut'] };
 function healthCard() {
   const H = healthChecks();
-  if (!H.length) return `<section class="card" id="health"><div class="sec-head"><h2>Santé des données</h2><span class="pill win">Tout est bon</span></div><p class="hint">Aucun point à vérifier.</p></section>`;
-  const b = x => x.btn ? `<button class="btn sm" data-act="${x.btn.act}"${Object.entries(x.btn.data).map(([k, v]) => ` data-${k}="${esc(String(v))}"`).join('')}>${x.btn.label}</button>` : '';
+  const skOnly = [...radarSkip()].sort();
+  if (!H.length) return `<section class="card" id="health"><div class="sec-head"><h2>Santé des données</h2><span class="pill win">Tout est bon</span></div><p class="hint">Aucun point à vérifier.</p>${skOnly.length ? `<p class="hint">Jamais proposées au radar : ${skOnly.map(esc).join(', ')}. <button class="btn sm" data-act="health-noradar-reset">Signaler à nouveau</button></p>` : ''}</section>`;
+  const b1 = y => `<button class="btn sm" data-act="${y.act}"${Object.entries(y.data).map(([k, v]) => ` data-${k}="${esc(String(v))}"`).join('')}>${y.label}</button>`;
+  const b = x => x.btn ? (x.btn2 ? `<div class="row">${b1(x.btn)}${b1(x.btn2)}</div>` : b1(x.btn)) : '';
+  const sk = [...radarSkip()].sort(), skLine = sk.length ? `<p class="hint">Jamais proposées au radar : ${sk.map(esc).join(', ')}. <button class="btn sm" data-act="health-noradar-reset">Signaler à nouveau</button></p>` : '';
   return `<section class="card" id="health"><div class="sec-head"><h2>Santé des données</h2><span class="pill ${H.some(x => x.lvl === 'imp') ? 'loss' : 'warn'}">${H.length} point(s)</span></div>
     <p class="hint" style="margin-top:0">Vérifié à chaque affichage. Rien n’est corrigé sans vous.</p>
     ${['imp', 'chk', 'stat'].map(k => { const g = H.filter(x => x.lvl === k); if (!g.length) return ''; return `<p class="hlv ${HLVL[k][1]}">${HLVL[k][0]}</p>${g.map(x => `<div class="hit"><i class="hd ${HLVL[k][1]}"></i><div><b>${x.title}</b><small>${x.sub}</small>${b(x)}</div></div>`).join('')}`; }).join('')}
+    ${skLine}
   </section>`;
 }
 function healthBanner() {
@@ -3321,6 +3326,8 @@ document.addEventListener('click', e => {
     case 'go-health': tab = 'set'; render(); setTimeout(() => { const h = document.getElementById('health'); if (h) h.scrollIntoView({ block: 'start', behavior: 'smooth' }); }, 50); break;
     case 'go-tab': tab = b.dataset.tab; render(); window.scrollTo(0, 0); break;
     case 'health-radar': sheetWatch(null, b.dataset.t); break;
+    case 'health-noradar': { const k = radarSkip(); k.add(b.dataset.t); S.settings.radarSkip = [...k].sort(); save(`${b.dataset.t} : plus proposée au radar`); break; }
+    case 'health-noradar-reset': S.settings.radarSkip = []; save('Actions hors radar de nouveau signalées'); break;
     case 'health-px': confirmSheet('Corriger ce cours ?', `${esc(b.dataset.t)} au ${fmtDate(b.dataset.d)} : le cours enregistré devient ${usd(+b.dataset.p)}, le prix de vente.`, 'Corriger', () => { addPrice(b.dataset.t, b.dataset.d, +b.dataset.p); save('Cours corrigé'); }); break;
     case 'motif-sort': sheetMotifSort(); break;
     case 'motif-list': sheetMotifs(); break;
