@@ -249,7 +249,13 @@ const RADAR_FILE = 'carnet-radar.json', RADAR_META = 'carnet-positions:radar-rob
 function unpackHist(p) {
   const bars = []; let d = p.s;
   for (let i = 0; i < p.c.length; i++) { if (i) d = addDays(d, p.o[i]); bars.push([d, p.c[i]]); }
-  return { bars, n: p.n, full: p.full || 0, last: bars.length ? bars[bars.length - 1][0] : '' };
+  // Bougies : ouverture, haut, bas des dernières séances, en écarts à la clôture (dix-millièmes).
+  let ohlc = 0;
+  if (p.x && p.xn) for (let j = 0, i0 = bars.length - p.xn; j < p.xn; j++) {
+    const b = bars[i0 + j], q = p.x.slice(3 * j, 3 * j + 3); if (!b || q[0] == null) continue;
+    b.push(...q.map(v => b[1] * (1 + v / 1e4))); ohlc++;
+  }
+  return { bars, n: p.n, full: p.full || 0, last: bars.length ? bars[bars.length - 1][0] : '', ohlc };
 }
 function robotFresh(meta) { return !!meta && meta.ls >= prevWeekday(lastSession(Date.now())); }
 // throttle : au plus une vérification toutes les 10 minutes (une petite requête ; le fichier n'est téléchargé que s'il a changé).
@@ -284,7 +290,7 @@ async function pullSharedRadar(throttle) {
       const h = unpackHist(R.hist[s]), loc = Radar.hist[s];
       h.adj = R.adj || 'splits';
       if (!h.bars.length || loc && histOk(loc) && !histOk(h)) continue;   // garder l'historique de l'appareil s'il est seul au bon réglage
-      if (!loc || histOk(loc) !== histOk(h) || h.last > loc.last || (h.last === loc.last && (h.full || 0) >= (loc.full || 0)) || h.n > (loc.n || 0)) upd[s] = Object.assign(h, { ls: R.ls, at: R.at });
+      if (!loc || histOk(loc) !== histOk(h) || h.last > loc.last || (h.last === loc.last && (h.full || 0) >= (loc.full || 0)) || h.n > (loc.n || 0) || (h.ohlc || 0) > (loc.ohlc || 0)) upd[s] = Object.assign(h, { ls: R.ls, at: R.at });
     }
     Object.assign(Radar.hist, upd);
     await HDB.run('readwrite', st => { for (const s in upd) st.put(upd[s], s); return null; });
