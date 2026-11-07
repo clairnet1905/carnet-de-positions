@@ -363,6 +363,7 @@ function notifPanel() {
     <label class="check" style="margin-top:6px"><input type="checkbox" data-act="push-opt" data-k="pushStops" ${S.settings.pushStops !== false ? 'checked' : ''}> Stops à remonter sur une de vos SMA</label>
     <label class="check" style="margin-top:6px"><input type="checkbox" data-act="push-opt" data-k="pushEarn" ${S.settings.pushEarn !== false ? 'checked' : ''}> Résultats d’une position le jour de bourse suivant</label>
     <label class="check" style="margin-top:6px"><input type="checkbox" data-act="push-opt" data-k="pushWeekly" ${S.settings.pushWeekly !== false ? 'checked' : ''}> Bilan de la semaine, le vendredi soir</label>
+    <label class="check" style="margin-top:6px"><input type="checkbox" data-act="push-opt" data-k="pushRisk" ${S.settings.pushRisk !== false ? 'checked' : ''}> Limite de risque dépassée (limites : Tableau de bord › Risque › Limites)</label>
     <label class="check" style="margin-top:6px"><input type="checkbox" data-act="push-opt" data-k="pushWeak" ${S.settings.pushWeak !== false ? 'checked' : ''}> Labo : une de mes SMA du radar jugée faible</label>
     <p class="hint">Une alerte déjà vue dans l’app n’est jamais notifiée. Le jeton et les clés restent dans les secrets GitHub : ni dans le code, ni dans le Gist.</p>`;
 }
