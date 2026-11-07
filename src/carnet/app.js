@@ -1976,7 +1976,7 @@ function viewDash() {
       ${kv('Capital initial', usd(S.settings.initialCapital), fmtDate(S.settings.startDate))}
       ${kv('Versements cumulés', usd(acc.deposits))}
       ${kv('Retraits cumulés', usd(acc.withdrawals))}
-      ${kv('Résultat réalisé net', usd(acc.realized, true), 'après tous les frais payés', cls(acc.realized))}
+      ${kv('Résultat réalisé net', usd(acc.realized, true), acc.catchup ? `après tous les frais payés, dont rattrapage ${usd(acc.catchup, true)}` : 'après tous les frais payés', cls(acc.realized))}
       ${kv('Résultat latent', usd(acc.unreal, true), 'avant frais de sortie', cls(acc.unreal))}
       ${kv('Frais de transaction', usd(acc.txFees))}
       ${kv('Frais de financement', usd(acc.funding))}
@@ -1991,9 +1991,10 @@ function viewDash() {
 function acctBalance(ref) {
   const a = S.settings.acct;
   if (!a || !(a.deposits > 0)) return null;
-  const later = S.flows.filter(f => f.date > a.at).reduce((x, f) => x + f.amount, 0);
+  const ext = S.flows.filter(f => f.kind !== 'pnl');   // un rattrapage est du résultat, pas un dépôt
+  const later = ext.filter(f => f.date > a.at).reduce((x, f) => x + f.amount, 0);
   const net = a.deposits - (a.withdrawals || 0) + later;
-  const carnetIn = S.settings.initialCapital + S.flows.reduce((x, f) => x + f.amount, 0);
+  const carnetIn = S.settings.initialCapital + ext.reduce((x, f) => x + f.amount, 0);
   const total = ref.value - net;
   return { a, later, net, total, totalPct: net > 0 ? total / net * 100 : null, carnet: ref.value - carnetIn, before: carnetIn - net };
 }
@@ -2499,10 +2500,10 @@ function viewSettings() {
   </section>
   <div class="grid2">
   <section class="card">
-    <div class="sec-head"><h2>Versements et retraits</h2><button class="btn sm primary" data-act="add-flow">Ajouter</button></div>
-    <p class="lead">Flux externes uniquement. Ils changent la valeur nette, jamais la performance.</p>
+    <div class="sec-head"><h2>Versements, retraits et rattrapages</h2><div class="row"><button class="btn sm" data-act="add-catchup">Rattrapage</button><button class="btn sm primary" data-act="add-flow">Ajouter</button></div></div>
+    <p class="lead">Versements et retraits : flux externes, ils changent la valeur nette, jamais la performance. Rattrapage : un résultat déjà réalisé chez le courtier mais pas saisi trade par trade ; il compte dans la valeur et la performance, pas dans les statistiques de trades.</p>
     <div class="row" style="margin-bottom:8px"><button class="btn sm" data-act="acct">${S.settings.acct ? 'Modifier' : 'Saisir'} le relevé depuis l’ouverture du compte</button>${S.settings.acct ? `<small>${usd(S.settings.acct.deposits)} déposés au ${fmtDate(S.settings.acct.at)}</small>` : ''}</div>
-    ${flows.length ? `<div class="tbl"><table><thead><tr><th>Date</th><th>Type</th><th class="n">Montant</th><th></th><th></th></tr></thead><tbody>${flows.map(x => `<tr><td>${fmtDate(x.date)}</td><td>${x.amount >= 0 ? 'Versement' : 'Retrait'}${x.note ? ' · ' + esc(x.note) : ''}</td><td class="n">${usd(x.amount, true)}</td><td>${x.demo ? '<span class="pill demo">Démo</span>' : ''}</td><td><button class="btn sm" data-act="del-flow" data-id="${x.id}">Suppr.</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">Aucun flux saisi.</p>'}
+    ${flows.length ? `<div class="tbl"><table><thead><tr><th>Date</th><th>Type</th><th class="n">Montant</th><th></th><th></th></tr></thead><tbody>${flows.map(x => `<tr><td>${fmtDate(x.date)}</td><td>${x.kind === 'pnl' ? 'Rattrapage' : x.amount >= 0 ? 'Versement' : 'Retrait'}${x.note ? ' · ' + esc(x.note) : ''}</td><td class="n">${usd(x.amount, true)}</td><td>${x.demo ? '<span class="pill demo">Démo</span>' : ''}</td><td><button class="btn sm" data-act="del-flow" data-id="${x.id}">Suppr.</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">Aucun flux saisi.</p>'}
   </section>
   <section class="card">
     <div class="sec-head"><h2>Valeurs courtier</h2><button class="btn sm primary" data-act="add-snap">Rapprochement MT5</button></div>
@@ -2794,6 +2795,21 @@ function sheetPrices() {
       }
       need(n > 0, 'Saisissez au moins un cours.');
       save(n === tickers.length ? 'Cours enregistrés · observation de performance créée' : `${n} cours enregistré(s) · pas d’observation complète`);
+    }
+  });
+}
+function sheetCatchup() {
+  openSheet({
+    title: 'Rattrapage de résultat', ok: 'Enregistrer',
+    body: `<p class="lead">Gains ou pertes déjà réalisés chez le courtier mais pas saisis trade par trade. Comptés dans la valeur et la performance, pas dans les statistiques de trades. Différent d’un retrait : un retrait ne change pas votre performance, un rattrapage oui.</p>
+      <div class="fields">${dateInp('date', 'Date', todayISO())}<div class="fld"><label for="f-sign">Type</label><select id="f-sign" name="sign"><option value="-1">Perte</option><option value="1">Gain</option></select></div>${dec('amount', 'Montant ($)', '')}
+      <div class="fld wide"><label for="f-note">Note</label><input id="f-note" name="note" placeholder="Trades clôturés avant le carnet (MT5)"></div></div>`,
+    onSubmit: form => {
+      const m = num(F(form, 'amount')); need(isNum(m) && m > 0, 'Montant positif requis : choisissez Perte ou Gain.');
+      const a = Math.abs(m) * (F(form, 'sign') === '1' ? 1 : -1);
+      const d = F(form, 'date') || todayISO(); need(d >= S.settings.startDate, 'Date à partir du départ du compte (' + fmtDate(S.settings.startDate) + ').');
+      S.flows.push({ id: uid(), kind: 'pnl', date: d, amount: Core.roundTo(a, 2), note: F(form, 'note').trim() || 'Rattrapage' });
+      save('Rattrapage enregistré : ' + usd(a, true));
     }
   });
 }
@@ -3300,6 +3316,7 @@ document.addEventListener('click', e => {
       }); break;
     }
     case 'add-flow': sheetFlow(); break;
+    case 'add-catchup': sheetCatchup(); break;
     case 'add-snap': sheetSnap(); break;
     case 'go-health': tab = 'set'; render(); setTimeout(() => { const h = document.getElementById('health'); if (h) h.scrollIntoView({ block: 'start', behavior: 'smooth' }); }, 50); break;
     case 'go-tab': tab = b.dataset.tab; render(); window.scrollTo(0, 0); break;
@@ -3313,7 +3330,7 @@ document.addEventListener('click', e => {
       if (sheetCfg && sheetCfg.onInput) sheetCfg.onInput($('#sheetForm')); toast(n ? `${n} suggestion(s) acceptée(s) : vérifiez puis enregistrez` : 'Aucune suggestion à accepter'); break;
     }
     case 'mt5-snooze': try { localStorage.setItem(MT5_SNOOZE, todayISO()); } catch (e) {} render(); break;
-    case 'del-flow': confirmSheet('Supprimer ce flux ?', 'Le versement ou retrait sera retiré des calculs.', 'Supprimer', () => { S.flows = S.flows.filter(x => x.id !== b.dataset.id); save('Flux supprimé'); }); break;
+    case 'del-flow': confirmSheet('Supprimer ce flux ?', 'La ligne sera retirée des calculs.', 'Supprimer', () => { S.flows = S.flows.filter(x => x.id !== b.dataset.id); save('Flux supprimé'); }); break;
     case 'del-snap': confirmSheet('Supprimer cette valeur courtier ?', 'Elle ne servira plus d’observation.', 'Supprimer', () => { S.snapshots = S.snapshots.filter(x => x.id !== b.dataset.id); save('Valeur supprimée'); }); break;
     case 'export-csv': offerFile('journal-trading-' + todayISO() + '.csv', buildCSV()); break;
     case 'export-json': buildJSON().then(t => offerFile('carnet-positions-' + todayISO() + '.json', t)); break;

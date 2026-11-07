@@ -180,8 +180,9 @@ const Core = (() => {
   // mode 'last' : dernier cours connu ; mode 'exact' : cours saisi exactement à la date upTo.
   function accountState(st, upTo, mode) {
     const s = st.settings;
-    let deposits = 0, withdrawals = 0;
-    for (const f of st.flows) if (!upTo || f.date <= upTo) { if (f.amount >= 0) deposits += f.amount; else withdrawals -= f.amount; }
+    // Rattrapage (kind 'pnl') : résultat déjà réalisé chez le courtier mais pas saisi trade par trade. C'est du résultat, pas un flux externe.
+    let deposits = 0, withdrawals = 0, catchup = 0;
+    for (const f of st.flows) if (!upTo || f.date <= upTo) { if (f.kind === 'pnl') catchup += f.amount; else if (f.amount >= 0) deposits += f.amount; else withdrawals -= f.amount; }
     let realized = 0, unreal = 0, txFees = 0, funding = 0, divs = 0, gross = 0, exposure = 0, margin = 0, openCount = 0, minPriceDate = null;
     const missing = [], fallback = [];
     for (const lot of st.lots) {
@@ -200,8 +201,9 @@ const Core = (() => {
       margin += ls.rem * pr.price / (lot.leverage || 1);
       if (!minPriceDate || pr.date < minPriceDate) minPriceDate = pr.date;
     }
+    realized += catchup;
     const equity = s.initialCapital + deposits - withdrawals + realized + unreal;
-    return { equity, deposits, withdrawals, realized, unreal, txFees, funding, divs, gross, exposure, margin, openCount, minPriceDate, missing, fallback };
+    return { equity, deposits, withdrawals, realized, catchup, unreal, txFees, funding, divs, gross, exposure, margin, openCount, minPriceDate, missing, fallback };
   }
 
   // ---------- 3. Performance ----------
@@ -231,6 +233,7 @@ const Core = (() => {
   }
 
   function twr(obs, flows) {
+    flows = (flows || []).filter(f => f.kind !== 'pnl');   // un rattrapage compte dans la performance
     const pts = [];
     if (!obs.length) return { points: pts, broken: false };
     pts.push(Object.assign({}, obs[0], { index: 1, r: null, est: false }));
