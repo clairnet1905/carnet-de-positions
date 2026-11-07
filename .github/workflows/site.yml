@@ -1,0 +1,56 @@
+name: Tests et mise en ligne de l'app
+
+# À chaque changement des sources : assemblage de l'app, tests automatiques, puis mise en ligne seulement si tout est vert.
+# Pour que la mise en ligne passe par ici : GitHub › Settings › Pages › Source : « GitHub Actions ».
+on:
+  push:
+    branches: [main]
+    paths: ['src/**', 'tests/**', '.github/workflows/site.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pillow
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Assembler l'app depuis src/
+        run: |
+          python3 src/pwa-src/patch.py src/carnet/app.js src/pwa-src/app.js
+          python3 src/pwa-src/assemble.py src _site
+          cp LICENSE README.md _site/
+      - name: Installer le navigateur de test
+        run: |
+          npm install --no-save playwright@1.47.2
+          npx playwright install --with-deps chromium
+      - name: Tests (moteur et application)
+        run: node tests/run.mjs _site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  mise-en-ligne:
+    needs: tests
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
