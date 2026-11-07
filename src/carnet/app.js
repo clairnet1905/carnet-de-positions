@@ -1166,10 +1166,10 @@ function alertsList() {
   }
   return out;
 }
-function alertsStrip() {
+function alertsStrip(tonight) {   // tonight : stops et radar déjà dans la carte « Ce soir »
   const a = alertsList();
-  const ra = S.watch.length ? radarAlerts().filter(x => !x.seen) : [];
-  const sr = S.watch.length ? stopRaises() : [];
+  const ra = S.watch.length && !tonight ? radarAlerts().filter(x => !x.seen) : [];
+  const sr = S.watch.length && !tonight ? stopRaises() : [];
   if (sr.length) a.unshift({ lvl: 'warn', txt: `<strong>Stops</strong> : ${sr.length} stop(s) peuvent être remontés sur une de vos SMA · ${sr.slice(0, 4).map(x => esc(x.v.lot.ticker)).join(', ')}${sr.length > 4 ? '…' : ''}`, act: 'stop-raises', btn: 'Voir' });
   if (ra.length) a.unshift({ lvl: ra.some(x => x.lvl !== 'near') ? 'err' : 'warn', txt: `<strong>Radar SMA</strong> : ${ra.length} nouvelle(s) alerte(s) · ${ra.slice(0, 3).map(x => esc(x.w.ticker) + (x.lvl === 'up' ? ' ↑' : x.lvl === 'down' ? ' ↓' : ' ≈')).join(', ')}${ra.length > 3 ? '…' : ''}`, act: 'go-radar', btn: 'Voir' });
   if (!a.length) return S.lots.some(l => !Core.lotState(l).closed) ? '<div class="alerts"><div class="alert ok"><span>Aucune alerte : stops en place, cours à jour, marge correcte.</span></div></div>' : '';
@@ -1430,6 +1430,71 @@ function stopRaises() {
     if (opts.length) out.push({ v, st, px, opts: opts.sort((a, b) => b.sma - a.sma) });
   }
   return out;
+}
+// ----- « Ce soir » : la routine en une liste (stops à remonter, meilleurs croisements, résultats, santé, risque) -----
+// Information et raccourcis seulement : « Fait » enregistre le stop dans l'app (à changer aussi dans MT5), rien n'est acheté.
+const TN_KEY = 'carnet-ce-soir';
+function tnDone() { try { const x = JSON.parse(localStorage.getItem(TN_KEY) || 'null'); return x && x.d === todayISO() ? x.k : []; } catch (e) { return []; } }
+function tnMark(k) { const k0 = tnDone(); if (!k0.includes(k)) k0.push(k); try { localStorage.setItem(TN_KEY, JSON.stringify({ d: todayISO(), k: k0 })); } catch (e) {} }
+// Note du Labo pour une SMA du radar : [libellé, rang] (rang 3 = très intéressant … 0 = faible), null si pas testée.
+function labGrade(w) {
+  const r = Lab.res && Lab.res[w.ticker], u = r && !r.err && r[w.tf], i = LAB_P.indexOf(w.period), x = u && i >= 0 ? u[labFee].sma[i] : null;
+  if (!x) return null;
+  const v = labVerdict(x, w.tf);
+  return [v[0], v[1] === 'v1' ? 3 : v[1] === 'v2' ? 2 : x[3] < LAB_MIN[w.tf] ? 1 : 0];
+}
+// Part de l'exposition par secteur (positions ouvertes, au dernier cours).
+function sectExpoShare() {
+  const by = {}; let tot = 0;
+  for (const v of S.lots.map(lotView)) { if (v.ls.closed) continue; const e = v.ls.rem * (v.last ? v.last.price : v.lot.price), k = sectorOf(v.lot.ticker) || 'Non classé'; by[k] = (by[k] || 0) + e; tot += e; }
+  for (const k in by) by[k] = tot > 0 ? by[k] / tot * 100 : 0;
+  return by;
+}
+// Croisements à la hausse non vus, sur des actions pas déjà en portefeuille, notés puis triés (une ligne par action).
+function tonightPicks() {
+  if (!S.watch.length) return { top: [], n: 0 };
+  const held = new Set(S.lots.filter(l => !Core.lotState(l).closed).map(l => l.ticker)), share = sectExpoShare(), lim = sectSet().expo, today = todayISO();
+  const best = new Map();
+  for (const x of radarAlerts()) {
+    if (x.seen || x.lvl !== 'up' || x.w.idx || held.has(x.w.ticker)) continue;
+    const g = labGrade(x.w), e = nextEarn(x.w.ticker), eDays = e ? Core.days(today, e[0]) : null, sec = sectorOf(x.w.ticker), sp = sec ? share[sec] || 0 : null;
+    const score = (g ? g[1] : 1) * 10 + (eDays != null && eDays <= 7 ? -8 : 0) + (sp != null && sp >= lim ? -6 : 0) + (x.date >= addDays(today, -3) ? 2 : 0);
+    const notes = [g ? 'Labo : ' + g[0].toLowerCase() : 'Labo : pas testée'];
+    if (eDays != null && eDays <= 7) notes.push(`résultats dans ${eDays} j`); else if (e) notes.push('pas de résultats sous 7 j');
+    if (sec && sp != null) notes.push(`${sec} ${fmtNum(sp, 0)} %${sp >= lim ? ' (au-dessus de votre seuil)' : ''}`);
+    const cur = best.get(x.w.ticker);
+    if (!cur || score > cur.score) best.set(x.w.ticker, { x, score, notes });
+  }
+  const all = [...best.values()].sort((a, b) => b.score - a.score || (a.x.date < b.x.date ? 1 : -1));
+  return { top: all.slice(0, 5), n: all.length };
+}
+function tonightCard() {
+  if (!S.lots.some(l => !l.demo) && !S.watch.length) return '';
+  const done = tnDone(), sr = S.watch.length ? stopRaises() : [], P = tonightPicks(), today = todayISO();
+  const open = S.lots.filter(l => !Core.lotState(l).closed), nextD = (() => { let d = addDays(today, 1); while (wdOf(d) === 0 || wdOf(d) === 6) d = addDays(d, 1); return d; })();
+  const earnT = [...new Set(open.map(l => l.ticker))].filter(t => { const e = nextEarn(t); return e && e[0] <= nextD; });
+  const H = healthChecks().filter(x => x.lvl !== 'stat'), R = portfolioRisk(), L = riskLim(), min = S.settings.marginMin || 150;
+  const over = [];
+  if (R.level != null && R.level < min) over.push(`niveau de marge ${fmtNum(R.level, 0)} % (sous ${fmtNum(min, 0)} %)`);
+  if (L.heat != null && R.heatPct > L.heat) over.push(`perte au stop ${pct(R.heatPct)} (limite ${pct(L.heat)})`);
+  if (L.margin != null && R.marginPct > L.margin) over.push(`marge ${fmtNum(R.marginPct, 0)} % (limite ${fmtNum(L.margin, 0)} %)`);
+  if (L.pos != null && R.pos > L.pos) over.push(`${R.pos} positions (limite ${L.pos})`);
+  const todo = sr.length + P.top.length + (earnT.length ? 1 : 0) + (H.length ? 1 : 0), nd = done.length;
+  const stops = sr.map(x => { const o = x.opts[0];
+    return `<div class="tnr"><span><b>${esc(x.v.lot.ticker)}</b> <span class="tf">${TF_SHORT[o.w.tf]}${o.w.period}</span> <span class="num">${x.st > 0 ? usd(x.st) : 'aucun'} → <b>${usd(o.sma)}</b></span>${x.opts.length > 1 ? ` <button class="lnk" data-act="stop-raises">${x.opts.length - 1} autre(s)</button>` : ''}</span><button class="btn sm primary" data-act="tn-stop" data-t="${esc(x.v.lot.ticker)}" data-v="${Core.roundTo(o.sma, 2)}" data-w="${esc(o.w.id)}">Fait</button></div>`; }).join('');
+  const picks = P.top.map(p => `<div class="tnr"><span><b>${esc(p.x.w.ticker)}</b> <span class="tf up">${TF_SHORT[p.x.w.tf]}${p.x.w.period}</span> <small>${esc(p.notes.join(' · '))}</small></span><span class="row"><button class="btn sm" data-act="tn-calc" data-id="${esc(p.x.w.id)}" data-k="${esc(p.x.key)}">Calculer</button><button class="btn sm" data-act="tn-skip" data-k="${esc(p.x.key)}" aria-label="Écarter ${esc(p.x.w.ticker)}">✕</button></span></div>`).join('');
+  const light = typeof marketLight === 'function' ? marketLight() : null;
+  return `<section class="card tn" id="tonight">
+    <div class="sec-head"><h2>Ce soir <small>· ${fmtDate(today)}</small></h2><span class="pill ${todo ? 'warn' : 'win'}">${todo ? `${nd} fait · ${todo} à faire` : 'Tout est fait'}</span></div>
+    <h3>1. Stops à remonter dans MT5 <small>· ${sr.length}</small></h3>
+    ${sr.length ? stops + '<p class="hint">« Fait » enregistre le nouveau stop dans l’app. Changez-le aussi dans MT5 : rien n’est envoyé au courtier.</p>' : '<p class="hint">Aucun stop à remonter ce soir.</p>'}
+    <h3>2. Nouveaux croisements à étudier <small>· ${P.top.length} sur ${P.n}</small></h3>
+    ${P.top.length ? picks + `<p class="hint">Croisements à la hausse non vus, hors positions déjà ouvertes, triés par note du Labo, résultats et secteur. ${P.n > P.top.length ? `Les ${P.n - P.top.length} autres et les alertes « proches » restent dans le radar. ` : ''}${light ? esc(light.label + ' : ' + light.txt) + '.' : ''}</p>` : '<p class="hint">Aucun nouveau croisement à la hausse.</p>'}
+    <h3>3. Avant d’aller dormir</h3>
+    <div class="tnr"><span>Résultats d’ici le ${fmtDate(nextD)} : ${earnT.length ? '<b>' + earnT.map(esc).join(', ') + '</b>' : 'aucun'}</span>${earnT.length ? '<button class="btn sm" data-act="go-tab" data-tab="earn">Voir</button>' : '<small>ok</small>'}</div>
+    <div class="tnr"><span>Santé des données : ${H.length ? esc(H[0].title.replace(/<[^>]+>/g, '')) + (H.length > 1 ? ` <small>+ ${H.length - 1}</small>` : '') : 'tout est bon'}</span>${H.length ? '<button class="btn sm" data-act="go-health">Voir</button>' : '<small>ok</small>'}</div>
+    <div class="tnr"><span>Risque : ${over.length ? `<b class="neg">${esc(over.join(' · '))}</b>` : 'dans vos limites'}</span>${over.length ? '<button class="btn sm" data-act="risk-set">Limites</button>' : '<small>ok</small>'}</div>
+  </section>`;
 }
 function sheetStopRaises() {
   const R = stopRaises();
@@ -1928,8 +1993,10 @@ function viewDash() {
   const DD = Core.maxDrawdown(rangePts), BM = benchBlock(P, sel, rangePts);
   const perfTile = (k, l, sub, p) => `<button type="button" class="ptile" data-act="perf-range" data-f="${k}" aria-pressed="${perfRange === k}"><span>${l}</span><b class="${p ? cls(p.r) : ''}">${p ? pct(p.r, true) : '—'}</b><small>${p ? perfSub(k, p) + (p.est ? ' · estimé' : '') : sub}</small></button>`;
   const method = P.estCount ? `Rendement pondéré dans le temps, ${P.estCount} sous-période(s) estimée(s) par Modified Dietz faute de valorisation à la date d’un flux.` : 'Rendement pondéré dans le temps (valorisations disponibles autour de chaque flux).';
+  const tn = tonightCard();
   return `${demoBanner()}
-  ${alertsStrip()}
+  ${tn}
+  ${alertsStrip(!!tn)}
   ${mt5Remind()}
   ${healthBanner()}
   ${earnCard()}
@@ -3247,6 +3314,13 @@ document.addEventListener('click', e => {
     case 'radar-gone': markSeen(['x:' + b.dataset.k]); render(); toast('Alerte supprimée'); break;
     case 'radar-gone-all': markSeen(radarAlerts().filter(x => x.lvl !== 'near' && x.seen).map(x => 'x:' + x.key)); render(); toast('Alertes déjà vues supprimées'); break;
     case 'radar-seen-all': markSeen(radarAlerts().filter(x => x.lvl !== 'near').map(x => x.key)); render(); break;
+    case 'tn-stop': {
+      const t = b.dataset.t, v = +b.dataset.v, lots = S.lots.filter(l => l.ticker === t && !Core.lotState(l).closed);
+      for (const l of lots) { l.events.push({ id: uid(), type: 'stop', date: todayISO(), from: isNum(l.stopCurrent) ? l.stopCurrent : null, to: v }); l.stopCurrent = v; }
+      tnMark('stop|' + t); save(`Stop ${t} : ${usd(v)} enregistré · changez-le aussi dans MT5`); break;
+    }
+    case 'tn-skip': markSeen([b.dataset.k]); tnMark('x|' + b.dataset.k); render(); break;
+    case 'tn-calc': tnMark('c|' + b.dataset.k); markSeen([b.dataset.k]); /* falls through */
     case 'radar-calc': {
       const w = S.watch.find(x => x.id === b.dataset.id), a = analyzeWatch(w);
       calcDraft = Object.assign(freshDraft(), { ticker: w.ticker, entry: String(Core.roundTo(a.p, 2)), stop: String(Core.roundTo(a.smaNow, 2)), example: false });
