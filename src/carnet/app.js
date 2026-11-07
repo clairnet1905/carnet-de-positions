@@ -1750,21 +1750,14 @@ function sheetSectorFix(t) {
 // ----- Risque du portefeuille : tous les stops ensemble, la marge, le nombre de positions -----
 // Information seulement : les limites ne bloquent rien et ne changent pas la taille calculée sur le stop.
 const riskLim = () => Object.assign({ heat: null, margin: null, pos: null }, S.settings.riskLim || {});
+const riskPushOpt = () => Object.assign({ level: true, back: false }, S.settings.riskPush || {});
 function portfolioRisk(addRisk = 0, addMargin = 0, addPos = 0) {
   const ref = referenceCapital(), eq = ref.value, acc = ref.acc, today = todayISO();
-  const open = S.lots.map(lotView).filter(v => !v.ls.closed), by = {};
-  let heat = 0, noStop = 0, expo = 0, locked = 0;
-  for (const v of open) {
-    expo += v.ls.rem * (v.last ? v.last.price : v.lot.price);
-    if (isNum(v.lot.stopCurrent) && v.lot.stopCurrent >= v.lot.price) locked++;
-    const r = v.sa && !v.sa.missing && v.sa.pullback != null ? Math.max(0, v.sa.pullback) : null;
-    if (r == null) { noStop++; continue; }
-    heat += r; by[v.lot.ticker] = (by[v.lot.ticker] || 0) + r;
-  }
+  const { heat, by, noStop, expo, locked, lots, pos } = Core.riskSummary(S, fees());   // même calcul que la notification du robot
   const soon = Object.keys(by).filter(t => { const e = nextEarn(t); return e && Core.days(today, e[0]) <= 7; }).sort((a, b) => by[b] - by[a]);
   const h = heat + addRisk, m = acc.margin + addMargin;
   return { eq, heat: h, heatPct: eq > 0 ? h / eq * 100 : null, margin: m, marginPct: eq > 0 ? m / eq * 100 : null, level: m > 0 ? eq / m * 100 : null,
-    pos: new Set(open.map(v => v.lot.ticker)).size + addPos, lots: open.length, noStop, locked, expo, drop5: expo * 0.05,
+    pos: pos + addPos, lots, noStop, locked, expo, drop5: expo * 0.05,
     soon, soonRisk: soon.reduce((a, t) => a + by[t], 0), top: Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 5) };
 }
 function riskCard() {
@@ -1804,9 +1797,15 @@ function sheetRiskLim() {
   openSheet({ title: 'Limites de risque', ok: 'Enregistrer',
     body: `<p class="lead">Vos limites pour l’ensemble du portefeuille. Elles ne bloquent rien et ne changent pas le calculateur : elles colorent le panneau et ajoutent un avertissement sous le résultat du calculateur.</p>
       <div class="fields">${dec('heat', 'Perte max. si tous les stops sautent (% du capital)', v(L.heat), 'placeholder="aucune"')}${dec('margin', 'Marge utilisée max. (% de la valeur nette)', v(L.margin), 'placeholder="aucune"')}${dec('pos', 'Positions ouvertes max.', v(L.pos), 'inputmode="numeric" placeholder="aucune"')}</div>
-      <p class="hint">Case vide : pas de limite, les chiffres restent affichés.</p>`,
+      <p class="hint">Case vide : pas de limite, les chiffres restent affichés.</p>
+      <label class="check" style="margin-top:10px"><input type="checkbox" name="pushRisk" ${S.settings.pushRisk !== false ? 'checked' : ''}> M’envoyer une notification quand une limite est dépassée</label>
+      <p class="hint" style="margin:2px 0 0 26px">Le robot vérifie chaque soir sur la clôture, avec le même calcul que ce panneau. Une seule notification, puis plus rien tant que ça reste dépassé.</p>
+      <label class="check" style="margin-top:8px"><input type="checkbox" name="riskLevel" ${riskPushOpt().level ? 'checked' : ''}> Compter aussi le niveau de marge (alerte sous ${fmtNum(S.settings.marginMin || 150, 0)} %, réglé dans Réglages)</label>
+      <label class="check" style="margin-top:8px"><input type="checkbox" name="riskBack" ${riskPushOpt().back ? 'checked' : ''}> Prévenir aussi quand tout redevient normal</label>`,
     onSubmit: form => {
       const g = k => { const x = F(form, k).trim(); return x === '' ? null : num(x); };
+      S.settings.pushRisk = !!form.elements.pushRisk.checked;
+      S.settings.riskPush = { level: !!form.elements.riskLevel.checked, back: !!form.elements.riskBack.checked };
       const h = g('heat'), m = g('margin'), p = g('pos');
       need(h == null || (h > 0 && h <= 100), 'Perte max. entre 0 et 100 %.'); need(m == null || (m > 0 && m <= 100), 'Marge max. entre 0 et 100 %.');
       need(p == null || (p >= 1 && Number.isInteger(p)), 'Nombre de positions entier, 1 ou plus.');

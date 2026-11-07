@@ -329,7 +329,25 @@ const Core = (() => {
     };
   }
 
+  // Risque des positions ouvertes : perte si tous les stops sautent (cours → stop, frais de sortie compris), par action.
+  // Même calcul pour le panneau Risque de l'app et pour la notification du robot.
+  function riskSummary(st, fees) {
+    let heat = 0, noStop = 0, expo = 0, locked = 0, lots = 0;
+    const by = {}, tickers = new Set();
+    for (const lot of st.lots) {
+      const ls = lotState(lot); if (ls.closed) continue;
+      const last = lastPrice(st.prices, lot.ticker), sa = stopAnalysis(lot, ls, last, fees);
+      lots++; tickers.add(lot.ticker);
+      expo += ls.rem * (last ? last.price : lot.price);
+      if (isNum(lot.stopCurrent) && lot.stopCurrent >= lot.price) locked++;
+      const r = !sa.missing && sa.pullback != null ? Math.max(0, sa.pullback) : null;
+      if (r == null) { noStop++; continue; }
+      heat += r; by[lot.ticker] = (by[lot.ticker] || 0) + r;
+    }
+    return { heat, by, noStop, expo, locked, lots, pos: tickers.size };
+  }
+
   return { usd, pct, qty, num, numOr, isNum, roundTo, floorTo, days, normFees, commission, feeIn, feeOut, setSwap, sizePosition,
-    lotState, priceOn, lastPrice, accountState, observations, twr, periodReturn, maxDrawdown, frequency, tradeStats, stopAnalysis };
+    lotState, priceOn, lastPrice, accountState, observations, twr, periodReturn, maxDrawdown, frequency, tradeStats, stopAnalysis, riskSummary };
 })();
 /*CORE-END*/
