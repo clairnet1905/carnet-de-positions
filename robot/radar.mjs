@@ -5,6 +5,9 @@
 // 3. Envoie une notification groupée aux appareils abonnés pour chaque nouveau croisement de SMA.
 // Les clés ne sont jamais écrites dans le code : elles viennent des secrets du dépôt (Settings › Secrets and variables › Actions).
 import { addDays, days, lastSession, prevWeekday, nextWeekday, weekKey, barsNeeded, symOf, signals, message, analyze, pack, unpack, divGaps, divLate, fixBars } from './sma.mjs';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import { riskCheck } from './risk.mjs';
 import { labUnit, labCombo, packUnit, doneBars, LAB_PERIODS, LAB_MIN_TRADES } from './labsma.mjs';
 
 const { GIST_TOKEN, TWELVEDATA_KEY, FINNHUB_KEY, VAPID_PRIVATE_KEY, TEST_PUSH } = process.env;
@@ -271,6 +274,18 @@ if (S.settings.pushWeekly !== false && new Date(ls + 'T12:00:00Z').getUTCDay() =
   payloads.push({ title: 'Bilan de la semaine', body: lines.join('\n'), tag: 'week-' + ls, url: './#dash' });
   extra.push('week|' + ls);
 }
+// Limites de risque : une notification quand une limite est franchie, sur la clôture (même calcul que le panneau Risque de l'app).
+let riskState = R.risk || null;
+try {
+  const cx = vm.createContext({});
+  vm.runInContext(readFileSync(new URL('../src/carnet/core.js', import.meta.url), 'utf8') + '\nglobalThis.Core = Core;', cx);
+  // Action en saisie manuelle (autre marché que le radar, ex. EL) : on garde le cours saisi dans l'app.
+  const closeOf = t => { if (manual.has(String(t).toUpperCase())) return null; const w = S.watch.find(x => x.ticker === t && !x.idx), h = w && hist[symOf(w)], b = h && h.bars[h.bars.length - 1]; return b && days(b[0], ls) <= 7 ? { date: b[0], price: b[1] } : null; };
+  const rc = riskCheck(S, cx.Core, closeOf, ls, R.risk);
+  riskState = rc.state; if (rc.payload) payloads.push(rc.payload);
+  const f = x => x == null ? '—' : x.toFixed(1);
+  log(`Risque : perte au stop ${f(rc.state.heatPct)} % · niveau de marge ${f(rc.state.level)} % · ${rc.state.pos} position(s)${rc.state.over.length ? ' · dépassé : ' + rc.state.over.join(', ') : ''}${rc.payload ? ' · notifié' : ''}${rc.state.noPx.length ? ' · sans cours : ' + rc.state.noPx.join(', ') : ''}`);
+} catch (e) { log('Contrôle du risque impossible : ' + e.message); }
 if (TEST_PUSH === 'true') payloads.push({ title: 'Carnet de positions', body: `Notifications actives. Radar : ${Object.keys(hist).length} action(s) à jour au ${ls}.`, tag: 'test', url: './#radar' });
 if (payloads.length && subs.length && pub && VAPID_PRIVATE_KEY) {
   const webpush = (await import('web-push')).default;
@@ -287,7 +302,7 @@ for (const k in R.notified) if (days(R.notified[k], ls) > 60) delete R.notified[
 // ----- Enregistrement -----
 const packed = {};
 for (const s in hist) if (need[s]) packed[s] = pack(hist[s]);   // les actions retirées du radar sont oubliées
-R = { v: 1, ls, adj: ADJ, at: Date.now(), hist: packed, divfix: DF, notified: R.notified, deadSubs: dead, errors,
+R = { v: 1, ls, adj: ADJ, at: Date.now(), hist: packed, divfix: DF, notified: R.notified, risk: riskState, deadSubs: dead, errors,
   log: [{ at: Date.now(), ls, full: full.length, daily: daily.length, resync: Math.min(resync.length, RESYNC_PER_RUN), signals: sig.length, sent, td: tdCalls, errors: Object.keys(errors).length }].concat(R.log || []).slice(0, 30) };
 const body = JSON.stringify(R);
 const labBody = JSON.stringify(L);
