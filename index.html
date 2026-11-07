@@ -393,6 +393,10 @@ button.ptile.whole{cursor:pointer}button.ptile.whole small{color:var(--accent)}
 .chart .zero{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
 .chart .line{fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linejoin:round}
 .chart .area{fill:url(#gArea)}
+.mchips{display:flex;flex-wrap:wrap;gap:6px}.mchip{display:inline-flex;align-items:center;padding:6px 12px;border-radius:99px;background:var(--surface-2);font-size:.86rem;cursor:pointer;border:1px solid transparent}
+.mchip input{position:absolute;opacity:0;pointer-events:none}.mchip.sg{border:1px dashed var(--accent);color:var(--accent)}.mchip:has(input:checked){background:var(--accent-soft);color:var(--accent);font-weight:600;border:1px solid var(--accent)}
+.mchip:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:2px}.sgh{color:var(--accent)}
+.msrow{padding:10px 0;border-top:1px solid var(--line)}.msh{display:flex;justify-content:space-between;gap:10px;margin-bottom:6px;font-size:.9rem}
 .hlv{margin:12px 0 2px;font:600 .72rem var(--f-body);text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}.hlv.err{color:var(--loss)}.hlv.warn{color:var(--warn)}
 .hit{display:flex;gap:10px;padding:10px 0;border-top:1px solid var(--line)}.hit .hd{flex:none;width:8px;height:8px;border-radius:50%;margin-top:6px;background:var(--muted)}.hit .hd.err{background:var(--loss)}.hit .hd.warn{background:var(--warn)}
 .hit b{display:block;font-weight:600;font-size:.9rem}.hit small{display:block;color:var(--muted);font-size:.8rem;margin:2px 0 6px;line-height:1.45}
@@ -458,7 +462,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.43.0 · licence MIT */
+/* Carnet de positions v1.44.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -811,7 +815,8 @@ const fmtDate = d => d ? fmtDateM(d) : '—';
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const cls = x => !isNum(x) || Math.abs(x) < 0.005 ? '' : (x > 0 ? 'pos' : 'neg');
 const fmtNum = (x, d = 2) => isNum(x) ? new Intl.NumberFormat('fr-FR', { maximumFractionDigits: d }).format(x).replace('-', '−') : '';
-const MOTIFS = { cassure: 'Cassure', pullback: 'Pullback', continuation: 'Continuation', autre: 'Autre' };
+const MOTIFS_OLD = { cassure: 'Cassure', pullback: 'Pullback', continuation: 'Continuation', autre: 'Autre' };
+let MOTIFS = Object.assign({}, MOTIFS_OLD);   // libellés : vos motifs (Réglages › Mes motifs) et ceux encore utilisés par d'anciennes positions
 let toastTimer;
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, 2800); }
 function withTimeout(p, ms) { return Promise.race([p, new Promise(r => setTimeout(() => r(null), ms))]); }
@@ -2212,6 +2217,7 @@ function sheetRadarSettings() {
 // Swap des CFD estimé chaque nuit (Réglages › Compte) : voir Core.setSwap.
 function syncSwap() { const w = S.settings.swap || {}; Core.setSwap({ pct: w.pct || 0, triple: w.triple == null ? 5 : w.triple, prices: S.prices, today: todayISO() }); }
 function render() {
+  motifsSync();
   document.querySelectorAll('nav.tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === (tab === 'lab' || tab === 'earn' ? 'radar' : tab) ? 'true' : 'false'));
   const v = $('#view'), saved = S.prices;
   if (Object.keys(Live.prices).length) S.prices = withLive(saved);
@@ -2542,7 +2548,7 @@ let edgeDim = 'motif';
 const EDGE_DIMS = [['motif', 'Motif'], ['sect', 'Secteur'], ['hold', 'Durée'], ['earn', 'Résultats'], ['mkt', 'Marché'], ['plan', 'Plan']];
 function edgeKey(dim, c) {
   const l = c.lot;
-  if (dim === 'motif') return MOTIFS[l.motif] || 'Non renseigné';
+  if (dim === 'motif') return l.motifSet ? MOTIFS[l.motif] || 'Non renseigné' : 'Non classé';
   if (dim === 'sect') return sectorOf(l.ticker) || 'Non classé';
   if (dim === 'hold') { const d = Core.days(l.date, c.date); return d <= 5 ? '5 jours ou moins' : d <= 20 ? '6 à 20 jours' : 'Plus de 20 jours'; }
   if (dim === 'earn') return !Earn.map[l.ticker] ? 'Calendrier inconnu' : Earn.map[l.ticker].some(([e]) => e >= l.date && e <= c.date) ? 'Résultats pendant la position' : 'Sans résultats';
@@ -2628,7 +2634,7 @@ function edgeCard() {
   const m = Math.max(...rows.map(r => Math.abs(r.avg)), 0.5);
   const best = rows.filter(r => r.n >= 5).sort((a, b) => b.avg - a.avg)[0], worst = rows.filter(r => r.n >= 5).sort((a, b) => a.avg - b.avg)[0];
   return `<section class="card edge">
-    <div class="sec-head"><h2>Ce qui marche pour vous <small>· ${all.length} trade(s)</small></h2></div>
+    <div class="sec-head"><h2>Ce qui marche pour vous <small>· ${all.length} trade(s)</small></h2>${edgeDim === 'motif' ? '<div class="row"><button class="btn sm" data-act="motif-sort">Classer</button><button class="btn sm" data-act="motif-list">Mes motifs</button></div>' : ''}</div>
     <div class="filters">${EDGE_DIMS.map(([k, l]) => `<button class="btn sm" data-act="edge-dim" data-f="${k}" aria-pressed="${edgeDim === k}">${l}</button>`).join('')}</div>
     <div class="erows">${rows.map(r => `<div class="erow${r.n < 5 ? ' few' : ''}"><span class="ek">${esc(r.k)} <small>${r.n} · ${fmtNum(r.win, 0)} % gagnants</small></span>
       <span class="ebar"><i class="${r.avg >= 0 ? 'p' : 'n'}" style="width:${(Math.abs(r.avg) / m * 50).toFixed(1)}%"></i></span>
@@ -3630,7 +3636,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.43.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.44.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
@@ -3706,7 +3712,7 @@ function sheetBuy() {
       ${dec('leverage', 'Levier (×)', d.leverage)}
       ${dec('entryFee', 'Frais réels d’entrée ($)', Core.roundTo(r.feeIn, 4))}
       ${dec('stop', 'Stop initial ($)', d.stop)}
-      <div class="fld"><label for="f-motif">Motif</label><select id="f-motif" name="motif">${Object.entries(MOTIFS).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></div>
+      ${motifField((d.ticker || '').toUpperCase(), todayISO(), '')}
       <div class="fld wide"><label>Entrée grâce à quelle(s) SMA ?</label><div id="buySma" data-t="${esc((d.ticker || '').toUpperCase())}">${smaChoices((d.ticker || '').toUpperCase(), [])}</div><p class="hint">Seuls les stops de ces SMA vous seront proposés.</p></div>
       <div class="fld wide"><label for="f-note">Note</label><textarea id="f-note" name="note" placeholder="facultatif"></textarea></div>
       <div class="fld wide"><label class="check"><input type="checkbox" name="auto" ${manualSet().has((d.ticker || '').toUpperCase()) ? '' : 'checked'}> Action US : cours automatiques Finnhub</label><p class="hint">Décochez pour une action hors USA : vous saisirez son cours à la main.</p></div>
@@ -3739,7 +3745,7 @@ function sheetBuy() {
       const risk = q * (p - st) + fe + estExitFee;
       S.lots.push({ id, ticker: t, date, price: p, qty: q, leverage: lv, entryFee: fe, estExitFee, stopInitial: st, stopCurrent: st,
         refCapital: ref.value, refDate: ref.date, riskInitial: risk, riskInitialPct: risk / ref.value * 100, riskPlan: ref.value * S.settings.riskPct / 100,
-        motif: F(form, 'motif'), note: F(form, 'note').trim(), imgId, planOk: null, planComment: '', events: [], smas: smaPicked(form) });
+        motif: F(form, 'motif'), motifSet: !!F(form, 'motif'), note: F(form, 'note').trim(), imgId, planOk: null, planComment: '', events: [], smas: smaPicked(form) });
       const smaN = smaToRadar(form, t, smaPicked(form)); if (smaN) refreshRadar();
       const lp = Core.lastPrice(S.prices, t);
       if (!lp || lp.date <= date) addPrice(t, date, p);
@@ -3856,7 +3862,7 @@ function sheetEdit(lot) {
       ${dec('entryFee', 'Frais d’entrée ($)', lot.entryFee)}${dec('estExitFee', 'Frais de sortie estimés ($)', Core.roundTo(lot.estExitFee || 0, 4), '', 'pour le risque initial')}
       ${dec('stopInitial', 'Stop initial ($)', lot.stopInitial)}${dec('stopCurrent', 'Stop actuel ($)', lot.stopCurrent, 'placeholder="vide = aucun"')}
       ${dec('refCapital', 'Capital de référence ($)', Core.roundTo(lot.refCapital, 2))}
-      <div class="fld"><label for="f-motif">Motif</label><select id="f-motif" name="motif">${Object.entries(MOTIFS).map(([k, l]) => `<option value="${k}" ${lot.motif === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      ${motifField(lot.ticker, lot.date, lot.motifSet ? lot.motif : '')}
       <div class="fld wide"><label for="f-note">Note</label><textarea id="f-note" name="note">${esc(lot.note || '')}</textarea></div>
       <div class="fld wide"><label for="f-img">${lot.imgId ? 'Remplacer la capture' : 'Ajouter une capture'}</label><input type="file" id="f-img" name="img" accept="image/*">
       ${lot.imgId ? '<label class="check"><input type="checkbox" name="rmImg"> supprimer la capture actuelle</label>' : ''}</div></div>${closed ? '' : sellBox}`,
@@ -3877,7 +3883,8 @@ function sheetEdit(lot) {
       const file = form.elements.img.files[0];
       if (file) { if (lot.imgId) await delImage(lot.imgId); lot.imgId = 'i' + uid(); await putImage(lot.imgId, await readImageFile(file)); }
       else if (form.elements.rmImg && form.elements.rmImg.checked && lot.imgId) { await delImage(lot.imgId); lot.imgId = null; }
-      Object.assign(lot, { ticker: t, date, price: p, qty: q, leverage: lv, entryFee: fe, estExitFee: xf, stopInitial: si, stopCurrent: sc, refCapital: rc, motif: F(form, 'motif'), note: F(form, 'note').trim() });
+      Object.assign(lot, { ticker: t, date, price: p, qty: q, leverage: lv, entryFee: fe, estExitFee: xf, stopInitial: si, stopCurrent: sc, refCapital: rc, motif: F(form, 'motif') || lot.motif, note: F(form, 'note').trim() });
+      if (F(form, 'motif')) lot.motifSet = true;
       lot.riskInitial = q * (p - si) + fe + xf; lot.riskInitialPct = lot.riskInitial / rc * 100;
       for (const x of sv) {
         // Cours enregistré à la vente (même date, même prix) : suit la correction.
@@ -3978,8 +3985,8 @@ function healthChecks() {
   if (dup.length) out.push({ lvl: 'chk', title: `${dup.length} doublon(s) possible(s)`, sub: dup.map(l => `${esc(l.ticker)} du ${fmtDate(l.date)}`).join(', ') + ' : même action, même date, même quantité et même prix.', btn: btn('Corriger', 'edit-lot', { lot: dup[0].id }) });
   const early = real.filter(l => l.date < start);
   if (early.length) out.push({ lvl: 'chk', title: `${early.length} achat(s) avant la date de départ`, sub: `Date de départ : ${fmtDate(start)}. Ces positions faussent la performance.`, btn: btn('Corriger', 'edit-lot', { lot: early[0].id }) });
-  const motifs = new Set(real.map(l => l.motif || ''));
-  if (real.length >= 10 && motifs.size <= 1) out.push({ lvl: 'stat', title: `${real.length} positions avec le même motif`, sub: 'Le bilan par motif ne peut rien vous apprendre. Choisissez le motif à l’achat, ou via Corriger pour les positions passées.', btn: btn('Corriger la plus récente', 'edit-lot', { lot: real.slice().sort((a, b) => a.date < b.date ? 1 : -1)[0].id }) });
+  const unsorted = real.filter(l => !l.motifSet);
+  if (unsorted.length >= 3) out.push({ lvl: 'stat', title: `${unsorted.length} trade(s) sans motif choisi`, sub: 'Le bilan par motif ne peut rien vous apprendre tant qu’ils ne sont pas classés. Une pastille par trade, suggestions du radar comprises.', btn: btn('Classer mes trades', 'motif-sort') });
   const noPlan = closed.filter(l => l.planOk !== true && l.planOk !== false);
   if (noPlan.length) out.push({ lvl: 'stat', title: `${noPlan.length} trade(s) clôturé(s) sans « Plan respecté ? »`, sub: noPlan.map(l => esc(l.ticker)).join(', '), btn: btn('Renseigner', 'plan', { lot: noPlan[0].id }) });
   const noSect = [...new Set(open.map(l => l.ticker))].filter(t => !sectorOf(t));
@@ -3999,6 +4006,70 @@ function healthCard() {
 function healthBanner() {
   const n = healthChecks().filter(x => x.lvl === 'imp').length; if (!n) return '';
   return `<div class="banner err"><span><strong>Santé des données</strong> : ${n} point(s) important(s) faussent vos chiffres.</span><button class="btn sm" data-act="go-health">Voir</button></div>`;
+}
+// ----- Motifs : pastilles en un geste, suggestion d'après le radar, liste modifiable -----
+// auto : 'cross' (clôture passée au-dessus d'une de vos SMA dans les 3 bougies avant l'achat), 'near' (au-dessus et proche d'une SMA).
+const MOTIF_DEF = [{ k: 'xsma', l: 'Croisement SMA', auto: 'cross' }, { k: 'rsma', l: 'Rebond sur SMA', auto: 'near' }, { k: 'cassure', l: 'Cassure' }, { k: 'continuation', l: 'Continuation' }, { k: 'autre', l: 'Autre' }];
+const motifList = () => Array.isArray(S.settings.motifs) && S.settings.motifs.length ? S.settings.motifs : MOTIF_DEF;
+function motifsSync() {
+  const m = {}; for (const x of motifList()) m[x.k] = x.l;
+  for (const l of S.lots) if (l.motif && !m[l.motif]) m[l.motif] = MOTIFS_OLD[l.motif] || l.motif;
+  MOTIFS = m;
+}
+function motifSuggest(t, date) {
+  t = String(t || '').toUpperCase(); const bars = t && tickerBars(t); if (!bars) return null;
+  const pre = bars.filter(b => b[0] < date); if (pre.length < 30) return null;
+  const nearPct = S.settings.nearPct || 2; let got = null;
+  for (const w of S.watch.filter(x => x.ticker === t && !x.idx)) {
+    const c = []; let k0 = null;
+    for (const [d, x] of pre) { const k = periodKey(w.tf, d); if (k === k0) c[c.length - 1] = x; else { c.push(x); k0 = k; } }
+    if (w.tf !== 'D' && periodKey(w.tf, pre[pre.length - 1][0]) === periodKey(w.tf, date)) c.pop();   // bougie S/M de l'achat pas encore complétée
+    const n = c.length, P = w.period; if (n < P + 4) continue;
+    const sma = j => { let t2 = 0; for (let i = j - P + 1; i <= j; i++) t2 += c[i]; return t2 / P; };
+    const last = n - 1, above = c[last] > sma(last);
+    if (above && [1, 2, 3].some(i => c[last - i] <= sma(last - i))) { got = { auto: 'cross', w }; break; }
+    if (above && !got && (c[last] / sma(last) - 1) * 100 <= nearPct) got = { auto: 'near', w };
+  }
+  if (!got) return null;
+  const m = motifList().find(x => x.auto === got.auto); if (!m) return null;
+  return { k: m.k, why: `${got.auto === 'cross' ? 'clôture passée au-dessus de' : 'clôture au-dessus et proche de'} la SMA ${TF_SHORT[got.w.tf]} ${got.w.period}` };
+}
+// Pastilles (boutons radio) ; sug : motif suggéré, en pointillé.
+const motifChips = (name, cur, sug) => `<div class="mchips" role="radiogroup">${Object.entries(MOTIFS).filter(([k]) => motifList().some(x => x.k === k) || k === cur).map(([k, l]) => `<label class="mchip${sug === k ? ' sg' : ''}"><input type="radio" name="${name}" value="${k}" ${cur === k ? 'checked' : ''}>${esc(l)}</label>`).join('')}</div>`;
+function motifField(t, date, cur) {
+  const sg = motifSuggest(t, date), pick = cur || (sg ? sg.k : '');
+  return `<div class="fld wide"><label>Motif</label>${motifChips('motif', pick, sg && sg.k)}${sg ? `<p class="hint sgh">Suggéré d’après le radar : ${esc(sg.why)}${cur && cur !== sg.k ? ' (votre choix est gardé)' : ''}.</p>` : ''}</div>`;
+}
+function sheetMotifSort() {
+  const lots = S.lots.filter(l => !l.demo).sort((a, b) => a.date < b.date ? 1 : -1);
+  const sug = new Map(lots.map(l => [l.id, motifSuggest(l.ticker, l.date)]));
+  const done = () => lots.filter(l => l.motifSet).length;
+  openSheet({ title: 'Classer vos trades', ok: 'Enregistrer',
+    body: `<p class="lead">Une pastille par trade. En pointillé : la suggestion du radar à la date d’achat. Rien n’est enregistré avant « Enregistrer ».</p>
+      <div class="row" style="justify-content:space-between;margin-bottom:6px"><span id="msortN" class="hint" style="margin:0"></span><button type="button" class="btn sm" data-act="motif-accept">Accepter les suggestions</button></div>
+      ${lots.map(l => { const ls = Core.lotState(l), R = lotR(l, ls), sg = sug.get(l.id);
+        return `<div class="msrow" data-id="${l.id}"><div class="msh"><b>${esc(l.ticker)}</b><span class="${R == null ? 'muted' : cls(R)}">${fmtDate(l.date)}${R == null ? ' · en cours' : ' · ' + fR(R)}</span></div>${motifChips('m_' + l.id, l.motifSet ? l.motif : '', sg && sg.k)}</div>`; }).join('')}`,
+    onInput: form => { const n = lots.filter(l => form.querySelector(`input[name="m_${l.id}"]:checked`)).length; const el = $('#msortN'); if (el) el.textContent = `${n} / ${lots.length} classés`; },
+    onSubmit: form => {
+      let n = 0;
+      for (const l of lots) { const r = form.querySelector(`input[name="m_${l.id}"]:checked`); if (!r) continue; if (l.motif !== r.value || !l.motifSet) n++; l.motif = r.value; l.motifSet = true; }
+      save(n ? `${n} trade(s) classé(s)` : 'Aucun changement');
+    } });
+  window.__msortSug = sug;
+}
+function sheetMotifs() {
+  const L = motifList(), used = k => S.lots.some(l => l.motif === k);
+  openSheet({ title: 'Mes motifs', ok: 'Enregistrer',
+    body: `<p class="lead">Renommez vos motifs ou ajoutez les vôtres (6 au plus, pour garder des groupes assez grands dans le bilan). Videz un nom pour retirer un motif inutilisé.</p><div class="fields">
+      ${L.map((m, i) => inp('m' + i, m.auto ? `${m.auto === 'cross' ? 'Suggéré quand la clôture croise une SMA' : 'Suggéré quand le cours est proche d’une SMA'}` : 'Motif', m.l)).join('')}
+      ${L.length < 6 ? inp('mnew', 'Nouveau motif', '', 'placeholder="facultatif"') : ''}</div>`,
+    onSubmit: form => {
+      const out = [];
+      L.forEach((m, i) => { const v = F(form, 'm' + i).trim(); if (v) out.push(Object.assign({}, m, { l: v })); else need(!used(m.k), `« ${m.l} » est utilisé par des positions : gardez-le ou renommez-le.`); });
+      const nv = F(form, 'mnew').trim(); if (nv) { need(out.length < 6, '6 motifs au plus.'); out.push({ k: 'm' + uid(), l: nv }); }
+      need(out.length >= 2, 'Gardez au moins 2 motifs.');
+      S.settings.motifs = out; motifsSync(); save('Motifs enregistrés');
+    } });
 }
 // ----- Rapprochement avec MT5 : fonds propres, marge et swap lus dans MT5, comparés au calcul de l'app -----
 const MT5_SNOOZE = 'carnet-positions:mt5-plus-tard';
@@ -4351,6 +4422,13 @@ document.addEventListener('click', e => {
     case 'go-tab': tab = b.dataset.tab; render(); window.scrollTo(0, 0); break;
     case 'health-radar': sheetWatch(null, b.dataset.t); break;
     case 'health-px': confirmSheet('Corriger ce cours ?', `${esc(b.dataset.t)} au ${fmtDate(b.dataset.d)} : le cours enregistré devient ${usd(+b.dataset.p)}, le prix de vente.`, 'Corriger', () => { addPrice(b.dataset.t, b.dataset.d, +b.dataset.p); save('Cours corrigé'); }); break;
+    case 'motif-sort': sheetMotifSort(); break;
+    case 'motif-list': sheetMotifs(); break;
+    case 'motif-accept': {
+      const sug = window.__msortSug || new Map(); let n = 0;
+      for (const [id, sg] of sug) { if (!sg) continue; const f = document.querySelector('#sheetForm'); if (f.querySelector(`input[name="m_${id}"]:checked`)) continue; const r = f.querySelector(`input[name="m_${id}"][value="${sg.k}"]`); if (r) { r.checked = true; n++; } }
+      if (sheetCfg && sheetCfg.onInput) sheetCfg.onInput($('#sheetForm')); toast(n ? `${n} suggestion(s) acceptée(s) : vérifiez puis enregistrez` : 'Aucune suggestion à accepter'); break;
+    }
     case 'mt5-snooze': try { localStorage.setItem(MT5_SNOOZE, todayISO()); } catch (e) {} render(); break;
     case 'del-flow': confirmSheet('Supprimer ce flux ?', 'Le versement ou retrait sera retiré des calculs.', 'Supprimer', () => { S.flows = S.flows.filter(x => x.id !== b.dataset.id); save('Flux supprimé'); }); break;
     case 'del-snap': confirmSheet('Supprimer cette valeur courtier ?', 'Elle ne servira plus d’observation.', 'Supprimer', () => { S.snapshots = S.snapshots.filter(x => x.id !== b.dataset.id); save('Valeur supprimée'); }); break;
