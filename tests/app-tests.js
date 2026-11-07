@@ -149,6 +149,14 @@ window.__appTests = async function () {
     return fl && fl.kind === 'pnl' && fl.amount === -101.38 && near(e1, e0 - 101.38, 1e-6) && Core.tradeStats(S, planR).count === n0 && P.itd && P.itd.r < 0 && shown ? true : JSON.stringify({ fl, e0, e1, r: P.itd && P.itd.r, shown });
   });
 
+  await t('Santé des données : une action hors radar peut ne plus être signalée', () => {
+    S.lots = [lot({ ticker: 'WKL' }), lot({ ticker: 'NEM' })];
+    const has = () => healthChecks().some(x => /absente\(s\) du radar/.test(x.title));
+    if (!has()) return 'pas signalée au départ';
+    S.settings.radarSkip = ['WKL', 'NEM']; tab = 'set'; render();
+    return !has() && /Jamais proposées au radar : NEM, WKL/.test($('#view').textContent) ? true : 'toujours signalée';
+  });
+
   reset(); tab = 'dash';
   return out;
 };
