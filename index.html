@@ -385,6 +385,9 @@ button.ptile.whole{cursor:pointer}button.ptile.whole small{color:var(--accent)}
 .chart .zero{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
 .chart .line{fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linejoin:round}
 .chart .area{fill:url(#gArea)}
+.chart .bench{fill:none;stroke:var(--muted);stroke-width:2;stroke-dasharray:5 4;stroke-linejoin:round}
+.blegend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.76rem;color:var(--muted);margin:4px 0 6px}.blegend i{display:inline-block;width:16px;vertical-align:middle;margin-right:6px}.blegend i.me{height:3px;background:var(--accent);border-radius:2px}.blegend i.sp{border-top:2px dashed var(--muted)}
+.btiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 0 10px}.btiles>div{background:var(--surface-2);border-radius:10px;padding:8px 10px;min-width:0}.btiles small{display:block;font-size:.72rem;color:var(--muted)}.btiles b{font-size:.95rem;font-weight:600;white-space:nowrap}
 .chart .dd{fill:var(--loss);opacity:.22} .chart .ddl{fill:none;stroke:var(--loss);stroke-width:1.5}
 .chart .dot{fill:var(--accent)} .chart .dot.est{fill:var(--surface);stroke:var(--accent);stroke-width:1.5} .chart .dot.br{fill:var(--warn)}
 .chart .bw{fill:var(--gain)} .chart .bl{fill:var(--loss)} .chart .rref{stroke:var(--muted);stroke-width:1;stroke-dasharray:2 4;opacity:.7}
@@ -443,7 +446,7 @@ table.months{font-size:.82rem;min-width:0;width:100%} table.months th,table.mont
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
-/* Carnet de positions v1.39.0 · licence MIT */
+/* Carnet de positions v1.40.0 · licence MIT */
 /*CORE-START*/
 // Moteur de calcul pur : aucune dépendance au DOM ni au stockage.
 const Core = (() => {
@@ -2928,7 +2931,7 @@ function viewDash() {
   const hc = x => !isNum(x) || Math.abs(x) < 0.005 ? '' : x > 0 ? 'up' : 'down';
   // Courbe de la période choisie, repartant de 0 % au début de la période.
   const sel = P[perfRange] || P.itd, rangePts = !sel ? P.pts : P.pts.filter(p => p.date >= sel.from && p.date <= sel.to).map((p, i, a) => Object.assign({}, p, { index: p.index / a[0].index }));
-  const DD = Core.maxDrawdown(rangePts);
+  const DD = Core.maxDrawdown(rangePts), BM = benchBlock(P, sel, rangePts);
   const perfTile = (k, l, sub, p) => `<button type="button" class="ptile" data-act="perf-range" data-f="${k}" aria-pressed="${perfRange === k}"><span>${l}</span><b class="${p ? cls(p.r) : ''}">${p ? pct(p.r, true) : '—'}</b><small>${p ? perfSub(k, p) + (p.est ? ' · estimé' : '') : sub}</small></button>`;
   const method = P.estCount ? `Rendement pondéré dans le temps, ${P.estCount} sous-période(s) estimée(s) par Modified Dietz faute de valorisation à la date d’un flux.` : 'Rendement pondéré dans le temps (valorisations disponibles autour de chaque flux).';
   return `${demoBanner()}
@@ -2959,9 +2962,10 @@ function viewDash() {
     <div class="ptiles" role="group" aria-label="Période">${PERIODS.map(([k, l, sub]) => perfTile(k, l, sub, P[k])).join('')}${acctTile(ref)}</div>
     ${P.broken ? `<div class="banner err">Courbe interrompue au ${fmtDate(P.brokenAt)} : valeur de départ nulle ou négative.</div>` : ''}
     ${perfWhy(P)}
+    ${BM.tiles}
     ${rangePts.length > 1 ? `<p class="chart-t">${PERIODS.find(x => x[0] === perfRange)[1]} : ${fmtDate(rangePts[0].date)} → ${fmtDate(rangePts[rangePts.length - 1].date)}</p>` : ''}
-    ${chartSVG(rangePts)}
-    <dl class="kv" style="margin-top:10px">${kv('Drawdown maximal', DD ? `<span class="${cls(DD.dd)}">${pct(DD.dd)}</span>` : 'Non calculable', DD && DD.dd < 0 ? `${fmtDate(DD.peak)} → ${fmtDate(DD.trough)}` : 'sur la période affichée')}</dl>
+    ${chartSVG(rangePts, BM.at)}
+    <dl class="kv" style="margin-top:10px">${BM.kv}${kv('Drawdown maximal', DD ? `<span class="${cls(DD.dd)}">${pct(DD.dd)}</span>` : 'Non calculable', DD && DD.dd < 0 ? `${fmtDate(DD.peak)} → ${fmtDate(DD.trough)}` : 'sur la période affichée')}</dl>
     <details class="more"><summary>Comment c’est calculé</summary>
     <p class="hint">${method} Un dépôt n’est jamais compté comme un gain, un retrait jamais comme une perte. ${P.freq ? `${P.freq.count} observations, écart médian ${fmtNum(P.freq.medianGap, 1)} jour(s), écart maximal ${P.freq.maxGap} jours. Les baisses survenues entre deux observations (intrajournalières notamment) ne sont pas mesurées.` : ''}
     Une observation existe quand toutes les positions ouvertes ont un cours saisi le même jour, quand aucune position n’est ouverte, ou quand vous saisissez la valeur du courtier. ● calcul exact, ○ sous-période estimée, ● orange : valeur courtier.</p></details>
@@ -3122,7 +3126,44 @@ function perfWhy(P) {
   if (!msgs.length || (P.itd && !early.length)) return '';
   return `<div class="banner warn"><span>${msgs.join('<br>')}</span></div>`;
 }
-function chartSVG(pts) {
+// ----- Comparaison avec le S&P 500 : ETF SPY de l'historique du radar (cours ajustés, dividendes inclus), aux dates des observations du compte -----
+function spyAt() {
+  const h0 = Radar.hist.SPY, h = h0 && (histFixed('SPY', h0) || h0); if (!h || !h.bars || h.bars.length < 2) return null;
+  const b = h.bars;
+  return d => { let lo = 0, hi = b.length - 1, r = null; while (lo <= hi) { const m = (lo + hi) >> 1; if (b[m][0] <= d) { r = b[m][1]; lo = m + 1; } else hi = m - 1; } return r; };
+}
+// Variations entre deux observations consécutives (compte, SPY). Seulement les écarts de 5 jours ou moins (séances, pas des trous).
+function benchPairs(pts, at) {
+  const out = [];
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i], x = at(a.date), y = at(b.date);
+    if (b.r == null || !(x > 0 && y > 0) || Core.days(a.date, b.date) > 5) continue;
+    out.push([b.r * 100, (y / x - 1) * 100]);
+  }
+  return out;
+}
+function benchBlock(P, sel, rangePts) {
+  const at = spyAt();
+  if (!at) return { tiles: `<p class="hint">Comparaison avec le S&amp;P 500 : historique de SPY en attente${S.watch.some(w => w.ticker === 'SPY') ? ' (chargé par le radar)' : ' : ajoutez SPY au radar (carte Marché US › SMA)'}.</p>`, kv: '', at: null };
+  if (!sel || rangePts.length < 2) return { tiles: '', kv: '', at: null };
+  const a = at(sel.from), b = at(sel.to); if (!(a > 0 && b > 0)) return { tiles: '', kv: '', at: null };
+  const rS = (b / a - 1) * 100, gap = sel.r - rS;
+  const tiles = `<div class="btiles"><div><small>Votre compte</small><b class="num ${cls(sel.r)}">${pct(sel.r, true)}</b></div><div><small>S&amp;P 500</small><b class="num ${cls(rS)}">${pct(rS, true)}</b></div><div><small>Écart</small><b class="num ${cls(gap)}">${(gap >= 0 ? '+' : '−') + fmtNum(Math.abs(gap), 2)} pt</b></div></div>`;
+  // Bêta sur les 60 dernières variations de séance du compte (toutes périodes) ; séances gagnantes sur la période affichée.
+  const all = benchPairs(P.pts, at).slice(-60), inR = benchPairs(rangePts, at);
+  let beta = null;
+  if (all.length >= 8) {
+    const mx = all.reduce((t, p) => t + p[1], 0) / all.length, my = all.reduce((t, p) => t + p[0], 0) / all.length;
+    let cv = 0, vr = 0; for (const [y, x] of all) { cv += (x - mx) * (y - my); vr += (x - mx) ** 2; }
+    beta = vr > 0 ? cv / vr : null;
+  }
+  const won = inR.filter(([y, x]) => y > x).length;
+  let kvs = kv('Sensibilité au marché (bêta)', beta == null ? 'Pas assez de séances' : `${fmtNum(beta, 2)}`, beta == null ? `il faut au moins 8 séances consécutives observées (${all.length} pour l’instant)` : `quand le S&amp;P fait −1 %, votre compte fait environ ${pct(-beta, true)} · ${all.length} séance(s) observée(s)`, beta != null && beta > 1.5 ? 'neg' : '');
+  if (inR.length) kvs += kv('Séances meilleures que le S&amp;P', `${won} / ${inR.length}`, 'sur les séances observées de la période');
+  if (perfRange !== 'itd' && P.itd) { const a0 = at(P.itd.from), b0 = at(P.itd.to); if (a0 > 0 && b0 > 0) { const r0 = (b0 / a0 - 1) * 100; kvs += kv('Depuis le début', `${pct(P.itd.r, true)} vs ${pct(r0, true)}`, `${fmtDate(P.itd.from)} → ${fmtDate(P.itd.to)} · compte vs S&amp;P 500`, cls(P.itd.r - r0)); } }
+  return { tiles, kv: kvs, at };
+}
+function chartSVG(pts, bench) {
   if (pts.length < 2) return '<p class="hint">La courbe apparaîtra après deux observations.</p>';
   const vw = (document.querySelector('#view') || {}).clientWidth || 700;
   const W = Math.round(Math.max(320, Math.min(700, vw - 38))), H = W < 500 ? 220 : 280, L = 46, R = 10, Tp = 14, B = 28;
@@ -3137,13 +3178,17 @@ function chartSVG(pts) {
   const grid = (sc, y) => { let g = ''; for (let v = sc.lo; v <= sc.hi + 1e-9; v += sc.step) g += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${fmtNum(v, 1)} %</text>`; return g; };
   // Courbe cumulée corrigée des apports
   const vals = pts.map(p => (p.index - 1) * 100);
-  const sc = ticks(Math.min(0, ...vals), Math.max(0, ...vals), 4);
+  // S&P 500 rebasé à 0 % au premier point, aux mêmes dates.
+  const b0 = bench && bench(pts[0].date), bv = b0 > 0 ? pts.map(p => { const v = bench(p.date); return v > 0 ? (v / b0 - 1) * 100 : null; }) : null;
+  const allV = vals.concat(bv ? bv.filter(v => v != null) : []);
+  const sc = ticks(Math.min(0, ...allV), Math.max(0, ...allV), 4);
   const y = v => Tp + (sc.hi - v) / (sc.hi - sc.lo) * (H - Tp - B);
   const path = pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.date).toFixed(1)},${y((p.index - 1) * 100).toFixed(1)}`).join('');
   const area = path + `L${x(pts[pts.length - 1].date).toFixed(1)},${y(sc.lo)}L${x(pts[0].date).toFixed(1)},${y(sc.lo)}Z`;
   const dots = pts.map(p => `<circle class="dot ${p.source === 'courtier' ? 'br' : (p.est ? 'est' : '')}" cx="${x(p.date).toFixed(1)}" cy="${y((p.index - 1) * 100).toFixed(1)}" r="3.5"><title>${fmtDate(p.date)} : ${pct((p.index - 1) * 100, true)} · ${usd(p.value)}</title></circle>`).join('');
+  const bpath = bv ? pts.map((p, i) => bv[i] == null ? '' : `${i && bv[i - 1] != null ? 'L' : 'M'}${x(p.date).toFixed(1)},${y(bv[i]).toFixed(1)}`).join('') : '';
   const lab = `<text x="${L}" y="${H - 8}">${fmtDate(pts[0].date)}</text><text x="${W - R}" y="${H - 8}" text-anchor="end">${fmtDate(pts[pts.length - 1].date)}</text>`;
-  const main = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Courbe de performance cumulée corrigée des apports"><defs><linearGradient id="gArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".28"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>${grid(sc, y)}<line class="zero" x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}"/><path class="area" d="${area}"/><path class="line" d="${path}"/>${dots}${lab}</svg>`;
+  const main = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Courbe de performance cumulée corrigée des apports"><defs><linearGradient id="gArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".28"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>${grid(sc, y)}<line class="zero" x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}"/><path class="area" d="${area}"/>${bpath ? `<path class="bench" d="${bpath}"/>` : ''}<path class="line" d="${path}"/>${dots}${lab}</svg>${bpath ? '<div class="blegend"><span><i class="me"></i>Votre compte</span><span><i class="sp"></i>S&amp;P 500 (SPY, dividendes inclus)</span></div>' : ''}`;
   // Drawdown : recul depuis le plus haut précédent
   let peak = pts[0].index;
   const dd = pts.map(p => { peak = Math.max(peak, p.index); return (p.index / peak - 1) * 100; });
@@ -3489,7 +3534,7 @@ function syncPanel() {
   const conf = conflict ? `<div class="banner warn"><span>Une version mise de côté (${esc(conflict.from)}, ${new Date(conflict.at).toLocaleString('fr-FR')}) peut être restaurée si la synchronisation a gardé la mauvaise.</span><button class="btn sm" data-act="restore-conflict">Restaurer</button><button class="btn sm" data-act="drop-conflict">Oublier</button></div>` : '';
   const nSym = new Set(S.watch.map(symOf)), nHave = [...nSym].filter(x => Radar.hist[x]).length;
   const exp = `<p class="hint">Dernier export JSON sur cet appareil : ${lastExp ? new Date(lastExp).toLocaleDateString('fr-FR') : 'jamais'}.</p>
-    <p class="hint"><strong>Cet appareil</strong> : version 1.39.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
+    <p class="hint"><strong>Cet appareil</strong> : version 1.40.0 · ${S.lots.length} position(s) · ${S.watch.length} SMA · historique radar ${nHave}/${nSym.size} · données modifiées le ${S.updatedAt ? new Date(S.updatedAt).toLocaleString('fr-FR') : '—'}. Comparez cette ligne sur vos deux appareils : elle doit être identique, sauf l’historique radar.</p>`;
   if (Store.cfg) return `<div class="banner info"><span><strong>Synchronisation active</strong> avec votre Gist GitHub secret. Chaque appareil garde aussi sa copie : l’app fonctionne hors ligne et renvoie les changements au retour du réseau.
       ${Store.lastOk ? 'Dernière synchronisation à ' + fmtTime(Store.lastOk) + '.' : ''}</span></div>
     <div class="row"><button class="btn primary" data-act="sync-now">Synchroniser maintenant</button>
