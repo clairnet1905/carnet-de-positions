@@ -106,6 +106,12 @@ function coreTests(Core) {
     const T = Core.tradeStats(s, () => 10);
     return near(T.winRate, 50) && near(T.avgR, 0.5) && near(T.profitFactor, 2) ? true : JSON.stringify({ w: T.winRate, r: T.avgR, pf: T.profitFactor });
   });
+  t('Risque : perte si tous les stops sautent, frais de sortie compris ; position sans stop à part', () => {
+    const s = st({ lots: [lot({ stopCurrent: 90 }), lot({ ticker: 'BBB', qty: 5, price: 200, stopCurrent: 180 }), lot({ ticker: 'CCC', stopCurrent: null })],
+      prices: { AAA: [{ date: '2026-11-05', price: 110 }], BBB: [{ date: '2026-11-05', price: 210 }], CCC: [{ date: '2026-11-05', price: 50 }] } });
+    const R = Core.riskSummary(s, Core.normFees({ outFixed: 1 }));
+    return near(R.heat, 10 * 20 + 1 + 5 * 30 + 1) && R.noStop === 1 && R.pos === 3 ? true : JSON.stringify(R);
+  });
   return out;
 }
 if (typeof module !== 'undefined') module.exports = coreTests;

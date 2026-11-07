@@ -126,6 +126,17 @@ window.__appTests = async function () {
     return near(want, got, 1e-9) && /S&amp;P 500/.test(B.tiles) ? true : `${want} / ${got}`;
   });
 
+  await t('Limites de risque : choix de notification enregistrés, panneau inchangé', async () => {
+    S.lots = [lot({ stopCurrent: 90 })]; S.prices.AAA = [{ date: days(1)[0], price: 110 }];
+    const before = portfolioRisk().heat;
+    sheetRiskLim(); await wait(50);
+    const f = $('#sheetForm'); if (!f.elements.pushRisk || !f.elements.riskLevel) return 'cases absentes';
+    f.elements.heat.value = '5'; f.elements.pushRisk.checked = false; f.elements.riskBack.checked = true;
+    $('#sheetOk').click(); await wait(300);
+    const o = riskPushOpt();
+    return S.settings.pushRisk === false && o.back === true && o.level === true && S.settings.riskLim.heat === 5 && near(portfolioRisk().heat, before) && near(before, 200) ? true : JSON.stringify({ p: S.settings.pushRisk, o, before });
+  });
+
   reset(); tab = 'dash';
   return out;
 };
