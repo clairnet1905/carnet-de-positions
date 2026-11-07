@@ -157,6 +157,21 @@ window.__appTests = async function () {
     return !has() && /Jamais proposées au radar : NEM, WKL/.test($('#view').textContent) ? true : 'toujours signalée';
   });
 
+  await t('Ce soir : stop remonté en un geste, croisement d’une action non détenue proposé', async () => {
+    const D = days(60);
+    Radar.hist.AAA = { bars: D.map((d, i) => [d, 100 + i]) };
+    Radar.hist.CCC = { bars: D.map((d, i) => [d, i < 58 ? 100 : 120]) };
+    S.watch = [{ id: 'w5', ticker: 'AAA', period: 5, tf: 'D', sym: '' }, { id: 'wc', ticker: 'CCC', period: 5, tf: 'D', sym: '' }, { id: 'wa', ticker: 'AAA', period: 3, tf: 'D', sym: '' }];
+    S.lots = [lot()]; S.prices.AAA = [{ date: D[59], price: 160 }];
+    tab = 'dash'; render();
+    const card = $('#tonight'); if (!card) return 'carte absente';
+    const st = card.querySelector('[data-act="tn-stop"]'); if (!st || st.dataset.t !== 'AAA') return 'stop absent';
+    if (!card.querySelector('[data-act="tn-calc"]') || card.querySelector('[data-act="tn-calc"]').closest('.tnr').textContent.indexOf('CCC') < 0) return 'croisement CCC absent';
+    if (/\bAAA\b.*Calculer/.test(card.textContent.replace(/\s+/g, ' ').split('2. ')[1] || '')) return 'action détenue proposée';
+    const v = +st.dataset.v; st.click(); await wait(300);
+    return near(S.lots[0].stopCurrent, v) && S.lots[0].events.some(e => e.type === 'stop' && e.to === v) ? true : 'stop ' + S.lots[0].stopCurrent;
+  });
+
   reset(); tab = 'dash';
   return out;
 };
