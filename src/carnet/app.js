@@ -1153,6 +1153,7 @@ function render() {
   syncSwap();
   try {
     if (tab === 'dash') v.innerHTML = viewDash();
+    else if (tab === 'ana') v.innerHTML = viewDash('ana');
     else if (tab === 'calc') { v.innerHTML = viewCalc(); updateCalc(); }
     else if (tab === 'pos') { v.innerHTML = viewPos(); applyPosQuery(); loadThumbs(); }
     else if (tab === 'radar') { v.innerHTML = viewRadar(); applyRadarQuery(); }
@@ -1161,6 +1162,7 @@ function render() {
     else v.innerHTML = viewSettings();
   } finally { S.prices = saved; }
   badgeSoon();
+  const hv = $('#hdrVal'); if (hv) { try { const r = referenceCapital(); hv.textContent = r && r.acc && S.lots.length ? usd(r.acc.equity) + ' ·' : ''; } catch (e) { hv.textContent = ''; } }
 }
 const kv = (label, value, extra, c) => `<div><dt>${label}</dt><dd class="${c || ''}">${value}${extra ? `<small>${extra}</small>` : ''}</dd></div>`;
 function demoBanner() {
@@ -2111,7 +2113,7 @@ function sheetIdxEdit() {
       refreshRadar();
     } });
 }
-function viewDash() {
+function viewDash(part) {
   const ref = referenceCapital(), acc = ref.acc, lb = latestBroker(), P = perf(), T = Core.tradeStats(S, planR);
   let gap = '';
   if (lb) {
@@ -2132,16 +2134,8 @@ function viewDash() {
   const DD = Core.maxDrawdown(rangePts), BM = benchBlock(P, sel, rangePts);
   const perfTile = (k, l, sub, p) => `<button type="button" class="ptile" data-act="perf-range" data-f="${k}" aria-pressed="${perfRange === k}"><span>${l}</span><b class="${p ? cls(p.r) : ''}">${p ? pct(p.r, true) : '—'}</b><small>${p ? perfSub(k, p) + (p.est ? ' · estimé' : '') : sub}</small></button>`;
   const method = P.estCount ? `Rendement pondéré dans le temps, ${P.estCount} sous-période(s) estimée(s) par Modified Dietz faute de valorisation à la date d’un flux.` : 'Rendement pondéré dans le temps (valorisations disponibles autour de chaque flux).';
-  const tn = tonightCard();
-  return `${demoBanner()}
-  ${tn}
-  ${alertsStrip(!!tn)}
-  ${mt5Remind()}
-  ${healthBanner()}
-  ${earnCard()}
-  ${liveBar()}
-  ${marketCard()}
-  <div class="hero-card">
+  const tn = part === 'ana' ? '' : tonightCard();
+  const hero = `<div class="hero-card">
     <div class="row" style="justify-content:space-between"><span class="lbl">Valeur nette du compte</span><small>${ref.label} · cours au ${fmtDate(acc.openCount ? acc.minPriceDate : todayISO())}</small></div>
     <div><div class="big">${usd(acc.equity)}</div>
       <div class="row" style="margin-top:8px"><span class="chg ${hc(gain)}">${usd(gain, true)}${gainPct == null ? '' : ' · ' + pct(gainPct, true)}</span><small>par rapport à ${usd(invested)} apportés</small></div></div>
@@ -2153,8 +2147,22 @@ function viewDash() {
     </dl>
     ${mUse != null && acc.margin > 0 ? `<div class="gauge"><div class="row"><span>Marge estimée utilisée : <strong style="color:var(--hero-ink)">${usd(acc.margin)}</strong></span><span>${fmtNum(mUse, 0)} % de la valeur nette</span></div><div class="track"><i class="${mCls}" style="width:${Math.min(100, mUse).toFixed(1)}%"></i></div></div>` : ''}
   </div>
-  ${ref.stale ? `<div class="banner warn"><span>Valorisation datée de ${ref.age} jours (${fmtDate(ref.date)}). Mettez à jour les cours ou saisissez la valeur du courtier.</span><button class="btn sm" data-act="prices">Mettre à jour</button></div>` : ''}
+  `;
+  // Tableau de bord : l'essentiel du soir. Analyse : performance, diversification, statistiques (onglet à part).
+  if (part !== 'ana') return `${demoBanner()}
+  ${hero}
+  ${tn}
+  ${alertsStrip(!!tn)}
+  ${mt5Remind()}
+  ${healthBanner()}
+  ${earnCard()}
+  ${liveBar()}
   ${riskCard()}
+  ${marketCard()}
+  ${ref.stale ? `<div class="banner warn"><span>Valorisation datée de ${ref.age} jours (${fmtDate(ref.date)}). Mettez à jour les cours ou saisissez la valeur du courtier.</span><button class="btn sm" data-act="prices">Mettre à jour</button></div>` : ''}
+  <p class="hint" style="text-align:center">Performance, diversification et statistiques : onglet <button class="lnk" data-tab="ana">Analyse</button>.</p>`;
+  return `${demoBanner()}
+  ${ref.stale ? `<div class="banner warn"><span>Valorisation datée de ${ref.age} jours (${fmtDate(ref.date)}). Mettez à jour les cours ou saisissez la valeur du courtier.</span><button class="btn sm" data-act="prices">Mettre à jour</button></div>` : ''}
   ${acctCard(ref)}
   ${sectorCard()}
   ${lb ? `<div class="banner info"><span>Courtier au ${fmtDate(lb.date)} : <strong class="num">${usd(lb.netValue)}</strong>${isNum(lb.marginAvail) ? `, marge disponible <span class="num">${usd(lb.marginAvail)}</span>` : ''}. ${gap}</span></div>` : ''}
@@ -2503,7 +2511,7 @@ function rail(entry, stop, price) {
   return `<div class="rail" aria-hidden="true"><i class="zone ${price > stop ? '' : 'bad'}" style="left:${a.toFixed(1)}%;width:${(b - a).toFixed(1)}%"></i><b class="mk stop" style="left:${X(stop).toFixed(1)}%"></b><b class="mk entry" style="left:${X(entry).toFixed(1)}%"></b><b class="mk px" style="left:${X(price).toFixed(1)}%"></b></div>
     <div class="rail-leg"><span class="s">Stop ${usd(stop)}</span><span>Entrée ${usd(entry)}</span><span class="p">Cours ${usd(price)}</span></div>`;
 }
-let posSort = 'risk', posQuery = '', posFilter = 'all';
+let posSort = 'risk', posQuery = '', posFilter = 'all', setPart = 'acct';
 // Filtre sans redessiner la page : le clavier reste ouvert pendant la saisie.
 function applyPosQuery() {
   const q = posQuery.trim().toLowerCase();
@@ -2685,9 +2693,10 @@ function viewSettings() {
     const gap = a.equity > 0 ? `<span class="${Math.abs(g / a.equity * 100) < 0.5 ? '' : cls(g)}">${usd(g, true)} · ${pct(g / a.equity * 100, true)}</span>` : '—';
     return `<tr><td>${fmtDate(b.date)}</td><td class="n">${usd(b.netValue)}</td><td class="n">${usd(a.equity)}</td><td class="n">${isNum(b.marginUsed) ? usd(b.marginUsed) : isNum(b.marginAvail) ? usd(b.netValue - b.marginAvail) : '—'}</td><td class="n">${gap}</td><td>${b.demo ? '<span class="pill demo">Démo</span>' : ''}</td><td><button class="btn sm" data-act="del-snap" data-id="${b.id}">Suppr.</button></td></tr>`;
   }).join('');
+  const parts = `<div class="setparts" role="group" aria-label="Réglages">${[['acct', 'Compte'], ['conf', 'Configuration']].map(([k, l]) => `<button class="btn" data-act="set-part" data-f="${k}" aria-pressed="${setPart === k}">${l}</button>`).join('')}</div>`;
   return `${demoBanner()}
-  ${healthCard()}
-  ${aboutCard()}
+  ${parts}
+  ${setPart === 'conf' ? '' : `${healthCard()}
   <section class="card">
     <div class="sec-head"><h2>Compte et règles de risque</h2></div>
     <form id="setForm" class="fields">
@@ -2731,8 +2740,8 @@ function viewSettings() {
     <p class="lead">Rapprochements MT5 : fonds propres et marge lus dans MT5, comparés au calcul de l’app à la même date. Un écart qui grandit d’une semaine à l’autre signale une saisie oubliée ou un swap mal estimé.</p>
     ${snaps.length ? `<div class="tbl"><table><thead><tr><th>Date</th><th class="n">MT5</th><th class="n">App</th><th class="n">Marge</th><th class="n">Écart</th><th></th><th></th></tr></thead><tbody>${snapRows}</tbody></table></div>` : '<p class="hint">Aucune valeur saisie.</p>'}
   </section>
-  </div>
-  ${quotesPanel()}
+  </div>`}
+  ${setPart === 'conf' ? `${quotesPanel()}
   <section class="card">
     <div class="sec-head"><h2>Sauvegarde et données</h2></div>
     <div class="banner ${Store.ref ? 'info' : 'warn'}"><span>${Store.ref
@@ -2748,7 +2757,8 @@ function viewSettings() {
       <button class="btn danger" data-act="wipe">Effacer toutes les données</button>
     </div>
     <p class="hint">L’application ne demande aucun identifiant de courtier, n’exécute aucun ordre et n’utilise aucune API de cotation : les cours se saisissent à la main.</p>
-  </section>`;
+  </section>
+  ${aboutCard()}` : ''}`;
 }
 
 // ---------- Feuilles de saisie ----------
@@ -3627,6 +3637,7 @@ document.addEventListener('click', e => {
     case 'jfilter': journalFilter = b.dataset.f; render(); break;
     case 'psort': posSort = b.dataset.f; render(); break;
     case 'pfilter': posFilter = b.dataset.f; render(); break;
+    case 'set-part': setPart = b.dataset.f; render(); window.scrollTo(0, 0); break;
     case 'perf-range': perfRange = b.dataset.f; render(); break;
     case 'trade-year': tradeYear = b.dataset.f; tradeMonth = 'all'; render(); break;
     case 'trade-month': tradeMonth = b.dataset.f; render(); break;
@@ -3877,7 +3888,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet
 (async function boot() {
   const local = readLocal();
   if (local) S = normalize(local);
-  try { const h = location.hash.slice(1); if (['dash', 'calc', 'pos', 'radar', 'set'].includes(h)) tab = h; } catch (e) {}
+  try { const h = location.hash.slice(1); if (['dash', 'calc', 'pos', 'radar', 'ana', 'set'].includes(h)) tab = h; } catch (e) {}
   render();
   setSync('local'); $('#syncText').textContent = 'Connexion à la sauvegarde…';
   const remote = await withTimeout(initRemote(), 11000);
