@@ -359,22 +359,28 @@ window.__appTests = async function () {
     return ok ? true : JSON.stringify({ a, b, c, months, s: (txt.match(/Cette semaine[^·]*·[^·]*·[^·]*/) || [''])[0] });
   });
 
-  await t('Graphique : bougies du robot, SMA, stop et ventes ; clôtures sans bougies', async () => {
-    const D = days(90);
-    const u = unpackHist({ s: D[0], o: D.map((d, i) => i ? Core.days(D[i - 1], d) : 0), c: D.map((d, i) => 100 + i), n: 90, x: D.slice(-70).flatMap(() => [-50, 120, -130]), xn: 70 });
-    if (u.ohlc !== 70 || u.bars[89].length !== 5 || Math.abs(u.bars[89][3] - 189 * 1.012) > 1e-6) return 'décodage bougies ' + u.ohlc;
-    Radar.hist.AAA = u; S.watch = [{ id: 'w5', ticker: 'AAA', period: 5, tf: 'D', sym: '' }];
-    S.lots = [lot({ date: D[40], price: 140, events: [{ id: 'st', type: 'stop', date: D[60], from: 90, to: 150 }, { id: 's', type: 'sell', date: D[70], qty: 4, price: 170, fee: 0 }] })];
+  await t('Graphique : une unité par onglet (bougies et SMA de l’unité seulement), stop, entrée et ventes', async () => {
+    const D = days(400);
+    const u = unpackHist({ s: D[0], o: D.map((d, i) => i ? Core.days(D[i - 1], d) : 0), c: D.map((d, i) => 100 + i), n: 400, x: D.slice(-70).flatMap(() => [-50, 120, -130]), xn: 70 });
+    if (u.ohlc !== 70 || u.bars[399].length !== 5) return 'décodage bougies ' + u.ohlc;
+    Radar.hist.AAA = u;
+    S.watch = [{ id: 'wd', ticker: 'AAA', period: 5, tf: 'D', sym: '' }, { id: 'ww', ticker: 'AAA', period: 10, tf: 'W', sym: '' }, { id: 'wm', ticker: 'AAA', period: 3, tf: 'M', sym: '' }];
+    S.lots = [lot({ date: D[340], price: 440, smas: ['W|10'], events: [{ id: 'st', type: 'stop', date: D[360], from: 90, to: 450 }, { id: 's', type: 'sell', date: D[370], qty: 4, price: 470, fee: 0 }] })];
     sheetChart('AAA'); await wait(30);
-    const svg = $('#chSvg'); if (!svg) return 'graphique absent';
-    const nR = svg.querySelectorAll('rect').length;
-    if (nR < 60 || !svg.querySelector('.sm') || !svg.querySelector('.stp') || !svg.querySelector('.m-in') || !svg.querySelector('.m-out')) return `éléments manquants (${nR} bougies)`;
+    if (chartSt.tf !== 'W') { closeSheet(); return 'onglet par défaut ' + chartSt.tf + ' (attendu : unité de la SMA d’entrée)'; }
+    const lg = () => $('.chlg').textContent, nR = () => $('#chSvg').querySelectorAll('g rect').length;
+    const w1 = lg(); if (!/SMA S10/.test(w1) || /SMA J5|SMA M3/.test(w1)) { closeSheet(); return 'hebdo : ' + w1; }
+    if (!$('#chSvg .stp') || !$('#chSvg .m-in') || !$('#chSvg .m-out') || !$('#chSvg rect.tg-stop') || !$('#chSvg rect.tg-in')) { closeSheet(); return 'stop / entrée / ventes manquants'; }
+    $('[data-act="ch-tf"][data-tf="D"]').click(); await wait(30);
+    const d1 = lg(); if (!/SMA J5/.test(d1) || /SMA S10|SMA M3/.test(d1) || nR() !== 66) { closeSheet(); return 'journalier : ' + d1 + ' / ' + nR(); }
     $('[data-act="ch-range"][data-n="22"]').click(); await wait(30);
-    if ($('#chSvg').querySelectorAll('rect').length !== 22) return '1 M : ' + $('#chSvg').querySelectorAll('rect').length;
-    Radar.hist.AAA = { bars: D.map((d, i) => [d, 100 + i]), n: 90, last: D[89] }; anaMemo.clear();
-    sheetChart('AAA'); await wait(30);
-    const ok = $('#chSvg .cl') && !$('#chSvg rect'); closeSheet();
-    return ok ? true : 'pas de ligne de clôtures';
+    if (nR() !== 22) { closeSheet(); return '1 M : ' + nR(); }
+    $('[data-act="ch-tf"][data-tf="M"]').click(); await wait(30);
+    const m1 = lg(), months = new Set(D.map(d => d.slice(0, 7))).size;
+    if (!/SMA M3/.test(m1) || /SMA J5|SMA S10/.test(m1) || nR() !== Math.min(24, months)) { closeSheet(); return 'mensuel : ' + m1 + ' / ' + nR() + ' sur ' + months; }
+    const ok = /reconstruites/.test($('#chWrap').textContent) && /au-dessus du stop|sous le stop/.test($('.chh').textContent);
+    closeSheet();
+    return ok ? true : 'mention bougies reconstruites ou distance au stop absente';
   });
 
   reset(); tab = 'dash';
