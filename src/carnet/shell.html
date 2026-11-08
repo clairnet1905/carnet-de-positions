@@ -147,6 +147,10 @@ tr:last-child td{border-bottom:0}
 /* Positions */
 .pgrid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(310px,1fr))}
 .plist{display:grid;gap:8px}
+details.news{margin-top:2px} .newsl{display:grid;gap:2px;margin-top:6px}
+.newsi{display:grid;gap:2px;padding:8px 2px;border-top:1px solid var(--line);color:var(--ink);text-decoration:none;min-height:44px}
+.newsi:first-child{border-top:0} .newsi small{color:var(--muted)} .newsi span{font-size:.9rem;line-height:1.35}
+.divl{background:var(--surface-2);border-radius:10px;padding:8px 10px}
 .pmini{border:1px solid var(--line);border-left:4px solid var(--line);border-radius:12px;background:var(--surface)}
 .pmini.bad{border-left-color:var(--loss)} .pmini.meh{border-left-color:var(--warn)} .pmini.good{border-left-color:var(--gain)}
 .pmini>summary{list-style:none;display:flex;align-items:center;gap:10px;padding:10px 12px;min-height:48px;cursor:pointer}

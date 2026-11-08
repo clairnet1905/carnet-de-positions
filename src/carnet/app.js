@@ -1529,6 +1529,41 @@ function tonightPicks() {
   const all = [...best.values()].sort((a, b) => b.score - a.score || (a.x.date < b.x.date ? 1 : -1));
   return { top: all.slice(0, 5), n: all.length };
 }
+// ----- Dividendes à venir (calendrier Nasdaq lu par le robot) et actualités (Google News par le robot, Finnhub en direct) -----
+const DIV_DAYS = 10;
+const remT = t => S.lots.filter(l => l.ticker === t && !l.demo && !Core.lotState(l).closed).reduce((a, l) => a + Core.lotState(l).rem, 0);
+function divNext(t) { const R = Radar.robot, td = todayISO(); return R && R.divcal ? R.divcal.filter(x => x.t === t && x.ex >= td).sort((a, b) => a.ex < b.ex ? -1 : 1)[0] || null : null; }
+const divSoon = t => { const d = divNext(t); return d && Core.days(todayISO(), d.ex) <= DIV_DAYS ? d : null; };
+const dm = d => d.slice(8) + '/' + d.slice(5, 7);
+const NEWS_TIER = ['Reuters', 'Bloomberg', 'Wall Street Journal', 'WSJ', 'Financial Times', 'CNBC', 'Barron', 'MarketWatch', 'Associated Press', 'AP News', 'Investor’s Business Daily', "Investor's Business Daily", 'Yahoo'];
+const newsTier = s => { const i = NEWS_TIER.findIndex(x => (s || '').toLowerCase().includes(x.toLowerCase())); return i < 0 ? 99 : i; };
+const newsLive = {};
+function newsList(t) {
+  const seen = new Set(), all = ((Radar.robot && Radar.robot.news && Radar.robot.news[t]) || []).concat((newsLive[t] && newsLive[t].items) || []);
+  return all.filter(n => n.t && n.u && /^https:\/\//.test(n.u)).sort((a, b) => newsTier(a.s) - newsTier(b.s) || b.d - a.d)
+    .filter(n => { const k = n.t.toLowerCase().slice(0, 60); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 6).sort((a, b) => b.d - a.d);
+}
+function newsHTML(t) {
+  const L = newsList(t), when = d => { const x = new Date(d); return x.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }) + ' ' + x.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }); };
+  return L.length ? L.map(n => `<a class="newsi" href="${esc(n.u)}" target="_blank" rel="noopener noreferrer"><small>${esc(n.s || 'Source')} · ${when(n.d)}</small><span>${esc(n.t)}</span></a>`).join('')
+    : `<p class="hint" style="margin:0">${newsLive[t] && newsLive[t].busy ? 'Chargement…' : 'Aucune actualité ces 3 derniers jours.'}</p>`;
+}
+function newsCard(t) {
+  const d = divSoon(t), q = remT(t);
+  return `${d ? `<p class="smal divl">Dividende : détachement le <b>${fmtDate(d.ex)}</b>, ${usd(d.amt)} par action (≈ <b class="pos">${usd(d.amt * q, true)}</b> pour vous). Le cours baisse d’autant à l’ouverture.</p>` : ''}
+    <details class="more news" data-t="${esc(t)}"><summary>Actualités · 3 derniers jours</summary><div class="newsl" id="news-${esc(t)}">${newsHTML(t)}</div></details>`;
+}
+// Finnhub en direct (votre clé de cours), une fois par 30 minutes et par action, à l'ouverture des actualités.
+function loadNews(t) {
+  const k = quoteKey(), c = newsLive[t]; if (!k || (c && (c.busy || Date.now() - c.at < 1800000))) return;
+  newsLive[t] = { busy: true, at: Date.now(), items: c ? c.items : [] };
+  const to = todayISO(), from = addDays(to, -3);
+  fetch(`https://finnhub.io/api/v1/company-news?symbol=${encodeURIComponent(t)}&from=${from}&to=${to}&token=${encodeURIComponent(k)}`).then(r => r.ok ? r.json() : [])
+    .then(a => { newsLive[t] = { at: Date.now(), items: (Array.isArray(a) ? a : []).map(n => ({ t: n.headline, s: n.source, u: n.url, d: (n.datetime || 0) * 1000 })) }; })
+    .catch(() => { newsLive[t] = { at: Date.now(), items: [] }; })
+    .then(() => { const el = document.getElementById('news-' + t); if (el) el.innerHTML = newsHTML(t); });
+}
+document.addEventListener('toggle', e => { const d = e.target; if (d.open && d.matches && d.matches('details.news')) loadNews(d.dataset.t); }, true);
 function tonightCard() {
   if (!S.lots.some(l => !l.demo) && !S.watch.length) return '';
   const done = tnDone(), sr = S.watch.length ? stopRaises() : [], P = tonightPicks(), today = todayISO();
@@ -1558,6 +1593,7 @@ function tonightCard() {
     ${P.top.length ? picks + `<p class="hint">Croisements à la hausse non vus, hors positions déjà ouvertes, triés par note du Labo, résultats et secteur. ${P.n > P.top.length ? `Les ${P.n - P.top.length} autres et les alertes « proches » restent dans le radar. ` : ''}${light ? esc(light.label + ' : ' + light.txt) + '.' : ''}</p>` : '<p class="hint">Aucun nouveau croisement à la hausse.</p>'}
     <h3>3. Avant d’aller dormir</h3>
     <div class="tnr"><span>Résultats d’ici le ${fmtDate(nextD)} : ${earnT.length ? '<b>' + earnT.map(esc).join(', ') + '</b>' : 'aucun'}</span>${earnT.length ? '<button class="btn sm" data-act="go-tab" data-tab="earn">Voir</button>' : '<small>ok</small>'}</div>
+    ${(D => D.length ? `<div class="tnr"><span>Dividendes d’ici ${DIV_DAYS} jours : ${D.map(([t, d]) => `<b>${esc(t)}</b> ${dm(d.ex)} <span class="pos">${usd(d.amt * remT(t), true)}</span>`).join(' · ')}<br><small>le cours baisse d’autant à l’ouverture : pas une cassure</small></span><small>info</small></div>` : '')([...new Set(open.map(l => l.ticker))].map(t => [t, divSoon(t)]).filter(x => x[1]).sort((a, b) => a[1].ex < b[1].ex ? -1 : 1))}
     <div class="tnr"><span>Santé des données : ${H.length ? esc(H[0].title.replace(/<[^>]+>/g, '')) + (H.length > 1 ? ` <small>+ ${H.length - 1}</small>` : '') : 'tout est bon'}</span>${H.length ? '<button class="btn sm" data-act="go-health">Voir</button>' : '<small>ok</small>'}</div>
     ${S.lots.some(l => !l.demo) ? `<div class="tnr"><span>Historique MT5 : ${S.settings.mt5 && S.settings.mt5.upTo ? 'importé jusqu’au ' + fmtDate(S.settings.mt5.upTo) : 'jamais importé'}</span><button class="btn sm" data-act="mt5-import">Importer</button></div>` : ''}
     <div class="tnr"><span>Risque : ${over.length ? `<b class="neg">${esc(over.join(' · '))}</b>` : 'dans vos limites'}</span>${over.length ? '<button class="btn sm" data-act="risk-set">Limites</button>' : '<small>ok</small>'}</div>
@@ -2568,6 +2604,7 @@ function viewPos() {
       </div>
       ${swapT > 0.0049 ? (w => `<p class="swapl ${un > 0.5 && swapT / un * 100 >= swapWarnPct() ? 'hi' : ''}">Swap payé <b class="num">${usd(swapT)}</b>${w > 0 ? ` · ≈ <b class="num">${usd(w)}</b> par semaine` : ''}${un > 0.5 ? ` · ${fmtNum(swapT / un * 100, 0)} % du gain latent` : un < -0.5 ? ' · position en perte : le swap s’y ajoute' : ''}</p>`)(swapWeek(q, px == null ? avg : px)) : ''}
       ${(k => `<p class="smal">SMA de la position : ${k.length ? `<b>${k.map(smaLbl).join(' · ')}</b>` : '<span class="wrn">à choisir</span>'} <button class="btn sm" data-act="pos-sma" data-t="${esc(t)}">${k.length ? 'Modifier' : 'Choisir les SMA'}</button> <button class="btn sm" data-act="chart" data-t="${esc(t)}">Graphique</button></p>`)(posSmas(t))}
+      ${newsCard(t)}
       ${vs.map(v => lotDetails(v, false, vs.length === 1)).join('')}
     </article>`;
     return { t, html, dist: dist == null ? -1e9 : dist, un, expo, state, wait, sTf, stop, px, safe: stop != null && stop >= avg, unPct: q * avg > 0 ? un / (q * avg) * 100 : 0, lastD: last ? last.date : null, q: (t + ' ' + vs.map(v => v.lot.note || '').join(' ')).toLowerCase() };
@@ -2583,7 +2620,8 @@ function viewPos() {
   const pRow = c => {
     const k = 'p:' + c.t, o = radarOpen.has(k); radarFns[k] = c.html;
     const below = c.stop != null && c.px != null && c.px <= c.stop;
-    const pill = c.wait ? `<span class="pill earn">sous le stop · ${esc(stopWaitLbl(c.sTf, c.lastD))}</span>` : c.state === 'danger' ? `<span class="pill loss">${c.stop == null ? 'Sans stop' : 'Stop atteint'}</span>` : c.safe ? '<span class="pill win">Sans risque</span>' : '';
+    const dv = divSoon(c.t), dvp = dv ? `<span class="pill earn">div. ${dm(dv.ex)}</span>` : '';
+    const pill = dvp + (c.wait ? `<span class="pill earn">sous le stop · ${esc(stopWaitLbl(c.sTf, c.lastD))}</span>` : c.state === 'danger' ? `<span class="pill loss">${c.stop == null ? 'Sans stop' : 'Stop atteint'}</span>` : c.safe ? '<span class="pill win">Sans risque</span>' : '');
     const bc = below || c.stop == null ? 'bad' : c.safe ? 'good' : c.dist < 2 ? 'meh' : '';
     const w = below || c.stop == null ? 4 : Math.max(4, Math.min(100, c.dist * 10));
     return `<details class="pmini ${bc}" data-lazy="${k}" data-q="${esc(c.q)}" ${o ? 'open' : ''}><summary>
@@ -3283,7 +3321,7 @@ const mt5SnapDate = rep => !rep.gen ? rep.to : lastWeekday(wdOf(rep.gen.date) >=
 function mt5Diff(rep, since) {
   const real = S.lots.filter(l => !l.demo), have = new Set(real.map(l => l.ticker));
   const tk = sym => { if (have.has(sym)) return sym; const b = Core.mt5Ticker(sym); return b; };
-  const out = [], ign = new Set(), used = new Set(), pend = {}, lotSw = new Map(), simRem = {}, cnt = { sellOk: 0, buyOk: 0, divOk: 0, opOk: 0, openOk: 0 };
+  const out = [], ign = new Set(), used = new Set(), pend = {}, lotSw = new Map(), simRem = {}, cnt = { pxOk: 0, sellOk: 0, buyOk: 0, divOk: 0, opOk: 0, openOk: 0 };
   const dd = (a, b) => Math.abs(Core.days(a, b)), px = (a, b) => Math.abs(a - b) <= Math.max(0.011, b * 0.005);
   const L = id => (st => st.lots.find(l => l.id === id));
   const deals = rep.deals.filter(d => d.date > since);
@@ -3374,6 +3412,13 @@ function mt5Diff(rep, since) {
       out.push({ g: 'open', txt: `<b>${esc(t)}</b> : prix d’entrée ${usd(A[0][0].price)} → <b>${usd(v)}</b> (MT5)`, on: false, fix: st => { L(id)(st).price = v; } });
     } else cnt.openOk++;
   }
+  // Contrôle des cours : dernier cours de l'app contre le cours MT5 du rapport (écart au-delà de 0,5 %).
+  for (const t of Object.keys(mt)) {
+    const P = mt[t], mkt = P[0].mkt, lp = Core.lastPrice(S.prices, t, D); if (!(mkt > 0) || !lp || !appOpen[t]) continue;
+    if (Math.abs(lp.price - mkt) / mkt <= 0.005) { cnt.pxOk++; continue; }
+    out.push({ g: 'px', txt: `<b>${esc(t)}</b> : app ${usd(lp.price)} (${fmtDate(lp.date)}) · MT5 <b>${usd(mkt)}</b> <small>écart ${pct((lp.price - mkt) / mkt * 100, true)}</small>`, on: false,
+      fix: st => { const h = st.prices[t] = (st.prices[t] || []).filter(x => x.date !== D); h.push({ date: D, price: mkt, src: 'mt5' }); h.sort((a, b) => a.date < b.date ? -1 : 1); } });
+  }
   // Swap réel des positions ouvertes : swap de la position + swap déjà pris sur ses ventes partielles.
   if (rep.open.length) {
     const bk = swapBook(D), fix = [];
@@ -3402,7 +3447,7 @@ function mt5AppAcct(st, D, rep) {
   return { bal: a.equity - a.unreal - rep.open.reduce((x, p) => x + p.swap, 0), eq: a.equity, margin: a.margin };
 }
 let mt5Cur = null;
-const MT5_G = [['sell', 'Ventes absentes de l’app'], ['buy', 'Achats absents de l’app'], ['div', 'Dividendes'], ['op', 'Autres opérations du compte'], ['fee', 'Commissions réelles'], ['swap', 'Swap réel'], ['open', 'Positions ouvertes'], ['acct', 'Compte']];
+const MT5_G = [['sell', 'Ventes absentes de l’app'], ['buy', 'Achats absents de l’app'], ['div', 'Dividendes'], ['op', 'Autres opérations du compte'], ['fee', 'Commissions réelles'], ['swap', 'Swap réel'], ['open', 'Positions ouvertes'], ['px', 'Cours de clôture (MT5)'], ['acct', 'Compte']];
 function mt5Render(form) {
   const box = $('#mt5Diff'); if (!box || !mt5Cur) return;
   const since = F(form, 'since') || mt5Since();
@@ -3414,7 +3459,7 @@ function mt5Render(form) {
   const st = JSON.parse(JSON.stringify({ lots: S.lots, flows: S.flows, snapshots: S.snapshots, prices: S.prices, settings: S.settings }));
   for (const i of pick) d.out[i].fix(st);
   const A = mt5AppAcct(st, d.D, rep), c = d.cnt;
-  const ok = { sell: c.sellOk && `${c.sellOk} déjà dans l’app`, buy: c.buyOk && `${c.buyOk} déjà dans l’app`, div: c.divOk && `${c.divOk} déjà dans l’app`, op: c.opOk && `${c.opOk} déjà dans l’app`, open: c.openOk && `${c.openOk} identiques` };
+  const ok = { sell: c.sellOk && `${c.sellOk} déjà dans l’app`, buy: c.buyOk && `${c.buyOk} déjà dans l’app`, div: c.divOk && `${c.divOk} déjà dans l’app`, op: c.opOk && `${c.opOk} déjà dans l’app`, open: c.openOk && `${c.openOk} identiques`, px: c.pxOk && `${c.pxOk} cours identiques à MT5 (écart ≤ 0,5 %)` };
   const row = (x, i) => `<div class="tnr"><span>${x.txt}</span>${x.fix ? `<input type="checkbox" name="mt5i" value="${i}" ${mt5Cur.off.has(i) ? '' : 'checked'} aria-label="Appliquer">` : x.lot ? `<button type="button" class="btn sm" data-act="open-lot" data-lot="${x.lot}">Voir</button>` : '<small>à vérifier</small>'}</div>`;
   const gap = (a, b) => Math.abs(a - b) < 0.015 ? '<span class="pill win">ok</span>' : `<span class="pill warn">écart ${usd(a - b, true)}</span>`;
   box.innerHTML = MT5_G.map(([g, lab]) => { const xs = d.out.map((x, i) => [x, i]).filter(([x]) => x.g === g); if (!xs.length && !ok[g]) return '';
