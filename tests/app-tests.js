@@ -231,6 +231,34 @@ window.__appTests = async function () {
     return Math.abs(A.bal - 1055.29) < 0.006 && near(fl.amount, 10.1, 0.006) ? true : 'solde après ' + A.bal + ' rattrapage ' + fl.amount;
   });
 
+  await t('Radar allégé : « À traiter » par défaut, baisses non détenues repliées, une ligne par action, par paquets de 30', async () => {
+    const D = days(60);
+    try { localStorage.removeItem(SEEN_KEY); } catch (e) {}
+    Radar.hist.AAA = { bars: D.map((d, i) => [d, i < 58 ? 120 + i : 100]) };
+    Radar.hist.BBB = { bars: D.map((d, i) => [d, i < 58 ? 100 : 120]) };
+    Radar.hist.CCC = { bars: D.map((d, i) => [d, i < 58 ? 120 + i : 100]) };
+    S.watch = [{ id: 'wa', ticker: 'AAA', period: 5, tf: 'D', sym: '' }, { id: 'wb', ticker: 'BBB', period: 5, tf: 'D', sym: '' }, { id: 'wc', ticker: 'CCC', period: 5, tf: 'D', sym: '' }];
+    for (let k = 0; k < 35; k++) { const t = 'Z' + String(k).padStart(2, '0'); Radar.hist[t] = { bars: D.map((d, i) => [d, 100 + i]) }; S.watch.push({ id: 'z' + k, ticker: t, period: 5, tf: 'D', sym: '' }); }
+    S.lots = [lot({ ticker: 'AAA', price: 110, stopInitial: 90, stopCurrent: 90 })]; S.prices.AAA = [{ date: D[59], price: 100 }];
+    radarFilter = 'todo'; radarQuery = ''; tab = 'radar'; render(); await wait(50);
+    const v = $('#rlist'); if (!v || !v.querySelector('.todo')) return 'vue À traiter absente';
+    const tx = v.textContent.replace(/\s+/g, ' ');
+    if (!/Vos positions · 1.*AAA/.test(tx) || !/Hausses à étudier · 1.*BBB/.test(tx) || !/Baisses sur actions non détenues · 1/.test(tx)) return 'sections : ' + tx.slice(0, 300);
+    const dn = v.querySelector('details[data-lazy="downs"]'); if (dn.querySelector('.lazy').innerHTML) return 'baisses non repliées';
+    dn.open = true; await wait(50); if (!/CCC/.test(dn.textContent)) return 'contenu des baisses non chargé à l’ouverture';
+    $('[data-act="radar-seen-downs"]').click(); await wait(50);
+    if (/Baisses sur actions non détenues/.test($('#rlist').textContent)) return 'baisses non marquées vues';
+    $('[data-act="radar-filter"][data-f="all"]').click(); await wait(50);
+    const rows = $('#rlist').querySelectorAll('details.rmini'); if (rows.length !== 30) return 'Toutes : ' + rows.length + ' lignes';
+    if (rows[0].querySelector('.lazy').innerHTML) return 'carte construite avant ouverture';
+    rows[0].open = true; await wait(50); if (!rows[0].querySelector('.rrow')) return 'carte non construite à l’ouverture';
+    $('[data-act="radar-more"]').click(); await wait(50);
+    if ($('#rlist').querySelectorAll('details.rmini').length !== 38) return 'Afficher plus : ' + $('#rlist').querySelectorAll('details.rmini').length;
+    const q = $('#radar-q'); q.value = 'bbb'; q.dispatchEvent(new Event('input', { bubbles: true })); await wait(50);
+    const n = $('#rlist').querySelectorAll('details.rmini').length; radarQuery = ''; radarFilter = 'todo';
+    return n === 1 ? true : 'recherche : ' + n;
+  });
+
   await t('Graphique : bougies du robot, SMA, stop et ventes ; clôtures sans bougies', async () => {
     const D = days(90);
     const u = unpackHist({ s: D[0], o: D.map((d, i) => i ? Core.days(D[i - 1], d) : 0), c: D.map((d, i) => 100 + i), n: 90, x: D.slice(-70).flatMap(() => [-50, 120, -130]), xn: 70 });
