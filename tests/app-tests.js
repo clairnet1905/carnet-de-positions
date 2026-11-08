@@ -303,6 +303,28 @@ window.__appTests = async function () {
     setPart = 'acct'; return ok ? true : 'enregistrement ' + JSON.stringify(S.settings.ntfy);
   });
 
+  await t('Dividendes à venir dans Ce soir et sur la position, actualités du robot dans la carte, contrôle des cours MT5', async () => {
+    const keep = Radar.robot, td = todayISO();
+    Radar.robot = { divcal: [{ t: 'AAA', ex: addDays(td, 2), amt: 0.5, pay: addDays(td, 20) }], news: { AAA: [{ t: 'Titre Reuters', s: 'Reuters', u: 'https://example.com/a', d: Date.now() - 3600e3 }, { t: 'Titre blog', s: 'Blog', u: 'https://example.com/b', d: Date.now() }] } };
+    S.lots = [lot({ id: 'n1' })]; S.prices.AAA = [{ date: days(2)[1], price: 105 }];
+    tab = 'dash'; render();
+    const tn = $('#tonight') ? $('#tonight').textContent.replace(/\s+/g, ' ') : '';
+    if (!/Dividendes d’ici 10 jours : AAA .* \+5,00/.test(tn)) { Radar.robot = keep; return 'Ce soir : ' + tn.slice(-300); }
+    posFilter = 'all'; tab = 'pos'; render();
+    const row = document.querySelector('details.pmini'); if (!/div\. /.test(row.textContent)) { Radar.robot = keep; return 'étiquette div. absente'; }
+    row.open = true; await wait(50);
+    const nl = row.querySelector('.newsl'), links = nl ? [...nl.querySelectorAll('a.newsi')] : [];
+    const ok = links.length === 2 && links[0].href === 'https://example.com/b' && links[0].target === '_blank' && /Dividende : détachement/.test(row.textContent);
+    Radar.robot = keep;
+    if (!ok) return 'actualités ' + links.length;
+    const rep = { acct: '1', gen: null, from: '2026-10-01', to: '2026-10-07', deals: [], ops: [], sum: {}, open: [{ date: '2026-10-01', time: '', pos: '9', sym: 'AAA.NYSE', type: 'buy', vol: 10, price: 100, mkt: 110, swap: 0, profit: 100 }] };
+    S.prices.AAA = [{ date: '2026-10-07', price: 100 }];
+    const d = mt5Diff(rep, '2026-10-01'), px = d.out.find(x => x.g === 'px');
+    if (!px || px.on) return 'contrôle des cours absent ou coché d’office';
+    const st = JSON.parse(JSON.stringify({ prices: S.prices })); px.fix(st);
+    return st.prices.AAA.some(x => x.price === 110 && x.src === 'mt5') ? true : 'cours MT5 non repris';
+  });
+
   await t('Graphique : bougies du robot, SMA, stop et ventes ; clôtures sans bougies', async () => {
     const D = days(90);
     const u = unpackHist({ s: D[0], o: D.map((d, i) => i ? Core.days(D[i - 1], d) : 0), c: D.map((d, i) => 100 + i), n: 90, x: D.slice(-70).flatMap(() => [-50, 120, -130]), xn: 70 });
