@@ -337,6 +337,7 @@ window.__appTests = async function () {
     if (a.length !== 2) return 'liens ' + a.length;
     const ok = /Trois points à retenir/.test(a[0].textContent) && /Résumé : La direction maintient/.test(a[0].textContent) && a[0].querySelector('.news-en').textContent === 'Three takeaways from the call'
       && /L’action recule/.test(a[1].textContent) && /Shares fall/.test(a[1].querySelector('.news-en').textContent) && /Traduction automatique/.test(txt)
+      && isQuotePage('ACN Nov 2026 257.500 call (ACN261106C00257500) stock price, news, quote and history') && isQuotePage('Accenture PLC Cl A ACN (Chile: Santiago)') && !isQuotePage('Starbucks to cut 900 jobs | Reuters')
       && cutSum('Short') === '' && cutSum('One. Two. Three.'.repeat(1) + ' Padding text here.') === 'One. Two.';
     return ok ? true : txt.slice(0, 300);
   });
