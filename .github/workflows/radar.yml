@@ -40,5 +40,6 @@ jobs:
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
           TWELVEDATA_KEY: ${{ secrets.TWELVEDATA_KEY }}
           FINNHUB_KEY: ${{ secrets.FINNHUB_KEY }}
+          MASSIVE_KEY: ${{ secrets.MASSIVE_KEY }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           TEST_PUSH: ${{ github.event_name == 'workflow_dispatch' && inputs.test }}
