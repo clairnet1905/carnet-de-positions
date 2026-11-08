@@ -347,6 +347,25 @@ const rss = x => [...x.matchAll(/<item>([\s\S]*?)<\/item>/g)].map(m => {
   return { t: title, s: src, u: xmlTxt((it.match(/<link>([\s\S]*?)<\/link>/) || [])[1]), d: new Date(xmlTxt((it.match(/<pubDate>([\s\S]*?)<\/pubDate>/) || [])[1])).getTime() || 0 };
 }).filter(n => n.t && n.u);
 const gnews = q => get('https://news.google.com/rss/search?q=' + encodeURIComponent(q) + '&hl=en-US&gl=US&ceid=US:en').then(r => r.ok ? r.text() : '').then(rss).catch(() => []);
+// Pages de cotation (graphiques, cours, places étrangères) : ce ne sont pas des articles.
+const QUOTE_PAGE = /Stock (Price|Quote)|Stock Forecasts?|Price Target History|Advanced Charts?|Interactive Chart|Historical (Prices|Data)|Options Chain|Company Profile|Key Statistics|\|\s*[A-Z.]{1,8}(US)?\s*$|\((\w[\w ]*): ?[\w .-]+\)\s*$|\bCl [A-Z]\b/;
+// Traduction automatique en français (service Google gratuit, sans clé). Titres publics seulement ; en cas d'échec on garde l'anglais.
+async function toFr(list) {
+  const out = list.map(() => null);
+  let i = 0;
+  while (i < list.length) {
+    const idx = []; let len = 0;
+    while (i < list.length && (len + list[i].length < 1200 || !idx.length)) { idx.push(i); len += list[i].length + 1; i++; }
+    const q = idx.map(k => list[k].replace(/\n/g, ' ')).join('\n');
+    try {
+      const j = await get('https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=fr&dt=t&q=' + encodeURIComponent(q), { 'User-Agent': UA['User-Agent'] }).then(r => r.ok ? r.json() : null);
+      const lines = j && Array.isArray(j[0]) ? j[0].map(x => x && x[0] || '').join('').split('\n').map(x => x.trim()) : [];
+      if (lines.length === idx.length) idx.forEach((k, n) => { if (lines[n]) out[k] = lines[n]; });
+    } catch (e) { }
+    await sleep(400);
+  }
+  return out;
+}
 const names = R.names || {};
 let news = R.news || {}, newsAt = R.newsAt || 0;
 const byHand = process.env.GITHUB_EVENT_NAME === 'workflow_dispatch';
@@ -364,12 +383,20 @@ if (byHand || Date.now() - newsAt > 3 * 3600e3) {
       const rel = n => (word && n.t.toLowerCase().includes(word.toLowerCase())) || new RegExp('\\b' + t.replace('.', '\\.') + '\\b').test(n.t);
       const prem = await gnews((nm ? `"${nm}"` : `${t} stock`) + ' ' + PREMIUM + ' when:7d'); await sleep(300);
       const gen = await gnews((nm ? `"${nm}" OR ${t} stock` : `${t} stock`) + ' when:3d'); await sleep(300);
-      const seen = new Set(), keep = prem.concat(gen).filter(n => rel(n) && !/Stock (Price|Quote)|Stock Forecasts?|Price Target History/i.test(n.t)).sort((a, b) => tierOf(a.s) - tierOf(b.s) || b.d - a.d)
+      const seen = new Set(), keep = prem.concat(gen).filter(n => rel(n) && !QUOTE_PAGE.test(n.t)).sort((a, b) => tierOf(a.s) - tierOf(b.s) || b.d - a.d)
         .filter(n => { const k = n.t.toLowerCase().slice(0, 60); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 5);
       if (keep.length) { news[t] = keep.sort((a, b) => b.d - a.d); newsN += keep.length; }
     } catch (e) { log('Actualités ' + t + ' : ' + e.message); }
   }
   newsAt = Date.now();
+  // Titres déjà traduits au passage précédent : on les réutilise.
+  const known = {}; for (const a of Object.values(R.news || {})) for (const n of a) if (n.f) known[n.t] = n.f;
+  const todo = []; for (const a of Object.values(news)) for (const n of a) { if (known[n.t]) n.f = known[n.t]; else if (!todo.includes(n.t)) todo.push(n.t); }
+  if (todo.length) {
+    const fr = await toFr(todo), by = {}; todo.forEach((t, k) => { if (fr[k]) by[t] = fr[k]; });
+    for (const a of Object.values(news)) for (const n of a) if (!n.f && by[n.t] && by[n.t] !== n.t) n.f = by[n.t];
+    log(`Traduction : ${Object.keys(by).length}/${todo.length} titre(s) traduits en français`);
+  }
   log(`Actualités : ${newsN} titre(s) pour ${Object.keys(news).length} position(s) · ${Object.values(news).flat().filter(n => tierOf(n.s) < 7).length} de Reuters, Bloomberg, WSJ, FT, CNBC, Barron’s ou MarketWatch`);
 }
 // Dividendes : Massive (ex-Polygon, clé gratuite facultative MASSIVE_KEY), sinon calendrier Nasdaq (souvent refusé aux serveurs de GitHub).
