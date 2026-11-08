@@ -152,7 +152,7 @@ cut('// ---------- Démarrage ----------', '\x00' if False else '})();\n', '''//
 (function boot() {
   const local = readLocal();
   if (local) S = normalize(local);
-  try { const h = location.hash.slice(1); if (['dash', 'calc', 'pos', 'radar', 'set', 'lab', 'earn'].includes(h)) tab = h; } catch (e) {}
+  try { const h = location.hash.slice(1); if (['dash', 'calc', 'pos', 'radar', 'ana', 'set', 'lab', 'earn'].includes(h)) tab = h; } catch (e) {}
   Store.cfg = readJSON(SYNC_KEY, null);
   if (!local) { loadDemo(); S.updatedAt = 0; writeLocal(); }
   migrateSeen();
@@ -160,7 +160,7 @@ cut('// ---------- Démarrage ----------', '\x00' if False else '})();\n', '''//
   migrateIdx();
   render();
   if (Store.cfg) { setSync('saving'); syncNow(); } else setSync('local');
-  window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (['dash', 'calc', 'pos', 'radar', 'set', 'lab', 'earn'].includes(h) && h !== tab) { tab = h; render(); window.scrollTo(0, 0); } });
+  window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (['dash', 'calc', 'pos', 'radar', 'ana', 'set', 'lab', 'earn'].includes(h) && h !== tab) { tab = h; render(); window.scrollTo(0, 0); } });
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   // Cours automatiques : à l'ouverture, au retour sur l'app, puis toutes les 2 minutes pendant la séance.
   refreshQuotes();
