@@ -1538,9 +1538,12 @@ const dm = d => d.slice(8) + '/' + d.slice(5, 7);
 const NEWS_TIER = ['Reuters', 'Bloomberg', 'Wall Street Journal', 'WSJ', 'Financial Times', 'CNBC', 'Barron', 'MarketWatch', 'Associated Press', 'AP News', 'Investor’s Business Daily', "Investor's Business Daily", 'Yahoo'];
 const newsTier = s => { const i = NEWS_TIER.findIndex(x => (s || '').toLowerCase().includes(x.toLowerCase())); return i < 0 ? 99 : i; };
 const newsLive = {};
+// Pages de cotation (cours, graphiques, options, places étrangères) : ce ne sont pas des articles.
+const QUOTE_I = /stock (price|quote)|quote and history|interactive (stock )?chart|advanced charts?|stock forecasts?|price target history|historical (prices|data)|options chain|key statistics|\((?:[A-Z]{1,6}\d{6}[CP]\d{8})\)/i, QUOTE_C = /\|\s*[A-Z.]{1,8}(US)?\s*$|\((\w[\w ]*): ?[\w .-]+\)\s*$|\bCl [A-Z]\b/;
+const isQuotePage = t => QUOTE_I.test(t) || QUOTE_C.test(t);
 function newsList(t) {
   const seen = new Set(), all = ((Radar.robot && Radar.robot.news && Radar.robot.news[t]) || []).concat((newsLive[t] && newsLive[t].items) || []);
-  return all.filter(n => n.t && n.u && /^https:\/\//.test(n.u)).sort((a, b) => newsTier(a.s) - newsTier(b.s) || b.d - a.d)
+  return all.filter(n => n.t && n.u && /^https:\/\//.test(n.u) && !isQuotePage(n.t)).sort((a, b) => newsTier(a.s) - newsTier(b.s) || b.d - a.d)
     .filter(n => { const k = n.t.toLowerCase().slice(0, 60); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 6).sort((a, b) => b.d - a.d);
 }
 function newsHTML(t) {
