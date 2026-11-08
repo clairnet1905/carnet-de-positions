@@ -2,7 +2,7 @@ import os, sys, shutil, json
 from PIL import Image, ImageDraw
 
 B = sys.argv[1]; OUT = sys.argv[2]
-VERSION = '1.57.0'
+VERSION = '1.58.0'
 os.makedirs(OUT, exist_ok=True)
 shell = open(os.path.join(B, 'carnet', 'shell.html'), encoding='utf-8').read()
 shell = shell.replace('<meta name="claude:viewport-fit-sides" content="cover">\n', '')
