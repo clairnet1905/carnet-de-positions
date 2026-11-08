@@ -186,7 +186,7 @@ window.__appTests = async function () {
     let card = $('#tonight'); if (!card) return 'carte absente';
     if (card.querySelectorAll('[data-act="tn-hit"]').length !== 1 || !/2 sous le stop/.test(card.textContent)) return 'Ce soir : ' + card.textContent.replace(/\s+/g, ' ').slice(0, 200);
     tab = 'pos'; render();
-    if (!/Sous le stop · clôture mensuelle/.test($('#view').textContent)) return 'carte position MMM';
+    if (!/sous le stop · fin /.test($('#view').textContent)) return 'ligne position MMM';
     S.prices.MMM = [{ date: m, price: 85 }]; tab = 'dash'; render(); card = $('#tonight');
     if (card.querySelectorAll('[data-act="tn-hit"]').length !== 2) return 'fin de mois : MMM absent';
     card.querySelector('[data-act="tn-hit"]').click(); await wait(100);
@@ -257,6 +257,24 @@ window.__appTests = async function () {
     const q = $('#radar-q'); q.value = 'bbb'; q.dispatchEvent(new Event('input', { bubbles: true })); await wait(50);
     const n = $('#rlist').querySelectorAll('details.rmini').length; radarQuery = ''; radarFilter = 'todo';
     return n === 1 ? true : 'recherche : ' + n;
+  });
+
+  await t('Positions compactes : une ligne par action triée par distance au stop, carte construite à l’ouverture, une seule ouverte', async () => {
+    const D = days(5);
+    S.lots = [lot({ id: 'p1', ticker: 'AAA', price: 100, stopCurrent: 90 }), lot({ id: 'p2', ticker: 'BBB', price: 100, stopCurrent: 105 }), lot({ id: 'p3', ticker: 'CCC', price: 100, stopCurrent: 98 })];
+    S.prices.AAA = [{ date: D[4], price: 120 }]; S.prices.BBB = [{ date: D[4], price: 130 }]; S.prices.CCC = [{ date: D[4], price: 99 }];
+    posFilter = 'all'; posSort = 'risk'; tab = 'pos'; render(); await wait(50);
+    const rows = [...document.querySelectorAll('details.pmini')];
+    if (rows.length !== 3 || document.querySelector('.pcard')) return 'lignes ' + rows.length + (document.querySelector('.pcard') ? ' (carte déjà construite)' : '');
+    if (rows[0].querySelector('.tk').textContent !== 'CCC' || rows.map(r => r.querySelector('.tk').textContent).join(',') !== 'CCC,BBB,AAA' || !rows[1].querySelector('.pill.win')) return 'tri ou « sans risque » : ' + rows.map(r => r.querySelector('.tk').textContent).join(',');
+    rows[0].open = true; await wait(50); if (!rows[0].querySelector('.pcard')) return 'carte non construite';
+    rows[1].open = true; await wait(50); if (rows[0].open) return 'deux cartes ouvertes';
+    $('[data-act="pfilter"][data-f="safe"]').click(); await wait(50);
+    if (document.querySelectorAll('details.pmini').length !== 1) return 'filtre sans risque';
+    $('[data-act="pfilter"][data-f="all"]').click(); await wait(50);
+    tab = 'dash'; render(); const ob = document.createElement('button'); ob.dataset.act = 'open-lot'; ob.dataset.lot = 'p1'; document.body.appendChild(ob); ob.click(); ob.remove(); await wait(100);
+    const o = document.querySelector('details.pmini[open]');
+    return o && o.querySelector('.tk').textContent === 'AAA' && o.querySelector('.pcard') ? true : 'Voir une position depuis une alerte';
   });
 
   await t('Graphique : bougies du robot, SMA, stop et ventes ; clôtures sans bougies', async () => {
