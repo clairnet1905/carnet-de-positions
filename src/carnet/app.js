@@ -1545,7 +1545,9 @@ function newsList(t) {
 }
 function newsHTML(t) {
   const L = newsList(t), when = d => { const x = new Date(d); return x.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }) + ' ' + x.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }); };
-  return L.length ? L.map(n => `<a class="newsi" href="${esc(n.u)}" target="_blank" rel="noopener noreferrer"><small>${esc(n.s || 'Source')} · ${when(n.d)}</small><span>${esc(n.t)}</span></a>`).join('')
+  return L.length ? L.map(n => { const f = n.f || trCache[n.t], fs = n.x && (n.fs || trCache[n.x]);
+    return `<a class="newsi" href="${esc(n.u)}" target="_blank" rel="noopener noreferrer"><small>${esc(n.s || 'Source')} · ${when(n.d)}</small><span>${esc(f || n.t)}</span>${fs ? `<span class="news-sum"><em>Résumé :</em> ${esc(fs)}</span>` : ''}${f && f !== n.t ? `<small class="news-en">${esc(n.t)}</small>` : ''}</a>`; }).join('')
+      + (L.some(n => n.f || trCache[n.t]) ? '<p class="hint" style="margin:4px 0 0">Traduction automatique · le titre anglais reste dessous.</p>' : '')
     : `<p class="hint" style="margin:0">${newsLive[t] && newsLive[t].busy ? 'Chargement…' : 'Aucune actualité ces 3 derniers jours.'}</p>`;
 }
 function newsCard(t) {
@@ -1559,9 +1561,30 @@ function loadNews(t) {
   newsLive[t] = { busy: true, at: Date.now(), items: c ? c.items : [] };
   const to = todayISO(), from = addDays(to, -3);
   fetch(`https://finnhub.io/api/v1/company-news?symbol=${encodeURIComponent(t)}&from=${from}&to=${to}&token=${encodeURIComponent(k)}`).then(r => r.ok ? r.json() : [])
-    .then(a => { newsLive[t] = { at: Date.now(), items: (Array.isArray(a) ? a : []).map(n => ({ t: n.headline, s: n.source, u: n.url, d: (n.datetime || 0) * 1000 })) }; })
+    .then(a => { newsLive[t] = { at: Date.now(), items: (Array.isArray(a) ? a : []).map(n => ({ t: n.headline, s: n.source, u: n.url, d: (n.datetime || 0) * 1000, x: cutSum(n.summary) })) }; })
     .catch(() => { newsLive[t] = { at: Date.now(), items: [] }; })
+    .then(() => { const el = document.getElementById('news-' + t); if (el) el.innerHTML = newsHTML(t); })
+    .then(() => { const L = newsList(t), need = []; for (const n of L) { if (!n.f && !trCache[n.t]) need.push(n.t); if (n.x && !n.fs && !trCache[n.x]) need.push(n.x); } return trFr(need); })
     .then(() => { const el = document.getElementById('news-' + t); if (el) el.innerHTML = newsHTML(t); });
+}
+// Résumé Finnhub : 2 phrases au plus, 280 caractères (vide s'il répète le titre).
+function cutSum(x) {
+  x = String(x || '').replace(/\s+/g, ' ').trim(); if (x.length < 25) return '';
+  const p = x.match(/[^.!?]+[.!?]+/g) || [x]; let o = p.slice(0, 2).join('').trim(); if (o.length > 280) o = o.slice(0, 277).replace(/\s\S*$/, '') + '…';
+  return o;
+}
+// Traduction automatique en français (service Google gratuit, sans clé) : titres et résumés publics seulement, gardés en mémoire.
+const trCache = {};
+function trFr(list) {
+  list = [...new Set(list.filter(x => x && !trCache[x]))]; if (!list.length) return Promise.resolve();
+  const chunks = []; let cur = [], len = 0;
+  for (const x of list) { if (cur.length && len + x.length > 1200) { chunks.push(cur); cur = []; len = 0; } cur.push(x); len += x.length + 1; }
+  chunks.push(cur);
+  return Promise.all(chunks.map(c => fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=fr&dt=t&q=' + encodeURIComponent(c.map(x => x.replace(/\n/g, ' ')).join('\n')))
+    .then(r => r.ok ? r.json() : null).then(j => {
+      const lines = j && Array.isArray(j[0]) ? j[0].map(x => x && x[0] || '').join('').split('\n').map(x => x.trim()) : [];
+      if (lines.length === c.length) c.forEach((x, i) => { if (lines[i]) trCache[x] = lines[i]; });
+    }).catch(() => {})));
 }
 document.addEventListener('toggle', e => { const d = e.target; if (d.open && d.matches && d.matches('details.news')) loadNews(d.dataset.t); }, true);
 function tonightCard() {
