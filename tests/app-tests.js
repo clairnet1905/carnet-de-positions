@@ -325,6 +325,22 @@ window.__appTests = async function () {
     return st.prices.AAA.some(x => x.price === 110 && x.src === 'mt5') ? true : 'cours MT5 non repris';
   });
 
+  await t('Actualités en français : titre traduit, anglais dessous, résumé traduit', async () => {
+    const keep = Radar.robot, keepL = newsLive.ZZZ;
+    Radar.robot = { news: { ZZZ: [{ t: 'Shares fall as clients delay projects', f: 'L’action recule, les clients repoussent leurs projets', s: 'Reuters', u: 'https://example.com/r', d: Date.now() - 7200e3 }] } };
+    newsLive.ZZZ = { at: Date.now(), items: [{ t: 'Three takeaways from the call', s: 'Yahoo', u: 'https://example.com/y', d: Date.now(), x: 'Management kept its targets. Big deals slow next quarter.' }] };
+    trCache['Three takeaways from the call'] = 'Trois points à retenir de la conférence';
+    trCache['Management kept its targets. Big deals slow next quarter.'] = 'La direction maintient ses objectifs. Les grands contrats ralentissent.';
+    const box = document.createElement('div'); box.innerHTML = newsHTML('ZZZ');
+    Radar.robot = keep; if (keepL) newsLive.ZZZ = keepL; else delete newsLive.ZZZ;
+    const a = [...box.querySelectorAll('a.newsi')], txt = box.textContent;
+    if (a.length !== 2) return 'liens ' + a.length;
+    const ok = /Trois points à retenir/.test(a[0].textContent) && /Résumé : La direction maintient/.test(a[0].textContent) && a[0].querySelector('.news-en').textContent === 'Three takeaways from the call'
+      && /L’action recule/.test(a[1].textContent) && /Shares fall/.test(a[1].querySelector('.news-en').textContent) && /Traduction automatique/.test(txt)
+      && cutSum('Short') === '' && cutSum('One. Two. Three.'.repeat(1) + ' Padding text here.') === 'One. Two.';
+    return ok ? true : txt.slice(0, 300);
+  });
+
   await t('Graphique : bougies du robot, SMA, stop et ventes ; clôtures sans bougies', async () => {
     const D = days(90);
     const u = unpackHist({ s: D[0], o: D.map((d, i) => i ? Core.days(D[i - 1], d) : 0), c: D.map((d, i) => 100 + i), n: 90, x: D.slice(-70).flatMap(() => [-50, 120, -130]), xn: 70 });
