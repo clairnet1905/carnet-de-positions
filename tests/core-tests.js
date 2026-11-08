@@ -1,6 +1,7 @@
 // Tests du moteur de calcul (src/carnet/core.js) : données fixes, résultat connu d'avance.
 // Sans dépendance : tourne avec Node (GitHub Actions) comme avec n'importe quel moteur JavaScript.
 // coreTests(Core) renvoie [{ name, ok, msg }].
+const MT5_SAMPLE = "Rapport d'historique de trading\nCompte: 1234567 (USD, Demo-MT5, real, Hedge)\nDate: 2026.11.08 08:41\nPositions\nHeure Position Symbole Type Volume Prix S / L T / P Heure Prix Commission Echange Profit\n2026.10.01 16:35:00 8000001 AAA.NYSE buy 4 / 10 100.00 2026.10.05 16:35:00 110.00 -0.04 -0.10 40.00\nTransactions\nHeure Op\u00e9ration Symbole Type Direction Volume Prix Ordre Commission Frais Echange Profit Solde Commentaire\n2026.10.01 16:35:00 9000001 AAA.NYSE buy in 10 100.00 8000001 -0.02 0.00 0.00 0.00 999.98\n2026.10.02 00:20:00 9000002 dividend in 0 0.00 0.00 0.00 0.00 1.50 1 001.48 Dividend 8000001 AAA.NYSE\n2026.10.05 16:35:00 9000003 AAA.NYSE sell out 4 110.00 8000002 -0.02 0.00 -0.10 40.00 1 041.36\n2026.10.06 10:00:00 9000004 EURUSD sell in 0.01 1.15000 8000003 0.00 0.00 0.00 0.00 1 041.36\n2026.10.06 18:00:00 9000005 EURUSD buy out 0.01 1.14000 8000004 0.00 0.00 0.10 10.00 1 051.46 [tp 1.14000]\n2026.10.07 14:52:22 9000006 balance 0.00 0.00 0.00 0.15 1 051.61 SWAP adjustment\n-0.04 0.00 0.00 50.15 1 051.61\nPositions ouvertes\nHeure Position Symbole Type Volume Prix S / L T / P Prix du march\u00e9 Echange Profit Commentaire\n2026.10.01 16:35:00 8000001 AAA.NYSE buy 6 100.00 105.00 -0.30 30.00\nSolde: 1 051.61 Marge libre: 961.61\nFacilit\u00e9s de cr\u00e9dit : 0.00 Marge: 120.00\nP/L flottant: 29.70 Niveau de la marge: 901.34%\nAction: 1 081.31";
 function coreTests(Core) {
   const out = [];
   const near = (a, b, eps) => Math.abs(a - b) <= (eps == null ? 1e-6 : eps);
@@ -117,6 +118,15 @@ function coreTests(Core) {
       prices: { AAA: [{ date: '2026-11-05', price: 110 }], BBB: [{ date: '2026-11-05', price: 210 }], CCC: [{ date: '2026-11-05', price: 50 }] } });
     const R = Core.riskSummary(s, Core.normFees({ outFixed: 1 }));
     return near(R.heat, 10 * 20 + 1 + 5 * 30 + 1) && R.noStop === 1 && R.pos === 3 ? true : JSON.stringify(R);
+  });
+  t('Rapport MT5 : transactions, dividende, opération de solde, positions ouvertes, résumé (milliers avec espace)', () => {
+    const r = Core.parseMt5(MT5_SAMPLE), d = r.deals, o = r.ops;
+    if (r.acct !== '1234567' || r.from !== '2026-10-01' || r.to !== '2026-10-07') return 'en-tête ' + JSON.stringify([r.acct, r.from, r.to]);
+    if (d.length !== 4 || d[1].dir !== 'out' || d[1].vol !== 4 || d[1].price !== 110 || d[1].swap !== -0.1 || d[1].bal !== 1041.36 || d[3].comment !== '[tp 1.14000]') return 'transactions ' + JSON.stringify(d[1]);
+    if (o.length !== 2 || o[0].kind !== 'dividend' || o[0].amount !== 1.5 || o[0].sym !== 'AAA.NYSE' || o[0].bal !== 1001.48 || o[1].amount !== 0.15 || o[1].comment !== 'SWAP adjustment') return 'opérations ' + JSON.stringify(o);
+    if (r.open.length !== 1 || r.open[0].vol !== 6 || r.open[0].swap !== -0.3 || r.open[0].mkt !== 105) return 'ouvertes ' + JSON.stringify(r.open);
+    if (r.sum.balance !== 1051.61 || r.sum.equity !== 1081.31 || r.sum.margin !== 120 || r.sum.level !== 901.34) return 'résumé ' + JSON.stringify(r.sum);
+    return Core.mt5Ticker('AAA.NYSE') === 'AAA' && Core.mt5Ticker('EURUSD') === null ? true : 'tickers';
   });
   return out;
 }
