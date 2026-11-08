@@ -47,7 +47,7 @@ const lotImgIds = l => [l.imgId, ...(l.events || []).map(e => e.imgId)].filter(B
 let S = defaultState();
 let tab = 'dash';
 const openLots = new Set();
-let journalFilter = 'closed', perfRange = 'itd', tradeYear = 'all', tradeMonth = 'all';  // période des positions clôturées (date de clôture)
+let journalFilter = 'closed', jPeriod = 'w0', perfRange = 'itd', tradeYear = 'all', tradeMonth = 'all';  // période des positions clôturées (date de clôture)
 const PERIODS = [['day', 'Jour', 'dernière séance'], ['week', 'Semaine', 'semaine en cours'], ['month', 'Mois', 'mois en cours'], ['year', 'Année', 'année en cours'], ['itd', 'Max', 'depuis le début']];
 let calcDraft = null;
 
@@ -2657,6 +2657,7 @@ function viewPos() {
   };
   const jl = views.filter(v => journalFilter === 'all' || (journalFilter === 'closed' ? v.ls.closed : !v.ls.closed))
     .sort((a, b) => (a.lot.date < b.lot.date ? 1 : -1));
+  const J = journalFilter === 'closed' ? journalClosed(views) : null;
   const expoRows = Object.keys(byT).map(t => [t, byT[t].reduce((a, v) => a + v.ls.rem * (v.last ? v.last.price : v.lot.price), 0)]).sort((a, b) => b[1] - a[1]);
   const maxE = expoRows.length ? expoRows[0][1] : 1;
   return `${demoBanner()}
@@ -2683,10 +2684,33 @@ function viewPos() {
   <section class="card">
     <div class="sec-head"><h2>Journal</h2>
       <div class="filters">${[['closed', 'Clôturées'], ['open', 'Ouvertes'], ['all', 'Toutes']].map(([k, l]) => `<button class="btn sm" data-act="jfilter" data-f="${k}" aria-pressed="${journalFilter === k}">${l}</button>`).join('')}</div></div>
-    ${jl.length ? jl.map(v => lotDetails(v, true)).join('') : '<p class="lead">Rien à afficher pour ce filtre.</p>'}
+    ${J ? J : jl.length ? jl.map(v => lotDetails(v, true)).join('') : '<p class="lead">Rien à afficher pour ce filtre.</p>'}
   </section>`;
 }
-function lotDetails(v, inJournal, compact) {
+// Journal des clôturées : par période (semaine du lundi, mois), rangé par date de clôture, analyse d'entrée visible.
+const J_PER = [['w0', 'Cette semaine'], ['w1', 'Semaine dernière'], ['m0', 'Ce mois'], ['m1', 'Mois dernier'], ['all', 'Tout']];
+function jRange(p, today) {
+  const mon = addDays(today, -((wdOf(today) + 6) % 7)), m0 = today.slice(0, 8) + '01', m1 = addDays(m0, -1).slice(0, 8) + '01';
+  const dm2 = d => d.slice(8) + '/' + d.slice(5, 7);
+  return { w0: [mon, today, `du ${dm2(mon)} au ${dm2(today)}`], w1: [addDays(mon, -7), addDays(mon, -1), `du ${dm2(addDays(mon, -7))} au ${dm2(addDays(mon, -1))}`],
+    m0: [m0, today, MOIS[+m0.slice(5, 7) - 1].toLowerCase() + ' ' + m0.slice(0, 4)], m1: [m1, addDays(m0, -1), MOIS[+m1.slice(5, 7) - 1].toLowerCase() + ' ' + m1.slice(0, 4)],
+    all: ['0000-00-00', '9999-99-99', 'depuis le début'] }[p];
+}
+function journalClosed(views) {
+  const today = todayISO(), [a, b, lab] = jRange(jPeriod, today);
+  const L = views.filter(v => v.ls.closed && v.ls.closeDate && v.ls.closeDate >= a && v.ls.closeDate <= b).sort((x, y) => x.ls.closeDate < y.ls.closeDate ? 1 : x.ls.closeDate > y.ls.closeDate ? -1 : 0);
+  const btns = `<div class="filters jper">${J_PER.map(([k, l]) => `<button class="btn sm" data-act="jperiod" data-f="${k}" aria-pressed="${jPeriod === k}">${l}</button>`).join('')}</div>`;
+  const net = L.reduce((s, v) => s + v.ls.netRealized, 0), Rs = L.map(v => lotR(v.lot, v.ls)).filter(r => r != null), w = L.filter(v => v.ls.netRealized > 0.0049).length, lo = L.filter(v => v.ls.netRealized < -0.0049).length;
+  const sum = `<p class="hint jsum">${lab.charAt(0).toUpperCase() + lab.slice(1)} · ${L.length ? `${L.length} trade${L.length > 1 ? 's' : ''} · ${w} gagnant${w > 1 ? 's' : ''}, ${lo} perdant${lo > 1 ? 's' : ''} · net <b class="num ${cls(net)}">${usd(net, true)}</b>${Rs.length ? ' · ' + fmtR(Rs.reduce((s, r) => s + r, 0)) : ''}` : 'aucune position clôturée'}</p>`;
+  const extra = v => { const n = (v.lot.note || '').trim(); return `<br><small>Clôturée le ${fmtDate(v.ls.closeDate)} · ${Core.days(v.lot.date, v.ls.closeDate)} j</small>${n ? `<span class="jnote">Analyse : ${esc(n.length > 160 ? n.slice(0, 157) + '…' : n)}</span>` : ''}`; };
+  let rows = '', g = '';
+  for (const v of L) {
+    if (jPeriod === 'all') { const k = v.ls.closeDate.slice(0, 7); if (k !== g) { g = k; rows += `<p class="jmonth">${MOIS[+k.slice(5, 7) - 1]} ${k.slice(0, 4)}</p>`; } }
+    rows += lotDetails(v, true, false, extra(v));
+  }
+  return btns + sum + (rows || (jPeriod !== 'all' ? '<p class="lead">Aucune clôture sur cette période. Essayez « Mois dernier » ou « Tout ».</p>' : ''));
+}
+function lotDetails(v, inJournal, compact, extra) {
   const { lot, ls, last, sa, unreal } = v;
   const R = lotR(lot, ls), u = planR(lot), xPlan = u > 0 && lot.riskInitial > 0 ? lot.riskInitial / u : null;
   const status = ls.closed ? (ls.netRealized > 0.0049 ? '<span class="pill win">Gagnante</span>' : ls.netRealized < -0.0049 ? '<span class="pill loss">Perdante</span>' : '<span class="pill">Neutre</span>') : '<span class="pill open">Ouverte</span>';
@@ -2707,7 +2731,7 @@ function lotDetails(v, inJournal, compact) {
     ? `<span class="num ${cls(ls.netRealized)}">${usd(ls.netRealized, true)}${R != null ? ' · ' + fmtR(R) : ''}</span>`
     : `<span class="num ${cls(unreal)}">${usd(unreal, true)}</span>`;
   return `<details class="lot" data-key="${key}" ${inJournal ? `data-q="${esc((lot.ticker + ' ' + (lot.note || '')).toLowerCase())}"` : ''} ${openLots.has(key) ? 'open' : ''}>
-    <summary>${compact ? `<span>Détails et actions <small>· achat du ${fmtDate(lot.date)} à ${usd(lot.price)}</small></span><span class="sum-r">${quick}<span class="chev">›</span></span>` : `<span><span class="tk">${esc(lot.ticker)}</span> ${status}${ls.closed ? '' : earnPill(lot.ticker)} ${lot.demo ? '<span class="pill demo">Démo</span>' : ''}<br><small>${fmtDate(lot.date)} · ${qty(lot.qty)} à ${usd(lot.price)} · ${MOTIFS[lot.motif] || 'Autre'}</small></span><span class="sum-r">${sumRight}${quick}</span>`}</summary>
+    <summary>${compact ? `<span>Détails et actions <small>· achat du ${fmtDate(lot.date)} à ${usd(lot.price)}</small></span><span class="sum-r">${quick}<span class="chev">›</span></span>` : `<span><span class="tk">${esc(lot.ticker)}</span> ${status}${ls.closed ? '' : earnPill(lot.ticker)} ${lot.demo ? '<span class="pill demo">Démo</span>' : ''}<br><small>${fmtDate(lot.date)} · ${qty(lot.qty)} à ${usd(lot.price)} · ${MOTIFS[lot.motif] || 'Autre'}</small>${extra || ''}</span><span class="sum-r">${sumRight}${quick}</span>`}</summary>
     <div class="body">
       <dl class="kv">
         ${kv('Quantité restante', qty(ls.rem), ls.sold ? `vendu ${qty(ls.sold)}` : '')}
@@ -3729,6 +3753,7 @@ document.addEventListener('click', e => {
     case 'record-buy': sheetBuy(); break;
     case 'prices': sheetPrices(); break;
     case 'jfilter': journalFilter = b.dataset.f; render(); break;
+    case 'jperiod': jPeriod = b.dataset.f; render(); break;
     case 'psort': posSort = b.dataset.f; render(); break;
     case 'pfilter': posFilter = b.dataset.f; render(); break;
     case 'ntfy-gen': { const a = new Uint8Array(9); crypto.getRandomValues(a); const el = $('#ntfy-topic'); if (el) el.value = 'carnet-' + [...a].map(x => 'abcdefghijkmnpqrstuvwxyz23456789'[x % 32]).join(''); break; }
