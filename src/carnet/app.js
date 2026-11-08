@@ -1629,7 +1629,10 @@ function tonightCard() {
 // ----- Graphique intégré : bougies (ouverture, haut, bas fournis par le robot) ou clôtures, vos SMA, entrées, ventes, stop -----
 // Historique du radar (cours ajustés comme les SMA) : aucune autre source, fonctionne hors ligne.
 let chartSt = null;
-const CH_R = [['1 M', 22], ['3 M', 66], ['6 M', 130]];
+// Une unité par onglet : bougies de l'unité et seulement les SMA de cette unité (jamais J, S et M mélangées).
+const CH_TF = [['D', 'Journalier'], ['W', 'Hebdo'], ['M', 'Mensuel']];
+const CH_RG = { D: [['1 M', 22], ['3 M', 66], ['6 M', 130]], W: [['6 M', 26], ['1 A', 52], ['2 A', 104]], M: [['1 A', 12], ['2 A', 24], ['5 A', 60]] };
+const CH_DEF = { D: 66, W: 52, M: 24 };
 // SMA d'une unité à chaque séance : J = moyenne des n dernières clôtures ; S et M = moyenne des n dernières bougies terminées (palier).
 function smaDaily(bars, w) {
   const n = w.period, out = new Array(bars.length).fill(null);
@@ -1639,65 +1642,95 @@ function smaDaily(bars, w) {
   for (let i = 0; i < bars.length; i++) { const j = idx.get(periodKey(w.tf, bars[i][0])); if (j != null && j >= n) out[i] = (pre[j] - pre[j - n]) / n; }
   return out;
 }
+// Bougies de l'unité : vraies ouverture / haut / bas du robot quand elles existent, sinon reconstruites avec les clôtures (marquées « approx »).
+function chartCandles(all, tf) {
+  const out = []; let prevC = null;
+  for (const b of all) {
+    const k = periodKey(tf, b[0]), full = b.length >= 5, o = full ? b[2] : prevC == null ? b[1] : prevC, h = full ? b[3] : Math.max(o, b[1]), l = full ? b[4] : Math.min(o, b[1]);
+    const last = out[out.length - 1];
+    if (last && last.k === k) { last.h = Math.max(last.h, h); last.l = Math.min(last.l, l); last.c = b[1]; last.d = b[0]; last.ax = last.ax || !full; }
+    else out.push({ k, d0: b[0], d: b[0], o, h, l, c: b[1], ax: !full });
+    prevC = b[1];
+  }
+  return out;
+}
 function chartSvg() {
-  const { t, n, wid } = chartSt, all = tickerBars(t);
+  const { t, n, wid, tf } = chartSt, all = tickerBars(t);
   if (!all || !all.length) return '<p class="hint">Pas d’historique pour cette action : ajoutez-la au radar pour voir son graphique.</p>';
-  const i0 = Math.max(0, all.length - n), D = all.slice(i0), W = 340, H = 210, L = 38, R = 6, T = 8, B = 20;
-  const lots = S.lots.filter(l => l.ticker === t), mine = posSmas(t), wl = S.watch.filter(w => w.ticker === t && !w.idx && (w.id === wid || !mine.length || mine.includes(smaKey(w)))).slice(0, 3);
-  const sm = wl.map(w => ({ w, v: smaDaily(all, w).slice(i0) }));
+  const C = chartCandles(all, tf), i0 = Math.max(0, C.length - n), D = C.slice(i0);
+  const W = 360, H = 220, L = 4, R = 46, T = 8, B = 18;
+  const lots = S.lots.filter(l => l.ticker === t), mine = posSmas(t);
+  // SMA de l'unité : celles de la position s'il y en a dans cette unité, sinon toutes celles de l'action dans cette unité.
+  const cand = S.watch.filter(w => w.ticker === t && !w.idx && w.tf === tf), own = cand.filter(w => w.id === wid || mine.includes(smaKey(w)));
+  const wl = (own.length ? own : cand).sort((a, b) => a.period - b.period).slice(0, 3);
+  // SMA de l'unité sur les clôtures des bougies (bougie en cours comprise, comme TradingView).
+  const sm = wl.map(w => { const v = new Array(C.length).fill(null); let s = 0; for (let i = 0; i < C.length; i++) { s += C[i].c; if (i >= w.period) s -= C[i - w.period].c; if (i >= w.period - 1) v[i] = s / w.period; } return { w, v: v.slice(i0) }; });
   const open = lots.find(l => !Core.lotState(l).closed) || lots.slice().sort((a, b) => a.date < b.date ? 1 : -1)[0];
   const stopOn = d => { if (!open || d < open.date) return null; let v = open.stopInitial; for (const e of open.events || []) if (e.type === 'stop' && e.date <= d) v = e.to; return v > 0 ? v : null; };
-  const stops = D.map(b => stopOn(b[0]));
-  const vals = D.flatMap(b => b.length >= 5 ? [b[3], b[4]] : [b[1]]).concat(...sm.map(s => s.v.filter(x => x != null)), stops.filter(x => x != null));
+  const stops = D.map(b => stopOn(b.d)), stopNow = stops[stops.length - 1];
+  const live = open && !Core.lotState(open).closed;
+  const vals = D.flatMap(b => [b.h, b.l]).concat(...sm.map(s => s.v.filter(x => x != null)), stops.filter(x => x != null), live ? [open.price] : []);
   const lo = Math.min(...vals), hi = Math.max(...vals), pad = (hi - lo) * 0.06 || hi * 0.01, a = lo - pad, z = hi + pad;
-  const X = i => L + (W - L - R) * (D.length === 1 ? 0.5 : i / (D.length - 1)), Y = v => T + (H - T - B) * (1 - (v - a) / (z - a)), bw = Math.max(1, (W - L - R) / D.length * 0.62);
-  const grid = [0, 1, 2, 3].map(k => a + (z - a) * k / 3).map(v => `<line class="grid" x1="${L}" x2="${W - R}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}"/><text x="${L - 4}" y="${(Y(v) + 3).toFixed(1)}" text-anchor="end">${fmtNum(v, v < 100 ? 1 : 0)}</text>`).join('');
-  // Bougies quand la plupart des séances ont ouverture / haut / bas ; sinon ligne des clôtures (séances isolées sans bougie : un tiret).
-  const useC = D.filter(b => b.length >= 5).length >= D.length / 2;
-  let candles = '', line = '';
-  D.forEach((b, i) => {
-    if (useC && b.length >= 5) { const up = b[1] >= b[2], y1 = Y(Math.max(b[1], b[2])), y2 = Y(Math.min(b[1], b[2]));
-      candles += `<g class="${up ? 'cu' : 'cd'}"><line x1="${X(i).toFixed(1)}" x2="${X(i).toFixed(1)}" y1="${Y(b[3]).toFixed(1)}" y2="${Y(b[4]).toFixed(1)}"/><rect x="${(X(i) - bw / 2).toFixed(1)}" y="${y1.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1, y2 - y1).toFixed(1)}"/></g>`; }
-    else if (useC) candles += `<line class="tick" x1="${(X(i) - bw / 2).toFixed(1)}" x2="${(X(i) + bw / 2).toFixed(1)}" y1="${Y(b[1]).toFixed(1)}" y2="${Y(b[1]).toFixed(1)}"/>`;
-    else line += (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(b[1]).toFixed(1);
-  });
+  const cw = (W - L - R) / D.length, X = i => L + cw * (i + 0.5), Y = v => T + (H - T - B) * (1 - (v - a) / (z - a)), bw = Math.max(1.2, cw * 0.66);
+  const f = v => fmtNum(v, v < 100 ? 2 : 1), y1 = v => Y(v).toFixed(1);
+  const grid = () => [0, 1, 2, 3, 4].map(k => a + (z - a) * (k + 0.5) / 5).map(v => `<line class="grid" x1="${L}" x2="${W - R}" y1="${y1(v)}" y2="${y1(v)}"/>${ty.some(y => Math.abs(y - Y(v)) < 11) ? '' : `<text class="ax" x="${W - R + 4}" y="${(Y(v) + 3).toFixed(1)}">${f(v)}</text>`}`).join('');
+  const fx = d => tf === 'M' ? MOIS_C[+d.slice(5, 7) - 1] + ' ' + d.slice(2, 4) : d.slice(8, 10) + '/' + d.slice(5, 7);
+  const xl = [...new Set([0, Math.round((D.length - 1) / 3), Math.round(2 * (D.length - 1) / 3), D.length - 1])].map(i => `<text class="ax" x="${X(i).toFixed(1)}" y="${H - 5}" text-anchor="${i === 0 ? 'start' : i === D.length - 1 ? 'end' : 'middle'}">${fx(D[i].d0)}</text>`).join('');
+  let candles = '';
+  D.forEach((b, i) => { const up = b.c >= b.o, ya = Y(Math.max(b.o, b.c)), yb = Y(Math.min(b.o, b.c));
+    candles += `<g class="${up ? 'cu' : 'cd'}"><line x1="${X(i).toFixed(1)}" x2="${X(i).toFixed(1)}" y1="${y1(b.h)}" y2="${y1(b.l)}"/><rect x="${(X(i) - bw / 2).toFixed(1)}" y="${ya.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1, yb - ya).toFixed(1)}" rx="0.6"/></g>`; });
   const path = arr => { let p = '', on = false; arr.forEach((v, i) => { if (v == null) { on = false; return; } p += (on ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(v).toFixed(1); on = true; }); return p; };
-  const di = d => D.findIndex(b => b[0] >= d);
+  const di = d => { const k = periodKey(tf, d); return D.findIndex(b => b.k === k); };
   let marks = '';
   for (const l of lots) {
-    const ie = di(l.date); if (ie >= 0 && l.date >= D[0][0]) marks += `<circle class="m-in" cx="${X(ie).toFixed(1)}" cy="${Y(l.price).toFixed(1)}" r="4"><title>Achat ${fmtDate(l.date)} à ${usd(l.price)}</title></circle>`;
-    for (const e of (l.events || []).filter(e => e.type === 'sell' && e.date >= D[0][0])) { const is = di(e.date); if (is >= 0) marks += `<circle class="m-out" cx="${X(is).toFixed(1)}" cy="${Y(e.price).toFixed(1)}" r="4"><title>Vente ${qty(e.qty)} le ${fmtDate(e.date)} à ${usd(e.price)}</title></circle>`; }
+    const ie = di(l.date); if (ie >= 0) marks += `<circle class="m-in" cx="${X(ie).toFixed(1)}" cy="${y1(l.price)}" r="4"><title>Achat ${fmtDate(l.date)} à ${usd(l.price)}</title></circle>`;
+    for (const e of (l.events || []).filter(e => e.type === 'sell')) { const is = di(e.date); if (is >= 0) marks += `<circle class="m-out" cx="${X(is).toFixed(1)}" cy="${y1(e.price)}" r="4"><title>Vente ${qty(e.qty)} le ${fmtDate(e.date)} à ${usd(e.price)}</title></circle>`; }
   }
   const wsel = wl.find(w => w.id === wid);
-  if (wsel) { const an = analyzeWatch(wsel); for (const c of (an && an.crosses) || []) { const ic = di(c.date); if (ic >= 0 && c.date >= D[0][0]) marks += `<path class="${c.dir === 'up' ? 'm-up' : 'm-dn'}" d="M${X(ic).toFixed(1)} ${(Y(c.close) + (c.dir === 'up' ? 14 : -14)).toFixed(1)} l-5 ${c.dir === 'up' ? 8 : -8} h10z"/>`; } }
-  const entry = open && open.date <= D[D.length - 1][0] ? `<line class="m-entry" x1="${X(Math.max(0, di(open.date))).toFixed(1)}" x2="${W - R}" y1="${Y(open.price).toFixed(1)}" y2="${Y(open.price).toFixed(1)}"/>` : '';
-  chartSt.D = D; chartSt.sm = sm; chartSt.stops = stops; chartSt.geo = { L, R, W };
-  const fx = d => fmtDate(d).replace(/ \d{4}$/, '');
-  return `<svg class="chart cc" id="chSvg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Graphique de ${esc(t)}">${grid}${entry}
+  if (wsel) { const an = analyzeWatch(wsel); for (const c of (an && an.crosses) || []) { const ic = di(c.date); if (ic >= 0) marks += `<path class="${c.dir === 'up' ? 'm-up' : 'm-dn'}" d="M${X(ic).toFixed(1)} ${(Y(c.close) + (c.dir === 'up' ? 14 : -14)).toFixed(1)} l-5 ${c.dir === 'up' ? 8 : -8} h10z"/>`; } }
+  // Étiquettes de prix à droite (cours, stop, entrée), écartées pour ne pas se chevaucher.
+  const lastC = D[D.length - 1], tags = [[lastC.c, lastC.c >= lastC.o ? 'tg-up' : 'tg-dn']];
+  if (stopNow != null) tags.push([stopNow, 'tg-stop']);
+  if (live) tags.push([open.price, 'tg-in']);
+  const ty = tags.map(x => Y(x[0])).map(y => Math.min(H - B - 7, Math.max(T + 7, y))), ord = ty.map((y, i) => i).sort((p, q) => ty[p] - ty[q]);
+  for (let k = 1; k < ord.length; k++) if (ty[ord[k]] - ty[ord[k - 1]] < 15) ty[ord[k]] = ty[ord[k - 1]] + 15;
+  const tagSvg = tags.map(([v, c], k) => `<line class="tl ${c}" x1="${L}" x2="${W - R}" y1="${y1(v)}" y2="${y1(v)}"/><rect class="${c}" x="${W - R + 1}" y="${(ty[k] - 7).toFixed(1)}" width="${R - 2}" height="14" rx="3"/><text class="tt" x="${W - R / 2}" y="${(ty[k] + 3.5).toFixed(1)}" text-anchor="middle">${f(v)}</text>`).join('');
+  const lastDots = sm.map((s, k) => s.v[s.v.length - 1] != null ? `<circle class="sd s${k}" cx="${X(D.length - 1).toFixed(1)}" cy="${y1(s.v[s.v.length - 1])}" r="2.6"/>` : '').join('');
+  chartSt.D = D; chartSt.sm = sm; chartSt.stops = stops; chartSt.geo = { L, R, W, cw, X };
+  const prev = C[C.length - 2], chg = prev ? (lastC.c / prev.c - 1) * 100 : null, approx = D.some(b => b.ax);
+  const head = `<div class="chh"><div><b class="num chpx">${usd(lastC.c)}</b>${chg != null ? ` <span class="num ${cls(chg)}">${chg >= 0 ? '+' : ''}${fmtNum(chg, 2)} %</span> <small>${tf === 'D' ? 'sur la séance' : tf === 'W' ? 'sur la semaine' : 'sur le mois'}</small>` : ''}<br><small>Clôture du ${fmtDate(lastC.d)}</small></div>
+    ${live ? `<div class="chr2"><small>Entrée <b class="num">${usd(open.price)}</b></small><small>Stop <b class="num neg">${stopNow != null ? usd(stopNow) : '—'}</b></small>${stopNow != null ? `<small class="${lastC.c > stopNow ? '' : 'neg'}">${lastC.c > stopNow ? fmtNum((lastC.c / stopNow - 1) * 100, 1) + ' % au-dessus du stop' : 'sous le stop'}</small>` : ''}</div>` : ''}</div>`;
+  return `${head}<svg class="chart cc" id="chSvg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Graphique ${TF_LONG[tf]} de ${esc(t)}">${grid()}${xl}
     ${sm.map((s, k) => `<path class="sm s${k}" d="${path(s.v)}"/>`).join('')}${stops.some(x => x != null) ? `<path class="stp" d="${path(stops)}"/>` : ''}
-    ${line ? `<path class="cl" d="${line}"/>` : ''}${candles}${marks}
-    <text x="${L}" y="${H - 5}">${fx(D[0][0])}</text><text x="${W - R}" y="${H - 5}" text-anchor="end">${fx(D[D.length - 1][0])}</text>
+    ${candles}${tagSvg}${lastDots}${marks}
     <line id="chCur" class="cur" y1="${T}" y2="${H - B}" x1="0" x2="0" opacity="0"/></svg>
-    <div class="chlg">${useC ? '<span><i class="lc"></i>Bougies</span>' : '<span><i class="ll"></i>Clôtures</span>'}${sm.map((s, k) => `<span><i class="ls s${k}"></i>SMA ${TF_SHORT[s.w.tf]}${s.w.period}</span>`).join('')}${stops.some(x => x != null) ? '<span><i class="lst"></i>Stop</span>' : ''}${entry ? `<span><i class="le"></i>Entrée ${usd(open.price)}</span>` : ''}</div>
-    <p class="hint" id="chTip">Touchez le graphique pour lire une séance.</p>
-    ${useC ? '' : '<p class="hint">Bougies disponibles après le prochain passage du robot (actions de vos trades). En attendant : clôtures.</p>'}`;
+    <p class="hint chtip" id="chTip">Touchez le graphique pour lire une bougie.</p>
+    <div class="chlg">${sm.length ? sm.map((s, k) => `<span><i class="ls s${k}"></i>SMA ${TF_SHORT[tf]}${s.w.period} <b class="num">${s.v[s.v.length - 1] != null ? f(s.v[s.v.length - 1]) : '—'}</b></span>`).join('') : `<span>Aucune SMA ${TF_LONG[tf]} pour cette action</span>`}${stops.some(x => x != null) ? '<span><i class="lst"></i>Stop</span>' : ''}${live ? '<span><i class="le"></i>Entrée</span>' : ''}</div>
+    ${approx ? `<p class="hint">${tf === 'D' ? 'Certaines bougies' : 'Les bougies anciennes'} sont reconstruites avec les clôtures (le robot fournit les vraies bougies sur environ 6 mois, pour les actions de vos trades) : clôtures et SMA exactes, haut et bas approximatifs.</p>` : ''}`;
 }
 function chartBind() {
   const svg = $('#chSvg'); if (!svg || !chartSt) return;
-  const { D, sm, stops, geo } = chartSt;
+  const { D, sm, stops, geo, tf } = chartSt;
   svg.onpointermove = svg.onpointerdown = e => {
     const r = svg.getBoundingClientRect(), px = (e.clientX - r.left) / r.width * geo.W;
-    const i = Math.max(0, Math.min(D.length - 1, Math.round((px - geo.L) / (geo.W - geo.L - geo.R) * (D.length - 1)))), b = D[i], x = geo.L + (geo.W - geo.L - geo.R) * (D.length === 1 ? 0.5 : i / (D.length - 1));
+    const i = Math.max(0, Math.min(D.length - 1, Math.floor((px - geo.L) / geo.cw))), b = D[i], x = geo.X(i);
     const c = $('#chCur'); c.setAttribute('x1', x); c.setAttribute('x2', x); c.setAttribute('opacity', 1);
-    const st = stops[i];
-    $('#chTip').textContent = `${fmtDate(b[0])} · ${b.length >= 5 ? `O ${fmtNum(b[2], 2)} H ${fmtNum(b[3], 2)} B ${fmtNum(b[4], 2)} ` : ''}C ${fmtNum(b[1], 2)}`
-      + sm.map(s => s.v[i] != null ? ` · SMA ${TF_SHORT[s.w.tf]}${s.w.period} ${fmtNum(s.v[i], 2)}` : '').join('') + (st ? ` · stop ${fmtNum(st, 2)} (${fmtNum((b[1] / st - 1) * 100, 1)} % au-dessus)` : '');
+    const st = stops[i], per = tf === 'D' ? fmtDate(b.d) : tf === 'W' ? 'semaine du ' + fmtDate(b.d0) : MOIS[+b.d.slice(5, 7) - 1] + ' ' + b.d.slice(0, 4);
+    $('#chTip').innerHTML = `<b>${per}</b> · O ${fmtNum(b.o, 2)} · H ${fmtNum(b.h, 2)} · B ${fmtNum(b.l, 2)} · C <b>${fmtNum(b.c, 2)}</b>`
+      + sm.map((s, k) => s.v[i] != null ? ` · <span class="tc s${k}">SMA ${TF_SHORT[tf]}${s.w.period} ${fmtNum(s.v[i], 2)}</span>` : '').join('') + (st ? ` · stop ${fmtNum(st, 2)}` : '');
   };
 }
+function chartTools() {
+  const { tf, n } = chartSt;
+  return `<div class="chbar"><div class="seg chtf" role="group" aria-label="Unité">${CH_TF.map(([k, l]) => `<button type="button" data-act="ch-tf" data-tf="${k}" aria-pressed="${tf === k}">${l}</button>`).join('')}</div>
+    <div class="chr">${CH_RG[tf].map(([l, k]) => `<button type="button" class="btn sm${n === k ? ' on' : ''}" data-act="ch-range" data-n="${k}">${l}</button>`).join('')}</div></div>`;
+}
+function chartRedraw() { $('#chTools').innerHTML = chartTools(); $('#chWrap').innerHTML = chartSvg(); chartBind(); }
 function sheetChart(t, wid) {
-  chartSt = { t, n: (chartSt && chartSt.n) || 66, wid: wid || null };
-  openSheet({ title: t + ' · graphique', noFocus: true,
-    body: `<div class="row chr">${CH_R.map(([l, n]) => `<button type="button" class="btn sm${chartSt.n === n ? ' on' : ''}" data-act="ch-range" data-n="${n}">${l}</button>`).join('')}</div><div id="chWrap">${chartSvg()}</div>` });
+  const w = wid && S.watch.find(x => x.id === wid);
+  const tf = w ? w.tf : posSmas(t).length ? stopTf(t) : (chartSt && chartSt.t === t && chartSt.tf) || 'D';
+  chartSt = { t, tf, n: CH_DEF[tf], wid: wid || null };
+  openSheet({ title: t + ' · graphique', noFocus: true, body: `<div id="chTools">${chartTools()}</div><div id="chWrap">${chartSvg()}</div>` });
   chartBind();
 }
 function sheetStopRaises() {
@@ -3838,7 +3871,8 @@ document.addEventListener('click', e => {
       tnMark('stop|' + t); save(`Stop ${t} : ${usd(v)} enregistré · changez-le aussi dans MT5`); break;
     }
     case 'chart': sheetChart(b.dataset.t, b.dataset.w); break;
-    case 'ch-range': if (chartSt) { chartSt.n = +b.dataset.n; document.querySelectorAll('.chr .btn').forEach(x => x.classList.toggle('on', x === b)); $('#chWrap').innerHTML = chartSvg(); chartBind(); } break;
+    case 'ch-range': if (chartSt) { chartSt.n = +b.dataset.n; chartRedraw(); } break;
+    case 'ch-tf': if (chartSt) { chartSt.tf = b.dataset.tf; chartSt.n = CH_DEF[chartSt.tf]; chartRedraw(); } break;
     case 'tn-hit': tnMark('hit|' + b.dataset.k); render(); break;
     case 'tn-skip': markSeen([b.dataset.k]); tnMark('x|' + b.dataset.k); render(); break;
     case 'tn-calc': tnMark('c|' + b.dataset.k); markSeen([b.dataset.k]); /* falls through */
