@@ -358,10 +358,11 @@ async function toFr(list) {
     while (i < list.length && (len + list[i].length < 1200 || !idx.length)) { idx.push(i); len += list[i].length + 1; i++; }
     const q = idx.map(k => list[k].replace(/\n/g, ' ')).join('\n');
     try {
-      const j = await get('https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=fr&dt=t&q=' + encodeURIComponent(q), { 'User-Agent': UA['User-Agent'] }).then(r => r.ok ? r.json() : null);
+      const j = await get('https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=fr&dt=t&q=' + encodeURIComponent(q), { 'User-Agent': UA['User-Agent'] }).then(r => { if (!r.ok && !toFr.why) toFr.why = 'HTTP ' + r.status; return r.ok ? r.json() : null; });
       const lines = j && Array.isArray(j[0]) ? j[0].map(x => x && x[0] || '').join('').split('\n').map(x => x.trim()) : [];
       if (lines.length === idx.length) idx.forEach((k, n) => { if (lines[n]) out[k] = lines[n]; });
-    } catch (e) { }
+      else if (!toFr.why) toFr.why = j ? `${lines.length} ligne(s) pour ${idx.length}` : 'réponse refusée';
+    } catch (e) { if (!toFr.why) toFr.why = e.message; }
     await sleep(400);
   }
   return out;
@@ -395,7 +396,7 @@ if (byHand || Date.now() - newsAt > 3 * 3600e3) {
   if (todo.length) {
     const fr = await toFr(todo), by = {}; todo.forEach((t, k) => { if (fr[k]) by[t] = fr[k]; });
     for (const a of Object.values(news)) for (const n of a) if (!n.f && by[n.t] && by[n.t] !== n.t) n.f = by[n.t];
-    log(`Traduction : ${Object.keys(by).length}/${todo.length} titre(s) traduits en français`);
+    log(`Traduction : ${Object.keys(by).length}/${todo.length} titre(s) traduits en français${toFr.why ? ' · ' + toFr.why + ' (l’app traduira à l’ouverture)' : ''}`);
   }
   log(`Actualités : ${newsN} titre(s) pour ${Object.keys(news).length} position(s) · ${Object.values(news).flat().filter(n => tierOf(n.s) < 7).length} de Reuters, Bloomberg, WSJ, FT, CNBC, Barron’s ou MarketWatch`);
 }
