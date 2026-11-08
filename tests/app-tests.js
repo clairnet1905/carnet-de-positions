@@ -292,6 +292,17 @@ window.__appTests = async function () {
     setPart = 'acct'; return ok ? true : 'partie Configuration';
   });
 
+  await t('ntfy : nom proposé, refus d’un nom trop court, canal enregistré et activé', async () => {
+    tab = 'set'; setPart = 'conf'; render();
+    if (!$('#ntfy')) { setPart = 'acct'; return 'carte ntfy absente'; }
+    $('#ntfy-topic').value = 'court'; $('[data-act="ntfy-save"]').click(); await wait(50);
+    if (S.settings.ntfy) { setPart = 'acct'; return 'nom trop court accepté'; }
+    $('[data-act="ntfy-gen"]').click(); const v = $('#ntfy-topic').value;
+    $('[data-act="ntfy-save"]').click(); await wait(100);
+    const ok = /^carnet-[a-z0-9]{9}$/.test(v) && S.settings.ntfy && S.settings.ntfy.topic === v && S.settings.ntfy.on === true && $('[data-act="ntfy-on"]');
+    setPart = 'acct'; return ok ? true : 'enregistrement ' + JSON.stringify(S.settings.ntfy);
+  });
+
   await t('Graphique : bougies du robot, SMA, stop et ventes ; clôtures sans bougies', async () => {
     const D = days(90);
     const u = unpackHist({ s: D[0], o: D.map((d, i) => i ? Core.days(D[i - 1], d) : 0), c: D.map((d, i) => 100 + i), n: 90, x: D.slice(-70).flatMap(() => [-50, 120, -130]), xn: 70 });

@@ -27,6 +27,7 @@ results.push(...ctx.__r.map(r => ({ ...r, name: 'Moteur · ' + r.name })));
   let a;
   t1('limite franchie : une notification, avec la clôture du soir', () => { a = riskCheck(S, C, closeOf, '2026-11-06', null);
     return a.payload && /2 limites/.test(a.payload.title) && /350 \$/.test(a.payload.body) && S.prices.AAA.length === 1 ? true : JSON.stringify(a); });
+  t1('version ntfy : pourcentages et tickers, aucun montant en dollars', () => a.payload && a.payload.nb && !/\$/.test(a.payload.nb) && /%/.test(a.payload.nb) ? true : JSON.stringify(a.payload && a.payload.nb));
   t1('limite toujours dépassée : pas de nouvelle notification', () => { const b = riskCheck(S, C, closeOf, '2026-11-09', a.state); return b.payload === null ? true : b.payload.title; });
   t1('niveau de marge sous le seuil compté, notification désactivable', () => {
     const s2 = Object.assign({}, S, { settings: Object.assign({}, S.settings, { riskLim: {}, marginMin: 300 }) });
