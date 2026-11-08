@@ -294,7 +294,7 @@ async function pullSharedRadar(throttle) {
     }
     Object.assign(Radar.hist, upd);
     await HDB.run('readwrite', st => { for (const s in upd) st.put(upd[s], s); return null; });
-    Radar.robot = { ver, ls: R.ls, at: R.at, n: Object.keys(R.hist).length, run: (R.log || [])[0] || null, dead: R.deadSubs || [], errors: Object.keys(R.errors || {}).length, adj: R.adj || 'splits', divfix: R.divfix || {} };
+    Radar.robot = { ver, ls: R.ls, at: R.at, n: Object.keys(R.hist).length, run: (R.log || [])[0] || null, dead: R.deadSubs || [], errors: Object.keys(R.errors || {}).length, adj: R.adj || 'splits', divfix: R.divfix || {}, news: R.news || {}, newsAt: R.newsAt || 0, divcal: R.divcal || [] };
     writeJSON(RADAR_META, Radar.robot);
     Radar.shared = robotFresh(Radar.robot);
     if (tab !== 'calc') render();
