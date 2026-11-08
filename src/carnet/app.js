@@ -1055,6 +1055,7 @@ document.addEventListener('toggle', e => {
   const d = e.target, k = d && d.dataset && d.dataset.lazy; if (!k) return;
   if (!d.open) { radarOpen.delete(k); return; }
   radarOpen.add(k); const b = d.querySelector(':scope > .lazy');
+  if (k.startsWith('p:')) for (const o of document.querySelectorAll('details.pmini[open]')) if (o !== d) o.open = false;
   if (b && !b.innerHTML && radarFns[k]) b.innerHTML = radarFns[k]();
 }, true);
 function applyRadarQuery() {
@@ -2502,15 +2503,15 @@ function rail(entry, stop, price) {
   return `<div class="rail" aria-hidden="true"><i class="zone ${price > stop ? '' : 'bad'}" style="left:${a.toFixed(1)}%;width:${(b - a).toFixed(1)}%"></i><b class="mk stop" style="left:${X(stop).toFixed(1)}%"></b><b class="mk entry" style="left:${X(entry).toFixed(1)}%"></b><b class="mk px" style="left:${X(price).toFixed(1)}%"></b></div>
     <div class="rail-leg"><span class="s">Stop ${usd(stop)}</span><span>Entrée ${usd(entry)}</span><span class="p">Cours ${usd(price)}</span></div>`;
 }
-let posSort = 'risk', posQuery = '';
+let posSort = 'risk', posQuery = '', posFilter = 'all';
 // Filtre sans redessiner la page : le clavier reste ouvert pendant la saisie.
 function applyPosQuery() {
   const q = posQuery.trim().toLowerCase();
   let n = 0;
-  for (const el of document.querySelectorAll('.pcard[data-q], #view details.lot[data-q]')) {
+  for (const el of document.querySelectorAll('.pmini[data-q], #view details.lot[data-q]')) {
     const hit = !q || el.dataset.q.includes(q);
     el.hidden = !hit;
-    if (hit && el.classList.contains('pcard')) n++;
+    if (hit && el.classList.contains('pmini')) n++;
   }
   const c = $('#pos-q-n'); if (c) c.textContent = q ? n + ' position(s) ouverte(s) trouvée(s)' : '';
 }
@@ -2544,7 +2545,7 @@ function viewPos() {
     const lev = [...new Set(vs.map(v => v.lot.leverage))].map(x => '×' + fmtNum(x)).join(' / ');
     const sTf = stopTf(t), wait = stop != null && px != null && px <= stop && !stopWindow(sTf, last.date);
     const state = ((stop != null && px != null && px <= stop) || stop == null) && !wait ? 'danger' : un > 0.005 ? 'up' : un < -0.005 ? 'down' : '';
-    const html = `<article class="pcard ${state}" data-q="${esc((t + ' ' + vs.map(v => v.lot.note || '').join(' ')).toLowerCase())}">
+    const html = () => `<article class="pcard ${state}" data-q="${esc((t + ' ' + vs.map(v => v.lot.note || '').join(' ')).toLowerCase())}">
       <header><div><span class="tk">${esc(t)}</span> <button class="src ${manualSet().has(t) ? '' : 'on'}" data-act="quote-toggle" data-t="${esc(t)}" title="Source du cours : touchez pour changer">${manualSet().has(t) ? 'Cours manuel' : 'Cours Finnhub'}</button> ${stop != null && stop >= avg ? '<span class="pill win">Sans risque</span>' : ''}${state === 'danger' ? `<span class="pill loss">${stop == null ? 'Sans stop' : 'Stop atteint'}</span>` : ''}${wait ? `<span class="pill earn" title="Alerte à la clôture de l’unité d’entrée">Sous le stop · ${sTf === 'W' ? 'clôture hebdo' : 'clôture mensuelle'}</span>` : ''}
         <small>${vs.length > 1 ? vs.length + ' achats · ' : ''}${Core.days(first, today)} j · levier ${lev}${swapT > 0.0049 ? ` · swap ${usd(-swapT, true)}` : ''}</small></div>
         <div class="pl ${cls(un)}">${usd(un, true)}<small>${pct(un / (q * avg) * 100, true)}</small></div></header>
@@ -2561,12 +2562,26 @@ function viewPos() {
       ${(k => `<p class="smal">SMA de la position : ${k.length ? `<b>${k.map(smaLbl).join(' · ')}</b>` : '<span class="wrn">à choisir</span>'} <button class="btn sm" data-act="pos-sma" data-t="${esc(t)}">${k.length ? 'Modifier' : 'Choisir les SMA'}</button> <button class="btn sm" data-act="chart" data-t="${esc(t)}">Graphique</button></p>`)(posSmas(t))}
       ${vs.map(v => lotDetails(v, false, vs.length === 1)).join('')}
     </article>`;
-    return { t, html, dist: dist == null ? -1e9 : dist, un, expo };
+    return { t, html, dist: dist == null ? -1e9 : dist, un, expo, state, wait, sTf, stop, px, safe: stop != null && stop >= avg, unPct: q * avg > 0 ? un / (q * avg) * 100 : 0, lastD: last ? last.date : null, q: (t + ' ' + vs.map(v => v.lot.note || '').join(' ')).toLowerCase() };
   });
   const sorter = { risk: (a, b) => a.dist - b.dist, gain: (a, b) => b.un - a.un, expo: (a, b) => b.expo - a.expo, az: (a, b) => a.t < b.t ? -1 : 1 }[posSort] || ((a, b) => a.dist - b.dist);
   cards.sort(sorter);
-  const sortBtns = [['risk', 'Près du stop'], ['gain', 'Gain'], ['expo', 'Exposition'], ['az', 'A → Z']]
+  const sortBtns = [['risk', 'Distance au stop'], ['gain', 'Résultat'], ['expo', 'Exposition'], ['az', 'A → Z']]
     .map(([k, l]) => `<button class="btn sm" data-act="psort" data-f="${k}" aria-pressed="${posSort === k}">${l}</button>`).join('');
+  // Une ligne par position ; la carte complète n'est construite qu'à l'ouverture (une seule ouverte à la fois).
+  const watchOf = c => c.stop == null || c.dist < 2, fil = { watch: watchOf, safe: c => c.safe }[posFilter];
+  const fBtns = [['all', 'Toutes', cards.length], ['watch', 'Près du stop', cards.filter(watchOf).length], ['safe', 'Sans risque', cards.filter(c => c.safe).length]]
+    .map(([k, l, n]) => `<button class="btn sm" data-act="pfilter" data-f="${k}" aria-pressed="${posFilter === k}">${l} (${n})</button>`).join('');
+  const pRow = c => {
+    const k = 'p:' + c.t, o = radarOpen.has(k); radarFns[k] = c.html;
+    const below = c.stop != null && c.px != null && c.px <= c.stop;
+    const pill = c.wait ? `<span class="pill earn">sous le stop · ${esc(stopWaitLbl(c.sTf, c.lastD))}</span>` : c.state === 'danger' ? `<span class="pill loss">${c.stop == null ? 'Sans stop' : 'Stop atteint'}</span>` : c.safe ? '<span class="pill win">Sans risque</span>' : '';
+    const bc = below || c.stop == null ? 'bad' : c.safe ? 'good' : c.dist < 2 ? 'meh' : '';
+    const w = below || c.stop == null ? 4 : Math.max(4, Math.min(100, c.dist * 10));
+    return `<details class="pmini ${bc}" data-lazy="${k}" data-q="${esc(c.q)}" ${o ? 'open' : ''}><summary>
+      <span class="pm-l"><span class="pm-h"><span class="tk">${esc(c.t)}</span><span class="tf">${TF_SHORT[c.sTf]}</span>${pill}</span><span class="pm-bar"><i style="width:${w.toFixed(0)}%"></i></span></span>
+      <span class="pm-r"><b class="num ${cls(c.un)}">${usd(c.un, true)}</b><small>${c.stop == null ? 'sans stop' : 'stop ' + pct(c.dist)}</small></span></summary><div class="lazy">${o ? c.html() : ''}</div></details>`;
+  };
   const jl = views.filter(v => journalFilter === 'all' || (journalFilter === 'closed' ? v.ls.closed : !v.ls.closed))
     .sort((a, b) => (a.lot.date < b.lot.date ? 1 : -1));
   const expoRows = Object.keys(byT).map(t => [t, byT[t].reduce((a, v) => a + v.ls.rem * (v.last ? v.last.price : v.lot.price), 0)]).sort((a, b) => b[1] - a[1]);
@@ -2590,7 +2605,7 @@ function viewPos() {
   <section class="card">
     <div class="sec-head"><h2>Positions ouvertes</h2><button class="btn sm primary" data-act="go-calc">+ Nouvelle position</button></div>
     ${open.length ? `<div class="search"><input type="search" id="pos-q" value="${esc(posQuery)}" placeholder="Rechercher une action (ex. ABBV)" autocomplete="off" autocapitalize="characters" aria-label="Rechercher une action"><small id="pos-q-n"></small></div>
-    <div class="filters">${sortBtns}</div><div class="pgrid">${cards.map(c => c.html).join('')}</div>` : '<p class="lead">Aucune position ouverte. Calculez une taille dans « Nouvelle position », puis enregistrez l’achat.</p>'}
+    <div class="filters">${fBtns}</div><div class="filters"><small class="muted" style="align-self:center">Trier :</small>${sortBtns}</div><div class="plist">${(fil ? cards.filter(fil) : cards).map(pRow).join('') || '<p class="lead">Aucune position pour ce filtre.</p>'}</div>` : '<p class="lead">Aucune position ouverte. Calculez une taille dans « Nouvelle position », puis enregistrez l’achat.</p>'}
   </section>
   <section class="card">
     <div class="sec-head"><h2>Journal</h2>
@@ -3611,6 +3626,7 @@ document.addEventListener('click', e => {
     case 'prices': sheetPrices(); break;
     case 'jfilter': journalFilter = b.dataset.f; render(); break;
     case 'psort': posSort = b.dataset.f; render(); break;
+    case 'pfilter': posFilter = b.dataset.f; render(); break;
     case 'perf-range': perfRange = b.dataset.f; render(); break;
     case 'trade-year': tradeYear = b.dataset.f; tradeMonth = 'all'; render(); break;
     case 'trade-month': tradeMonth = b.dataset.f; render(); break;
@@ -3738,9 +3754,10 @@ document.addEventListener('click', e => {
     case 'quotes-off': confirmSheet('Retirer la clé Finnhub ?', 'Les cours ne seront plus récupérés sur cet appareil. Les clôtures déjà enregistrées restent.', 'Retirer', () => {
       try { localStorage.removeItem(QUOTE_KEY); } catch (e) {} Live.prices = {}; Live.at = 0; Live.miss = []; Live.err = ''; render(); toast('Clé retirée'); }); break;
     case 'open-lot': {
+      { const L = findLot(b.dataset.lot); if (L) { for (const k of [...radarOpen]) if (k.startsWith('p:')) radarOpen.delete(k); radarOpen.add('p:' + L.ticker); posFilter = 'all'; } }
       tab = 'pos'; openLots.add('p-' + b.dataset.lot); render();
       const d = document.querySelector(`details.lot[data-key="p-${b.dataset.lot}"]`);
-      if (d) { d.open = true; d.closest('.pcard, details').scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+      if (d) { d.open = true; (d.closest('.pmini') || d).scrollIntoView({ block: 'center', behavior: 'smooth' }); }
       break;
     }
     case 'sell': sheetSell(lot); break;
