@@ -10,7 +10,7 @@ import vm from 'node:vm';
 import { riskCheck } from './risk.mjs';
 import { labUnit, labCombo, packUnit, doneBars, LAB_PERIODS, LAB_MIN_TRADES } from './labsma.mjs';
 
-const { GIST_TOKEN, TWELVEDATA_KEY, FINNHUB_KEY, VAPID_PRIVATE_KEY, TEST_PUSH } = process.env;
+const { GIST_TOKEN, TWELVEDATA_KEY, FINNHUB_KEY, VAPID_PRIVATE_KEY, TEST_PUSH, MASSIVE_KEY } = process.env;
 const STATE_FILE = 'carnet-positions.json', RADAR_FILE = 'carnet-radar.json', LAB_FILE = 'carnet-lab.json';
 const LAB_PER_RUN = 40, LAB_REDO_DAYS = 30, T0 = Date.now();
 const SITE = 'https://clairnet1905.github.io/carnet-de-positions/';
@@ -322,7 +322,7 @@ if (payloads.length && NT.on && /^[A-Za-z0-9_-]{12,64}$/.test(NT.topic || '')) {
   let ok = 0;
   for (const p of payloads) {
     try {
-      const r = await fetch('https://ntfy.sh/', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const r = await fetch('https://ntfy.sh/', { method: 'POST', signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ topic: NT.topic, title: p.title, message: p.nb || p.body, click: new URL(p.url || './', SITE).href, priority: /^(risk|stops)/.test(p.tag || '') ? 4 : 3 }) });
       if (r.ok) ok++; else log('ntfy refusé : ' + r.status);
     } catch (e) { log('ntfy : ' + e.message); }
@@ -333,53 +333,82 @@ for (const x of sig) R.notified[x.key] = ls;
 for (const k of extra) R.notified[k] = ls;
 for (const k in R.notified) if (days(R.notified[k], ls) > 60) delete R.notified[k];
 
-// ----- Actualités des positions (Google News, sans clé : Reuters, Bloomberg… en tête) et dividendes à venir (calendrier Nasdaq, sans clé) -----
-// Titres et liens seulement. Une erreur ici n'arrête jamais le robot.
-const UA = { 'User-Agent': 'Mozilla/5.0 (compatible; carnet-de-positions-robot)', Accept: 'application/json, application/rss+xml, text/xml, */*' };
+// ----- Actualités des positions (Google News, sans clé : Reuters, Bloomberg… en tête) et dividendes à venir -----
+// Titres et liens seulement. Délai court sur chaque appel ; une erreur ici n'arrête jamais le robot. Rafraîchi au plus toutes les 3 heures.
+const UA = { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36', Accept: 'application/json, application/rss+xml, text/xml, */*', 'Accept-Language': 'en-US,en;q=0.9' };
+const get = (u, h) => fetch(u, { headers: h || UA, signal: AbortSignal.timeout(15000) });
 const NEWS_TIER = ['Reuters', 'Bloomberg', 'The Wall Street Journal', 'WSJ', 'Financial Times', 'CNBC', 'Barron', 'MarketWatch', 'Associated Press', 'AP News', "Investor's Business Daily", 'Yahoo Finance', 'Fortune', 'Forbes'];
+const PREMIUM = '(site:reuters.com OR site:bloomberg.com OR site:wsj.com OR site:cnbc.com OR site:ft.com OR site:barrons.com OR site:marketwatch.com)';
 const tierOf = src => { const i = NEWS_TIER.findIndex(x => (src || '').toLowerCase().includes(x.toLowerCase())); return i < 0 ? 99 : i; };
 const xmlTxt = x => (x || '').replace(/<!\[CDATA\[|\]\]>/g, '').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#(\d+);/g, (m, n) => String.fromCharCode(+n)).trim();
-const names = R.names || {}, news = {};
-let newsN = 0;
-for (const t of openT) {
-  try {
-    if (!names[t] && FINNHUB_KEY && /^[A-Z.]{1,6}$/.test(t)) {
-      const pr = await fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${encodeURIComponent(t)}&token=${FINNHUB_KEY}`).then(r => r.ok ? r.json() : null).catch(() => null);
-      if (pr && pr.name) names[t] = pr.name.replace(/,?\s+(Inc|Corp|Corporation|Co|Company|Ltd|plc|PLC|N\.V|SA|S\.A|Holdings?|Group)\.?$/i, '').trim();
-      await sleep(1100);
-    }
-    const q = (names[t] ? `"${names[t]}" OR ${t} stock` : `${t} stock`) + ' when:3d';
-    const x = await fetch('https://news.google.com/rss/search?q=' + encodeURIComponent(q) + '&hl=en-US&gl=US&ceid=US:en', { headers: UA }).then(r => r.ok ? r.text() : '');
-    const items = [...x.matchAll(/<item>([\s\S]*?)<\/item>/g)].map(m => {
-      const it = m[1], src = xmlTxt((it.match(/<source[^>]*>([\s\S]*?)<\/source>/) || [])[1]);
-      let title = xmlTxt((it.match(/<title>([\s\S]*?)<\/title>/) || [])[1]); if (src && title.endsWith(' - ' + src)) title = title.slice(0, -(src.length + 3));
-      return { t: title, s: src, u: xmlTxt((it.match(/<link>([\s\S]*?)<\/link>/) || [])[1]), d: new Date(xmlTxt((it.match(/<pubDate>([\s\S]*?)<\/pubDate>/) || [])[1])).getTime() || 0 };
-    }).filter(n => n.t && n.u);
-    const seen = new Set(), keep = items.sort((a, b) => tierOf(a.s) - tierOf(b.s) || b.d - a.d).filter(n => { const k = n.t.toLowerCase().slice(0, 60); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 5);
-    if (keep.length) { news[t] = keep.sort((a, b) => b.d - a.d); newsN += keep.length; }
-    await sleep(400);
-  } catch (e) { log('Actualités ' + t + ' : ' + e.message); }
+const rss = x => [...x.matchAll(/<item>([\s\S]*?)<\/item>/g)].map(m => {
+  const it = m[1], src = xmlTxt((it.match(/<source[^>]*>([\s\S]*?)<\/source>/) || [])[1]);
+  let title = xmlTxt((it.match(/<title>([\s\S]*?)<\/title>/) || [])[1]); if (src && title.endsWith(' - ' + src)) title = title.slice(0, -(src.length + 3));
+  return { t: title, s: src, u: xmlTxt((it.match(/<link>([\s\S]*?)<\/link>/) || [])[1]), d: new Date(xmlTxt((it.match(/<pubDate>([\s\S]*?)<\/pubDate>/) || [])[1])).getTime() || 0 };
+}).filter(n => n.t && n.u);
+const gnews = q => get('https://news.google.com/rss/search?q=' + encodeURIComponent(q) + '&hl=en-US&gl=US&ceid=US:en').then(r => r.ok ? r.text() : '').then(rss).catch(() => []);
+const names = R.names || {};
+let news = R.news || {}, newsAt = R.newsAt || 0;
+const byHand = process.env.GITHUB_EVENT_NAME === 'workflow_dispatch';
+if (byHand || Date.now() - newsAt > 3 * 3600e3) {
+  news = {}; let newsN = 0;
+  for (const t of openT) {
+    try {
+      if (!names[t] && FINNHUB_KEY && /^[A-Z.]{1,6}$/.test(t)) {
+        const pr = await get(`https://finnhub.io/api/v1/stock/profile2?symbol=${encodeURIComponent(t)}&token=${FINNHUB_KEY}`, {}).then(r => r.ok ? r.json() : null).catch(() => null);
+        if (pr && pr.name) names[t] = pr.name.replace(/,?\s+(Inc|Corp|Corporation|Co|Company|Ltd|plc|PLC|N\.V|SA|S\.A|Holdings?|Group)\.?$/i, '').trim();
+        await sleep(1100);
+      }
+      const nm = names[t], word = nm ? (nm.split(/\s+/).find(w => w.replace(/[^A-Za-z]/g, '').length >= 3) || nm).replace(/[^A-Za-z&'-]/g, '') : '';
+      // Titre pertinent : il cite l'entreprise (premier mot significatif du nom) ou le ticker.
+      const rel = n => (word && n.t.toLowerCase().includes(word.toLowerCase())) || new RegExp('\\b' + t.replace('.', '\\.') + '\\b').test(n.t);
+      const prem = await gnews((nm ? `"${nm}"` : `${t} stock`) + ' ' + PREMIUM + ' when:7d'); await sleep(300);
+      const gen = await gnews((nm ? `"${nm}" OR ${t} stock` : `${t} stock`) + ' when:3d'); await sleep(300);
+      const seen = new Set(), keep = prem.concat(gen).filter(n => rel(n) && !/Stock (Price|Quote)|Stock Forecasts?|Price Target History/i.test(n.t)).sort((a, b) => tierOf(a.s) - tierOf(b.s) || b.d - a.d)
+        .filter(n => { const k = n.t.toLowerCase().slice(0, 60); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 5);
+      if (keep.length) { news[t] = keep.sort((a, b) => b.d - a.d); newsN += keep.length; }
+    } catch (e) { log('Actualités ' + t + ' : ' + e.message); }
+  }
+  newsAt = Date.now();
+  log(`Actualités : ${newsN} titre(s) pour ${Object.keys(news).length} position(s) · ${Object.values(news).flat().filter(n => tierOf(n.s) < 7).length} de Reuters, Bloomberg, WSJ, FT, CNBC, Barron’s ou MarketWatch`);
 }
-log(`Actualités : ${newsN} titre(s) pour ${Object.keys(news).length} position(s)`);
-const divcal = [], divT = new Set(openT.concat(S.watch.filter(w => !w.idx).map(w => w.ticker)));
-for (let d = ls, k = 0; k < 10; d = addDays(d, 1)) {
-  const wd = new Date(d + 'T12:00:00Z').getUTCDay(); if (wd === 0 || wd === 6 || d === ls) continue; k++;
-  try {
-    const j = await fetch('https://api.nasdaq.com/api/calendar/dividends?date=' + d, { headers: UA }).then(r => r.ok ? r.json() : null);
-    for (const r of (((j || {}).data || {}).calendar || {}).rows || []) {
-      if (!divT.has(r.symbol) || !(r.dividend_Rate > 0)) continue;
-      const iso = v => { const m = /^(\d\d)\/(\d\d)\/(\d{4})$/.exec(v || ''); return m ? `${m[3]}-${m[1]}-${m[2]}` : null; };
-      divcal.push({ t: r.symbol, ex: iso(r.dividend_Ex_Date) || d, amt: r.dividend_Rate, pay: iso(r.payment_Date) });
+// Dividendes : Massive (ex-Polygon, clé gratuite facultative MASSIVE_KEY), sinon calendrier Nasdaq (souvent refusé aux serveurs de GitHub).
+let divcal = R.divcal || [], divAt = R.divAt || 0;
+if (byHand || Date.now() - divAt > 3 * 3600e3) {
+  const divT = new Set(openT.concat(S.watch.filter(w => !w.idx).map(w => w.ticker))), found = [];
+  let to = ls; for (let k = 0; k < 10; ) { to = addDays(to, 1); const wd = new Date(to + 'T12:00:00Z').getUTCDay(); if (wd && wd !== 6) k++; }
+  let src = '';
+  if (MASSIVE_KEY) {
+    for (const host of ['https://api.massive.com', 'https://api.polygon.io']) {
+      try {
+        const j = await get(`${host}/v3/reference/dividends?ex_dividend_date.gt=${ls}&ex_dividend_date.lte=${to}&limit=1000&apiKey=${MASSIVE_KEY}`, {}).then(r => r.ok ? r.json() : null);
+        if (!j || !Array.isArray(j.results)) continue;
+        for (const r of j.results) if (divT.has(r.ticker) && r.cash_amount > 0) found.push({ t: r.ticker, ex: r.ex_dividend_date, amt: r.cash_amount, pay: r.pay_date || null });
+        src = 'Massive'; break;
+      } catch (e) { log('Dividendes Massive : ' + e.message); }
     }
-    await sleep(300);
-  } catch (e) { log('Dividendes ' + d + ' : ' + e.message); }
+  }
+  if (!src) {
+    let fails = 0;
+    for (let d = addDays(ls, 1); d <= to && fails < 2; d = addDays(d, 1)) {
+      const wd = new Date(d + 'T12:00:00Z').getUTCDay(); if (wd === 0 || wd === 6) continue;
+      try {
+        const j = await get('https://api.nasdaq.com/api/calendar/dividends?date=' + d, Object.assign({ Origin: 'https://www.nasdaq.com', Referer: 'https://www.nasdaq.com/' }, UA)).then(r => r.ok ? r.json() : null);
+        if (!j) { fails++; continue; }
+        const iso = v => { const m = /^(\d\d)\/(\d\d)\/(\d{4})$/.exec(v || ''); return m ? `${m[3]}-${m[1]}-${m[2]}` : null; };
+        for (const r of ((j.data || {}).calendar || {}).rows || []) if (divT.has(r.symbol) && r.dividend_Rate > 0) found.push({ t: r.symbol, ex: iso(r.dividend_Ex_Date) || d, amt: r.dividend_Rate, pay: iso(r.payment_Date) });
+        src = 'Nasdaq'; await sleep(300);
+      } catch (e) { fails++; log('Dividendes Nasdaq ' + d + ' : ' + e.message); }
+    }
+  }
+  if (src) { divcal = found; divAt = Date.now(); log(`Dividendes à venir (${src}) : ${found.length} détachement(s) sur vos actions`); }
+  else log('Dividendes à venir : aucune source joignable ce soir (ajoutez une clé gratuite Massive : secret MASSIVE_KEY).');
 }
-log(`Dividendes à venir : ${divcal.length} détachement(s) sur vos actions`);
 
 // ----- Enregistrement -----
 const packed = {};
 for (const s in hist) if (need[s]) packed[s] = pack(hist[s], candleSym.has(s) ? CANDLE_N : 0);   // les actions retirées du radar sont oubliées
-R = { v: 1, ls, adj: ADJ, at: Date.now(), hist: packed, divfix: DF, notified: R.notified, risk: riskState, deadSubs: dead, errors, news, newsAt: Date.now(), divcal, names,
+R = { v: 1, ls, adj: ADJ, at: Date.now(), hist: packed, divfix: DF, notified: R.notified, risk: riskState, deadSubs: dead, errors, news, newsAt, divcal, divAt, names,
   log: [{ at: Date.now(), ls, full: full.length, daily: daily.length, resync: Math.min(resync.length, RESYNC_PER_RUN), signals: sig.length, sent, td: tdCalls, errors: Object.keys(errors).length }].concat(R.log || []).slice(0, 30) };
 const body = JSON.stringify(R);
 const labBody = JSON.stringify(L);
