@@ -350,7 +350,56 @@ const Core = (() => {
     return { heat, by, noStop, expo, locked, lots, pos: tickers.size };
   }
 
+  // ----- Rapport d'historique de trading MT5 (PDF de MT5, texte ligne par ligne) -----
+  // Transactions : achats (in), ventes (out), dividendes et opérations de solde ; positions ouvertes ; résumé du compte.
+  // Montants en texte MT5 : point décimal, espace comme séparateur des milliers pour le solde (« 1 095.16 »).
+  const MT_BAL = '-?(?:0|[1-9]\\d{0,2}(?: \\d{3})*)\\.\\d+';
+  const MT_HEAD = /^(\d{4})\.(\d\d)\.(\d\d) (\d\d:\d\d:\d\d) (\d+) (.+)$/;
+  const MT_TRADE = new RegExp('^(\\S+) (buy|sell) (in|out|in/out|out/in) ([\\d.]+) ([\\d.]+) (\\d+) (-?[\\d.]+) (-?[\\d.]+) (-?[\\d.]+) (-?[\\d.]+) (' + MT_BAL + ')(?: (\\D.*))?$');
+  const MT_OP = new RegExp('^(balance|dividend|credit|charge|correction|bonus|commission|interest|tax|deposit|withdrawal)\\b(?: (?:in|out))?((?: -?[\\d.]+)*?) (-?[\\d.]+) (' + MT_BAL + ')(?: (\\D.*))?$', 'i');
+  const mtNum = x => parseFloat(String(x).replace(/ /g, ''));
+  const mtDate = (y, m, d) => `${y}-${m}-${d}`;
+  function parseMt5(text) {
+    const lines = String(text || '').replace(/[\u00a0\u202f\u2009]/g, ' ').split(/\r?\n/).map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    const all = lines.join('\n'), rep = { acct: null, gen: null, deals: [], ops: [], open: [], sum: {}, from: null, to: null };
+    let m = all.match(/(?:Compte|Account):\s*(\d+)/); if (m) rep.acct = m[1];
+    m = all.match(/Date:\s*(\d{4})\.(\d\d)\.(\d\d) (\d\d:\d\d)/); if (m) rep.gen = { date: mtDate(m[1], m[2], m[3]), time: m[4] };
+    const val = re => { const x = all.match(re); return x ? mtNum(x[1]) : null; };
+    const N = '(-?\\d[\\d ]*\\.\\d+)';
+    rep.sum = {
+      balance: val(new RegExp('(?:Solde|Balance):\\s*' + N)),
+      equity: val(new RegExp('(?:Action|Equity|Fonds propres|Capitaux propres):\\s*' + N)),
+      margin: val(new RegExp('(?:^|\\s)(?:Marge|Margin):\\s*' + N)),
+      level: val(/(?:Niveau de la marge|Niveau de marge|Margin Level):\s*([\d .]+)%/)
+    };
+    let sec = '';
+    for (const l of lines) {
+      if (/^(Positions ouvertes|Open Positions)$/i.test(l)) { sec = 'open'; continue; }
+      if (/^(Transactions|Deals)$/i.test(l)) { sec = 'deals'; continue; }
+      if (/^(Positions|Ordres|Orders|Résultats|Results|Working Orders)$/i.test(l)) { sec = ''; continue; }
+      const h = l.match(MT_HEAD); if (!h) continue;
+      const date = mtDate(h[1], h[2], h[3]), time = h[4], id = h[5], rest = h[6];
+      if (sec === 'deals') {
+        let x = rest.match(MT_TRADE);
+        if (x) { rep.deals.push({ date, time, id, sym: x[1], type: x[2], dir: x[3], vol: +x[4], price: +x[5], order: x[6], comm: +x[7], fee: +x[8], swap: +x[9], profit: +x[10], bal: mtNum(x[11]), comment: x[12] || '' }); }
+        else if ((x = rest.match(MT_OP))) {
+          const c = x[5] || '', sym = (c.match(/([A-Z0-9][A-Z0-9-]*(?:\.[A-Z0-9]+)*\.[A-Z]{2,})\s*$/) || [])[1] || null, pos = (c.match(/\b(\d{6,})\b/) || [])[1] || null;
+          rep.ops.push({ date, time, id, kind: x[1].toLowerCase(), amount: +x[3], bal: mtNum(x[4]), comment: c, sym, pos });
+        } else continue;
+      } else if (sec === 'open') {
+        const x = rest.match(/^(\S+) (buy|sell) ([\d.]+) (.+)$/); if (!x) continue;
+        const n = x[4].split(' ').filter(t => /^-?[\d.]+$/.test(t)).map(Number); if (n.length < 4) continue;
+        rep.open.push({ date, time, pos: id, sym: x[1], type: x[2], vol: +x[3], price: n[0], mkt: n[n.length - 3], swap: n[n.length - 2], profit: n[n.length - 1] });
+      } else continue;
+      if (!rep.from || date < rep.from) rep.from = date;
+      if (!rep.to || date > rep.to) rep.to = date;
+    }
+    return rep;
+  }
+  // Symbole MT5 -> ticker du carnet : « ADBE.NAS » -> « ADBE ». Sans suffixe de place (forex, or, indices) : null.
+  function mt5Ticker(sym) { const m = String(sym || '').match(/^(.+)\.([A-Z]{2,5})$/); return m ? m[1] : null; }
+
   return { usd, pct, qty, num, numOr, isNum, roundTo, floorTo, days, normFees, commission, feeIn, feeOut, setSwap, sizePosition,
-    lotState, priceOn, lastPrice, accountState, observations, twr, periodReturn, maxDrawdown, frequency, tradeStats, stopAnalysis, riskSummary };
+    lotState, priceOn, lastPrice, accountState, observations, twr, periodReturn, maxDrawdown, frequency, tradeStats, stopAnalysis, riskSummary, parseMt5, mt5Ticker };
 })();
 /*CORE-END*/

@@ -1529,6 +1529,7 @@ function tonightCard() {
     <h3>3. Avant d’aller dormir</h3>
     <div class="tnr"><span>Résultats d’ici le ${fmtDate(nextD)} : ${earnT.length ? '<b>' + earnT.map(esc).join(', ') + '</b>' : 'aucun'}</span>${earnT.length ? '<button class="btn sm" data-act="go-tab" data-tab="earn">Voir</button>' : '<small>ok</small>'}</div>
     <div class="tnr"><span>Santé des données : ${H.length ? esc(H[0].title.replace(/<[^>]+>/g, '')) + (H.length > 1 ? ` <small>+ ${H.length - 1}</small>` : '') : 'tout est bon'}</span>${H.length ? '<button class="btn sm" data-act="go-health">Voir</button>' : '<small>ok</small>'}</div>
+    ${S.lots.some(l => !l.demo) ? `<div class="tnr"><span>Historique MT5 : ${S.settings.mt5 && S.settings.mt5.upTo ? 'importé jusqu’au ' + fmtDate(S.settings.mt5.upTo) : 'jamais importé'}</span><button class="btn sm" data-act="mt5-import">Importer</button></div>` : ''}
     <div class="tnr"><span>Risque : ${over.length ? `<b class="neg">${esc(over.join(' · '))}</b>` : 'dans vos limites'}</span>${over.length ? '<button class="btn sm" data-act="risk-set">Limites</button>' : '<small>ok</small>'}</div>
   </section>`;
 }
@@ -2678,7 +2679,7 @@ function viewSettings() {
   </section>
   <div class="grid2">
   <section class="card">
-    <div class="sec-head"><h2>Versements, retraits et rattrapages</h2><div class="row"><button class="btn sm" data-act="add-catchup">Rattrapage</button><button class="btn sm primary" data-act="add-flow">Ajouter</button></div></div>
+    <div class="sec-head"><h2>Versements, retraits et rattrapages</h2><div class="row"><button class="btn sm" data-act="mt5-import">Import MT5</button><button class="btn sm" data-act="add-catchup">Rattrapage</button><button class="btn sm primary" data-act="add-flow">Ajouter</button></div></div>
     <p class="lead">Versements et retraits : flux externes, ils changent la valeur nette, jamais la performance. Rattrapage : un résultat déjà réalisé chez le courtier mais pas saisi trade par trade ; il compte dans la valeur et la performance, pas dans les statistiques de trades.</p>
     <div class="row" style="margin-bottom:8px"><button class="btn sm" data-act="acct">${S.settings.acct ? 'Modifier' : 'Saisir'} le relevé depuis l’ouverture du compte</button>${S.settings.acct ? `<small>${usd(S.settings.acct.deposits)} déposés au ${fmtDate(S.settings.acct.at)}</small>` : ''}</div>
     ${flows.length ? `<div class="tbl"><table><thead><tr><th>Date</th><th>Type</th><th class="n">Montant</th><th></th><th></th></tr></thead><tbody>${flows.map(x => `<tr><td>${fmtDate(x.date)}</td><td>${x.kind === 'pnl' ? 'Rattrapage' : x.amount >= 0 ? 'Versement' : 'Retrait'}${x.note ? ' · ' + esc(x.note) : ''}</td><td class="n">${usd(x.amount, true)}</td><td>${x.demo ? '<span class="pill demo">Démo</span>' : ''}</td><td><button class="btn sm" data-act="del-flow" data-id="${x.id}">Suppr.</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">Aucun flux saisi.</p>'}
@@ -3170,6 +3171,203 @@ function swapBook(D) {
   }
   return { rows, tot: rows.reduce((a, r) => a + r.cur, 0), allEst: rows.every(r => Math.abs(r.man) < 0.005) };
 }
+// ----- Import du rapport d'historique MT5 (PDF partagé depuis MT5, ou texte collé) -----
+// Lu sur l'appareil, rien n'est envoyé. Compare au carnet à partir du dernier rapprochement ; rien n'est modifié sans case cochée.
+const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+const loadScript = src => new Promise((ok, ko) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => ko(new Error('Lecteur PDF indisponible (connexion ?). Collez plutôt le texte du rapport.')); document.head.appendChild(s); });
+// Texte du PDF ligne par ligne : morceaux regroupés par hauteur, puis triés de gauche à droite.
+async function pdfText(file) {
+  if (!window.pdfjsLib) await loadScript(PDFJS + 'pdf.min.js');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js';
+  const doc = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise, out = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    const tc = await (await doc.getPage(p)).getTextContent(), rows = [];
+    for (const it of tc.items) {
+      if (!it.str || !it.str.trim()) continue;
+      const y = it.transform[5]; let r = rows.find(r => Math.abs(r.y - y) < 2.5);
+      if (!r) rows.push(r = { y, it: [] });
+      r.it.push({ x: it.transform[4], w: it.width || 0, s: it.str });
+    }
+    rows.sort((a, b) => b.y - a.y);
+    for (const r of rows) { r.it.sort((a, b) => a.x - b.x); let line = '', end = null; for (const t of r.it) { line += (end != null && t.x - end > 0.8 ? ' ' : '') + t.s; end = t.x + t.w; } out.push(line); }
+  }
+  return out.join('\n');
+}
+// Le solde de chaque ligne doit suivre le précédent : sinon une ligne n'a pas été lue.
+function mt5Breaks(rep) {
+  const ev = rep.deals.map(d => [d.date + d.time + d.id, d.profit + d.comm + d.fee + d.swap, d.bal]).concat(rep.ops.map(o => [o.date + o.time + o.id, o.amount, o.bal])).sort((a, b) => a[0] < b[0] ? -1 : 1);
+  let n = 0; for (let i = 1; i < ev.length; i++) if (ev[i][2] != null && ev[i - 1][2] != null && Math.abs(ev[i - 1][2] + ev[i][1] - ev[i][2]) > 0.011) n++;
+  return n;
+}
+function mt5Since() {
+  const m = S.settings.mt5; if (m && m.upTo) return m.upTo;
+  return S.flows.filter(f => f.kind === 'pnl').map(f => f.date).sort().pop() || S.settings.startDate;
+}
+// Date de la photo du compte : dernière séance close à l'édition du rapport (heure du serveur MT5, clôture US vers 23 h).
+const mt5SnapDate = rep => !rep.gen ? rep.to : lastWeekday(wdOf(rep.gen.date) >= 1 && wdOf(rep.gen.date) <= 5 && rep.gen.time < '23:00' ? addDays(rep.gen.date, -1) : rep.gen.date);
+// Écarts entre le rapport et le carnet. Chaque ligne : { g (groupe), txt, on (cochée par défaut), fix (st => void) } ; sans fix : information.
+function mt5Diff(rep, since) {
+  const real = S.lots.filter(l => !l.demo), have = new Set(real.map(l => l.ticker));
+  const tk = sym => { if (have.has(sym)) return sym; const b = Core.mt5Ticker(sym); return b; };
+  const out = [], ign = new Set(), used = new Set(), pend = {}, cnt = { sellOk: 0, buyOk: 0, divOk: 0, opOk: 0, openOk: 0 };
+  const dd = (a, b) => Math.abs(Core.days(a, b)), px = (a, b) => Math.abs(a - b) <= Math.max(0.011, b * 0.005);
+  const L = id => (st => st.lots.find(l => l.id === id));
+  const deals = rep.deals.filter(d => d.date > since);
+  // Ventes de positions longues
+  for (const d of deals.filter(d => d.dir === 'out')) {
+    const t = tk(d.sym); if (!t || d.type !== 'sell') { ign.add(d.sym); continue; }
+    const cand = [];
+    for (const l of real.filter(l => l.ticker === t)) for (const e of l.events) if (e.type === 'sell' && !used.has(e.id) && dd(e.date, d.date) <= 1 && px(e.price, d.price)) cand.push([l, e]);
+    const one = cand.find(([, e]) => Math.abs(e.qty - d.vol) < 1e-6), sum = cand.reduce((a, [, e]) => a + e.qty, 0);
+    const hit = one ? [one] : cand.length && Math.abs(sum - d.vol) < 1e-6 ? cand : null;
+    const realFee = Core.roundTo(-(d.comm + d.fee), 2);
+    if (hit) {
+      cnt.sellOk++; hit.forEach(([, e]) => used.add(e.id));
+      const appFee = hit.reduce((a, [, e]) => a + (e.fee || 0), 0);
+      if (Math.abs(appFee - realFee) > 0.005) { const ids = hit.map(([l, e]) => [l.id, e.id, e.qty]);
+        out.push({ g: 'fee', txt: `${esc(t)} vente du ${fmtDate(d.date)} : frais ${usd(appFee)} → <b>${usd(realFee)}</b>`, on: true,
+          fix: st => { for (const [li, ei, q] of ids) { const e = st.lots.find(l => l.id === li).events.find(x => x.id === ei); e.fee = Core.roundTo(realFee * q / d.vol, 4); } } }); }
+      continue;
+    }
+    const rem = real.filter(l => l.ticker === t && l.date <= d.date).reduce((a, l) => a + Core.lotState(l).rem, 0);
+    if (rem < d.vol - 1e-6) { out.push({ g: 'sell', txt: `<b>${esc(t)}</b> ${fmtDate(d.date)} · ${qty(d.vol)} à ${usd(d.price)} : ${rem > 0 ? `seulement ${qty(rem)} ouverte(s) dans l’app` : 'aucune position ouverte dans l’app'}` }); continue; }
+    pend[t] = (pend[t] || 0) + d.vol;
+    out.push({ g: 'sell', txt: `<b>${esc(t)}</b> ${fmtDate(d.date)} · ${qty(d.vol)} à ${usd(d.price)} · résultat MT5 ${usd(d.profit, true)}`, on: true,
+      fix: st => { let q = d.vol; for (const l of st.lots.filter(l => l.ticker === t && !l.demo && l.date <= d.date).sort((a, b) => a.date < b.date ? -1 : 1)) {
+        const r = Core.lotState(l).rem; if (q <= 1e-9 || r <= 1e-9) continue; const k = Math.min(q, r);
+        l.events.push({ id: uid(), type: 'sell', date: d.date, qty: k, price: d.price, fee: Core.roundTo(realFee * k / d.vol, 4), mt5: d.id }); q -= k; } } });
+  }
+  for (const l of real) for (const e of l.events) if (e.type === 'sell' && e.date > since && e.date <= rep.to && !used.has(e.id))
+    out.push({ g: 'sell', txt: `<b>${esc(l.ticker)}</b> vente du ${fmtDate(e.date)} · ${qty(e.qty)} à ${usd(e.price)} : dans l’app, pas dans MT5`, lot: l.id });
+  // Achats
+  const usedL = new Set();
+  for (const d of deals.filter(d => d.dir === 'in')) {
+    const t = tk(d.sym); if (!t || d.type !== 'buy') { ign.add(d.sym); continue; }
+    const l = real.find(l => l.ticker === t && !usedL.has(l.id) && dd(l.date, d.date) <= 1 && Math.abs(l.qty - d.vol) < 1e-6 && px(l.price, d.price));
+    if (!l) { out.push({ g: 'buy', txt: `<b>${esc(t)}</b> ${fmtDate(d.date)} · ${qty(d.vol)} à ${usd(d.price)} : absent de l’app, à saisir avec son stop (Calculateur)` }); continue; }
+    cnt.buyOk++; usedL.add(l.id);
+    const realFee = Core.roundTo(-(d.comm + d.fee), 2);
+    if (Math.abs((l.entryFee || 0) - realFee) > 0.005) out.push({ g: 'fee', txt: `${esc(t)} achat du ${fmtDate(d.date)} : frais ${usd(l.entryFee || 0)} → <b>${usd(realFee)}</b>`, on: true, fix: st => { L(l.id)(st).entryFee = realFee; } });
+  }
+  for (const l of real) if (l.date > since && l.date <= rep.to && !usedL.has(l.id)) out.push({ g: 'buy', txt: `<b>${esc(l.ticker)}</b> achat du ${fmtDate(l.date)} · ${qty(l.qty)} à ${usd(l.price)} : dans l’app, pas dans MT5`, lot: l.id });
+  // Dividendes et opérations de solde
+  for (const o of rep.ops.filter(o => o.date > since)) {
+    if (o.kind === 'dividend') {
+      const t = o.sym ? tk(o.sym) : null;
+      if (!t) { out.push({ g: 'div', txt: `Dividende ${usd(o.amount, true)} du ${fmtDate(o.date)} : action non reconnue (${esc(o.comment)})` }); continue; }
+      const ex = real.some(l => l.ticker === t && l.events.some(e => (e.type === 'dividend' || e.type === 'adjust') && !used.has(e.id) && dd(e.date, o.date) <= 5 && Math.abs(e.amount - o.amount) < 0.011 && used.add(e.id)));
+      if (ex) { cnt.divOk++; continue; }
+      const ls = real.filter(l => l.ticker === t && l.date < o.date), lot = ls.find(l => Core.lotState(l, addDays(o.date, -1)).rem > 0) || ls.sort((a, b) => a.date < b.date ? 1 : -1)[0];
+      if (!lot) { out.push({ g: 'div', txt: `<b>${esc(t)}</b> dividende ${usd(o.amount, true)} du ${fmtDate(o.date)} : action absente du carnet` }); continue; }
+      out.push({ g: 'div', txt: `<b>${esc(t)}</b> ${fmtDate(o.date)} · ${usd(o.amount, true)}`, on: true, fix: st => { L(lot.id)(st).events.push({ id: uid(), type: 'dividend', date: o.date, amount: o.amount, note: 'MT5', mt5: o.id }); } });
+    } else {
+      if (S.flows.some(f => dd(f.date, o.date) <= 2 && Math.abs(f.amount - o.amount) < 0.011)) { cnt.opOk++; continue; }
+      const ext = /d[ée]p[oô]t|deposit|withdraw|retrait|virement|transfer|wire/i.test(o.comment);
+      out.push({ g: 'op', txt: `${fmtDate(o.date)} · ${usd(o.amount, true)} · ${esc(o.comment || o.kind)} <small>(${ext ? 'versement ou retrait' : 'rattrapage'})</small>`, on: true,
+        fix: st => { st.flows.push(Object.assign({ id: uid(), date: o.date, amount: o.amount, note: 'MT5 : ' + (o.comment || o.kind), mt5: o.id }, ext ? {} : { kind: 'pnl' })); } });
+    }
+  }
+  // Positions ouvertes : quantités, prix d'entrée, swap réel
+  const D = mt5SnapDate(rep), mt = {};
+  for (const p of rep.open) { const t = tk(p.sym); if (!t || p.type !== 'buy') { ign.add(p.sym); continue; } (mt[t] = mt[t] || []).push(p); }
+  const appOpen = {}; for (const l of real) { const ls = Core.lotState(l); if (!ls.closed) (appOpen[l.ticker] = appOpen[l.ticker] || []).push([l, ls]); }
+  for (const t of [...new Set(Object.keys(mt).concat(Object.keys(appOpen)))].sort()) {
+    const P = mt[t] || [], A = appOpen[t] || [];
+    if (!A.length) { out.push({ g: 'open', txt: `<b>${esc(t)}</b> : ouverte dans MT5 (${qty(P.reduce((a, p) => a + p.vol, 0))}), absente de l’app` }); continue; }
+    if (!P.length) { if (rep.open.length && A.reduce((a, [, ls]) => a + ls.rem, 0) - (pend[t] || 0) > 1e-6) out.push({ g: 'open', txt: `<b>${esc(t)}</b> : ouverte dans l’app, fermée dans MT5 (vente à saisir ?)`, lot: A[0][0].id }); continue; }
+    const qm = P.reduce((a, p) => a + p.vol, 0), qa = A.reduce((a, [, ls]) => a + ls.rem, 0) - (pend[t] || 0);
+    if (Math.abs(qm - qa) > 1e-6) { out.push({ g: 'open', txt: `<b>${esc(t)}</b> : ${qty(qa)} dans l’app, ${qty(qm)} dans MT5`, lot: A[0][0].id }); continue; }
+    if (A.length === 1 && P.length === 1 && Math.abs(A[0][0].price - P[0].price) > Math.max(0.005, P[0].price * 0.0005)) {
+      const id = A[0][0].id, v = P[0].price;
+      out.push({ g: 'open', txt: `<b>${esc(t)}</b> : prix d’entrée ${usd(A[0][0].price)} → <b>${usd(v)}</b> (MT5)`, on: false, fix: st => { L(id)(st).price = v; } });
+    } else cnt.openOk++;
+  }
+  // Swap réel des positions ouvertes : swap de la position + swap déjà pris sur ses ventes partielles.
+  if (rep.open.length) {
+    const bk = swapBook(D), fix = [];
+    for (const t of Object.keys(mt)) {
+      const rows = bk.rows.filter(r => r.lot.ticker === t); if (!rows.length) continue;
+      const first = mt[t].map(p => p.date).sort()[0];
+      const realSw = -mt[t].reduce((a, p) => a + p.swap, 0) - rep.deals.filter(d => d.dir === 'out' && tk(d.sym) === t && d.date >= first).reduce((a, d) => a + d.swap, 0);
+      const cur = rows.reduce((a, r) => a + r.cur, 0);
+      if (Math.abs(realSw - cur) < 0.05) continue;
+      fix.push({ t, realSw, cur, rows: rows.map(r => ({ id: r.lot.id, w: cur > 0 ? r.cur / cur : r.expo / rows.reduce((a, x) => a + x.expo, 0), man: r.man })) });
+    }
+    if (fix.length) out.push({ g: 'swap', txt: `${fix.length} position(s) : swap estimé ${usd(fix.reduce((a, f) => a + f.cur, 0))} → réel <b>${usd(fix.reduce((a, f) => a + f.realSw, 0))}</b> <small>(${fix.slice(0, 6).map(f => esc(f.t)).join(', ')}${fix.length > 6 ? '…' : ''})</small>`, on: true,
+      fix: st => { for (const f of fix) for (const r of f.rows) { const amt = Core.roundTo(f.realSw * r.w - r.man, 2); if (Math.abs(amt) >= 0.005) st.lots.find(l => l.id === r.id).events.push({ id: uid(), type: 'funding', date: D, amount: amt, note: 'Swap réel MT5 (import)' }); } } });
+  }
+  // Photo du compte : devient le rapprochement MT5 du jour.
+  if (rep.sum.equity > 0) out.push({ g: 'acct', txt: `Rapprochement du ${fmtDate(D)} : valeur nette ${usd(rep.sum.equity)}${rep.sum.margin != null ? ' · marge ' + usd(rep.sum.margin) : ''}`, on: true,
+    fix: st => { st.snapshots = st.snapshots.filter(s => s.date !== D); const mu = rep.sum.margin; st.snapshots.push({ id: uid(), date: D, netValue: rep.sum.equity, marginUsed: mu, marginAvail: mu == null ? null : Core.roundTo(rep.sum.equity - mu, 2), swap: Core.roundTo(rep.open.reduce((a, p) => a + p.swap, 0), 2), src: 'mt5' }); } });
+  return { out, cnt, ign: [...ign].sort(), D };
+}
+// Solde et valeur nette de l'app, comparables à MT5 : cours du rapport pour les positions ouvertes ;
+// le swap des positions ouvertes est dans le flottant MT5, pas dans le solde.
+function mt5AppAcct(st, D, rep) {
+  for (const p of rep.open) { const t = st.lots.some(l => l.ticker === p.sym) ? p.sym : Core.mt5Ticker(p.sym); if (!t || !(p.mkt > 0)) continue;
+    const h = st.prices[t] = (st.prices[t] || []).filter(x => x.date < D); h.push({ date: D, price: p.mkt }); }
+  const a = Core.accountState(st, D, 'last');
+  return { bal: a.equity - a.unreal - rep.open.reduce((x, p) => x + p.swap, 0), eq: a.equity, margin: a.margin };
+}
+let mt5Cur = null;
+const MT5_G = [['sell', 'Ventes absentes de l’app'], ['buy', 'Achats absents de l’app'], ['div', 'Dividendes'], ['op', 'Autres opérations du compte'], ['fee', 'Commissions réelles'], ['swap', 'Swap réel'], ['open', 'Positions ouvertes'], ['acct', 'Compte']];
+function mt5Render(form) {
+  const box = $('#mt5Diff'); if (!box || !mt5Cur) return;
+  const since = F(form, 'since') || mt5Since();
+  if (mt5Cur.since !== since) { mt5Cur.since = since; mt5Cur.d = mt5Diff(mt5Cur.rep, since); mt5Cur.off = new Set(mt5Cur.d.out.map((x, i) => x.fix && !x.on ? i : -1).filter(i => i >= 0)); }
+  else form.querySelectorAll('input[name="mt5i"]').forEach(c => { if (c.checked) mt5Cur.off.delete(+c.value); else mt5Cur.off.add(+c.value); });
+  const { d, rep } = mt5Cur;
+  const pick = d.out.map((x, i) => x.fix && !mt5Cur.off.has(i) ? i : -1).filter(i => i >= 0);
+  const st = JSON.parse(JSON.stringify({ lots: S.lots, flows: S.flows, snapshots: S.snapshots, prices: S.prices, settings: S.settings }));
+  for (const i of pick) d.out[i].fix(st);
+  const A = mt5AppAcct(st, d.D, rep), c = d.cnt;
+  const ok = { sell: c.sellOk && `${c.sellOk} déjà dans l’app`, buy: c.buyOk && `${c.buyOk} déjà dans l’app`, div: c.divOk && `${c.divOk} déjà dans l’app`, op: c.opOk && `${c.opOk} déjà dans l’app`, open: c.openOk && `${c.openOk} identiques` };
+  const row = (x, i) => `<div class="tnr"><span>${x.txt}</span>${x.fix ? `<input type="checkbox" name="mt5i" value="${i}" ${mt5Cur.off.has(i) ? '' : 'checked'} aria-label="Appliquer">` : x.lot ? `<button type="button" class="btn sm" data-act="open-lot" data-lot="${x.lot}">Voir</button>` : '<small>à vérifier</small>'}</div>`;
+  const gap = (a, b) => Math.abs(a - b) < 0.015 ? '<span class="pill win">ok</span>' : `<span class="pill warn">écart ${usd(a - b, true)}</span>`;
+  box.innerHTML = MT5_G.map(([g, lab]) => { const xs = d.out.map((x, i) => [x, i]).filter(([x]) => x.g === g); if (!xs.length && !ok[g]) return '';
+      return `<h3>${lab} <small>· ${xs.length ? xs.length + ' à voir' : 'rien à faire'}</small></h3>${ok[g] ? `<div class="tnr"><span>${ok[g]}</span><span class="pill win">ok</span></div>` : ''}${xs.map(([x, i]) => row(x, i)).join('')}`; }).join('')
+    + `<h3>Après import</h3>
+      <div class="tnr"><span>Solde MT5 ${usd(rep.sum.balance)} · app ${usd(A.bal)}</span>${rep.sum.balance != null ? gap(A.bal, rep.sum.balance) : ''}</div>
+      <div class="tnr"><span>Valeur nette MT5 ${usd(rep.sum.equity)} · app ${usd(A.eq)}</span>${rep.sum.equity ? (Math.abs(A.eq / rep.sum.equity - 1) < 0.01 ? '<span class="pill win">ok</span>' : `<span class="pill warn">écart ${usd(A.eq - rep.sum.equity, true)}</span>`) : ''}</div>
+      ${rep.sum.level != null ? `<div class="tnr"><span>Niveau de marge MT5 ${fmtNum(rep.sum.level, 0)} %</span>${rep.sum.level < (S.settings.marginMin || 150) ? `<span class="pill warn">sous ${fmtNum(S.settings.marginMin || 150, 0)} %</span>` : '<span class="pill win">ok</span>'}</div>` : ''}
+      <p class="hint">Un écart de solde restant vient d’une opération d’avant le ${fmtDate(since)} : ligne de rattrapage dans Réglages › Versements. Valeur nette de l’app calculée avec les cours du rapport.${d.ign.length ? ` Ignoré (hors carnet : forex, or, ventes à découvert) : ${d.ign.slice(0, 8).map(esc).join(', ')}${d.ign.length > 8 ? '…' : ''}.` : ''}</p>`;
+  $('#sheetOk').textContent = pick.length ? `Appliquer ${pick.length} ligne(s)` : 'Terminer';
+}
+function sheetMt5() {
+  openSheet({ title: 'Importer l’historique MT5', ok: 'Lire le rapport',
+    body: `<p class="lead">Dans MT5 : Historique › Rapport, puis partagez le PDF vers l’app. Lu sur cet appareil, rien n’est envoyé, aucun identifiant.</p><div class="fields">
+      <div class="fld wide"><label for="f-file">Rapport d’historique de trading (PDF)</label><input type="file" id="f-file" name="file" accept="application/pdf,.pdf,.txt,.htm,.html"></div>
+      <div class="fld wide"><label for="f-paste">ou coller le texte du rapport</label><textarea id="f-paste" name="paste" rows="3"></textarea></div></div>`,
+    onSubmit: async form => {
+      const file = form.elements.file.files[0];
+      const text = file ? (/pdf$/i.test(file.type) || /\.pdf$/i.test(file.name) ? await pdfText(file) : await file.text()) : F(form, 'paste');
+      need(String(text).trim(), 'Choisissez le PDF ou collez le texte.');
+      const rep = Core.parseMt5(text);
+      need(rep.deals.length || rep.open.length, 'Rapport non reconnu : choisissez le « Rapport d’historique de trading » de MT5 (Historique › Rapport).');
+      sheetMt5Diff(rep);
+    } });
+}
+function sheetMt5Diff(rep) {
+  const prev = S.settings.mt5, br = mt5Breaks(rep);
+  mt5Cur = { rep, since: null };
+  openSheet({ title: 'Historique MT5 · ' + fmtDate(rep.to), ok: 'Appliquer', noFocus: true,
+    body: `<p class="lead">Compte ${esc(rep.acct || '?')} · ${fmtDate(rep.from)} → ${fmtDate(rep.to)} · ${rep.deals.length} transaction(s), ${rep.open.length} position(s) ouverte(s).</p>
+      ${br ? `<div class="banner warn"><span>${br} ligne(s) mal lue(s) : le solde ne suit pas. Vérifiez les lignes proposées.</span></div>` : '<p class="hint">Rapport lu en entier : chaque solde suit le précédent.</p>'}
+      ${prev && prev.acct && rep.acct && prev.acct !== rep.acct ? `<div class="banner warn"><span>Autre compte que le dernier import (${esc(prev.acct)}).</span></div>` : ''}
+      <div class="fields">${dateInp('since', 'Comparer après le', mt5Since())}</div>
+      <p class="hint">Avant cette date, tout a déjà été rapproché (dernier import ou ligne de rattrapage).</p>
+      <div id="mt5Diff" class="tn"></div>`,
+    onInput: mt5Render,
+    onSubmit: form => {
+      mt5Render(form);
+      const pick = mt5Cur.d.out.map((x, i) => x.fix && !mt5Cur.off.has(i) ? i : -1).filter(i => i >= 0);
+      for (const i of pick) mt5Cur.d.out[i].fix(S);
+      S.settings.mt5 = { upTo: rep.to, acct: rep.acct, at: todayISO() };
+      try { localStorage.removeItem(MT5_SNOOZE); } catch (e) {}
+      mt5Cur = null;
+      save(pick.length ? `Import MT5 : ${pick.length} ligne(s) appliquée(s)` : 'Import MT5 : tout était déjà à jour');
+    } });
+}
 function mt5Due() {
   if (!S.lots.some(l => !l.demo && !Core.lotState(l).closed)) return null;
   const t = todayISO(); try { if (localStorage.getItem(MT5_SNOOZE) === t) return null; } catch (e) {}
@@ -3179,7 +3377,7 @@ function mt5Due() {
 }
 function mt5Remind() {
   const due = mt5Due(); if (!due) return '';
-  return `<div class="banner warn"><span><strong>Rapprochement MT5</strong> : ${due === true ? 'jamais fait' : 'dernier le ' + fmtDate(due.date)}. Recopiez les fonds propres et la marge de MT5 (onglet Trade) pour vérifier les calculs de l’app.</span><span class="row"><button class="btn sm primary" data-act="add-snap">Faire</button><button class="btn sm" data-act="mt5-snooze">Plus tard</button></span></div>`;
+  return `<div class="banner warn"><span><strong>Rapprochement MT5</strong> : ${due === true ? 'jamais fait' : 'dernier le ' + fmtDate(due.date)}. Importez le rapport d’historique de MT5, ou recopiez les fonds propres et la marge, pour vérifier les calculs de l’app.</span><span class="row"><button class="btn sm primary" data-act="mt5-import">Importer le PDF</button><button class="btn sm" data-act="add-snap">Saisir</button><button class="btn sm" data-act="mt5-snooze">Plus tard</button></span></div>`;
 }
 function mt5Compare(form) {
   const box = $('#mt5Out'); if (!box) return;
@@ -3510,6 +3708,7 @@ document.addEventListener('click', e => {
     }
     case 'add-flow': sheetFlow(); break;
     case 'add-catchup': sheetCatchup(); break;
+    case 'mt5-import': sheetMt5(); break;
     case 'add-snap': sheetSnap(); break;
     case 'go-health': tab = 'set'; render(); setTimeout(() => { const h = document.getElementById('health'); if (h) h.scrollIntoView({ block: 'start', behavior: 'smooth' }); }, 50); break;
     case 'go-tab': tab = b.dataset.tab; render(); window.scrollTo(0, 0); break;
