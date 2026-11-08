@@ -1556,16 +1556,17 @@ function newsCard(t) {
     <details class="more news" data-t="${esc(t)}"><summary>Actualités · 3 derniers jours</summary><div class="newsl" id="news-${esc(t)}">${newsHTML(t)}</div></details>`;
 }
 // Finnhub en direct (votre clé de cours), une fois par 30 minutes et par action, à l'ouverture des actualités.
+const newsRedraw = t => { const el = document.getElementById('news-' + t); if (el) el.innerHTML = newsHTML(t); };
+const trNews = t => { const need = []; for (const n of newsList(t)) { if (!n.f && !trCache[n.t]) need.push(n.t); if (n.x && !n.fs && !trCache[n.x]) need.push(n.x); } return trFr(need).then(() => newsRedraw(t)); };
 function loadNews(t) {
+  trNews(t);
   const k = quoteKey(), c = newsLive[t]; if (!k || (c && (c.busy || Date.now() - c.at < 1800000))) return;
   newsLive[t] = { busy: true, at: Date.now(), items: c ? c.items : [] };
   const to = todayISO(), from = addDays(to, -3);
   fetch(`https://finnhub.io/api/v1/company-news?symbol=${encodeURIComponent(t)}&from=${from}&to=${to}&token=${encodeURIComponent(k)}`).then(r => r.ok ? r.json() : [])
     .then(a => { newsLive[t] = { at: Date.now(), items: (Array.isArray(a) ? a : []).map(n => ({ t: n.headline, s: n.source, u: n.url, d: (n.datetime || 0) * 1000, x: cutSum(n.summary) })) }; })
     .catch(() => { newsLive[t] = { at: Date.now(), items: [] }; })
-    .then(() => { const el = document.getElementById('news-' + t); if (el) el.innerHTML = newsHTML(t); })
-    .then(() => { const L = newsList(t), need = []; for (const n of L) { if (!n.f && !trCache[n.t]) need.push(n.t); if (n.x && !n.fs && !trCache[n.x]) need.push(n.x); } return trFr(need); })
-    .then(() => { const el = document.getElementById('news-' + t); if (el) el.innerHTML = newsHTML(t); });
+    .then(() => { newsRedraw(t); return trNews(t); });
 }
 // Résumé Finnhub : 2 phrases au plus, 280 caractères (vide s'il répète le titre).
 function cutSum(x) {
