@@ -2758,7 +2758,29 @@ function viewSettings() {
     </div>
     <p class="hint">L’application ne demande aucun identifiant de courtier, n’exécute aucun ordre et n’utilise aucune API de cotation : les cours se saisissent à la main.</p>
   </section>
+  ${ntfyCard()}
   ${aboutCard()}` : ''}`;
+}
+// ----- Notifications ntfy : le robot envoie aussi chaque notification à l'app gratuite ntfy (sans compte), sans les montants du compte -----
+const NTFY_RE = /^[A-Za-z0-9_-]{12,64}$/;
+function ntfyCard() {
+  const n = S.settings.ntfy || {};
+  return `<section class="card" id="ntfy">
+    <div class="sec-head"><h2>Notifications ntfy</h2>${n.topic && n.on ? '<span class="pill win">Actives</span>' : '<span class="pill warn">À configurer</span>'}</div>
+    <p class="lead">Plus fiables que les notifications iPhone : ntfy est une app gratuite, sans compte. Chaque soir, le robot y envoie les mêmes messages, sans les montants de votre compte.</p>
+    <ol class="lead" style="padding-left:18px;margin:0 0 10px;display:grid;gap:6px">
+      <li>Installez l’app gratuite <b>ntfy</b> depuis l’App Store.</li>
+      <li>Touchez « Proposer un nom » ci-dessous, puis dans ntfy touchez <b>+</b> et abonnez-vous à ce même nom (serveur par défaut ntfy.sh).</li>
+      <li>Touchez « Enregistrer », puis « Envoyer un test ».</li></ol>
+    <div class="fields"><div class="fld wide"><label for="ntfy-topic">Nom du canal</label><input id="ntfy-topic" value="${esc(n.topic || '')}" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="12 caractères au moins"></div></div>
+    <div class="row"><button class="btn sm" data-act="ntfy-gen">Proposer un nom</button><button class="btn sm primary" data-act="ntfy-save">Enregistrer</button><button class="btn sm" data-act="ntfy-test" ${n.topic ? '' : 'disabled'}>Envoyer un test</button></div>
+    ${n.topic ? `<label class="check" style="margin-top:8px"><input type="checkbox" data-act="ntfy-on" ${n.on ? 'checked' : ''}> Envoyer les notifications du robot sur ntfy</label>` : ''}
+    <p class="hint">Le nom du canal sert de mot de passe : ne le partagez pas. Il est gardé dans vos données synchronisées (Gist secret) et lu par le robot chaque soir. Les notifications iPhone actuelles continuent en parallèle.</p>
+  </section>`;
+}
+function ntfySend(topic, title, message) {
+  return fetch('https://ntfy.sh/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topic, title, message, click: location.href.split('#')[0] + '#dash' }) })
+    .then(r => { if (!r.ok) throw new Error('réponse ' + r.status); });
 }
 
 // ---------- Feuilles de saisie ----------
@@ -3637,6 +3659,14 @@ document.addEventListener('click', e => {
     case 'jfilter': journalFilter = b.dataset.f; render(); break;
     case 'psort': posSort = b.dataset.f; render(); break;
     case 'pfilter': posFilter = b.dataset.f; render(); break;
+    case 'ntfy-gen': { const a = new Uint8Array(9); crypto.getRandomValues(a); const el = $('#ntfy-topic'); if (el) el.value = 'carnet-' + [...a].map(x => 'abcdefghijkmnpqrstuvwxyz23456789'[x % 32]).join(''); break; }
+    case 'ntfy-save': { const v = ($('#ntfy-topic') || {}).value.trim();
+      if (!NTFY_RE.test(v)) { toast('Nom invalide : 12 à 64 caractères, lettres, chiffres, - ou _'); break; }
+      S.settings.ntfy = { topic: v, on: true }; save('Canal ntfy enregistré'); break; }
+    case 'ntfy-on': S.settings.ntfy = Object.assign({}, S.settings.ntfy, { on: b.checked }); save(b.checked ? 'Notifications ntfy activées' : 'Notifications ntfy désactivées'); break;
+    case 'ntfy-test': { const n = S.settings.ntfy; if (!n || !n.topic) break;
+      ntfySend(n.topic, 'Carnet de positions', 'Test : les notifications ntfy fonctionnent. Le robot enverra ici stops, croisements, résultats et limites de risque.')
+        .then(() => toast('Test envoyé : regardez l’app ntfy'), e => toast('Envoi impossible : ' + e.message)); break; }
     case 'set-part': setPart = b.dataset.f; render(); window.scrollTo(0, 0); break;
     case 'perf-range': perfRange = b.dataset.f; render(); break;
     case 'trade-year': tradeYear = b.dataset.f; tradeMonth = 'all'; render(); break;
