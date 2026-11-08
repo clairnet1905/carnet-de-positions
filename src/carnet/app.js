@@ -1153,8 +1153,8 @@ function alertsList() {
   for (const v of open) {
     const t = esc(v.lot.ticker), st = v.lot.stopCurrent, p = v.last ? v.last.price : null;
     if (v.sa.missing) out.push({ lvl: 'err', txt: `<strong>${t}</strong> : aucun stop, risque non borné.`, lot: v.lot.id });
-    else if (p != null && p <= st) out.push({ lvl: 'err', txt: `<strong>${t}</strong> : cours ${usd(p)} sur ou sous le stop ${usd(st)}. Vérifiez dans MT5 si la position a été stoppée.`, lot: v.lot.id });
-    else if (p != null && (p - st) / p < 0.01) out.push({ lvl: 'warn', txt: `<strong>${t}</strong> : à ${pct((p - st) / p * 100)} du stop.`, lot: v.lot.id });
+    else if (p != null && p <= st) { const tf = stopTf(v.lot.ticker); if (stopWindow(tf, v.last.date)) out.push({ lvl: 'err', hit: 1, txt: `<strong>${t}</strong> : cours ${usd(p)} sur ou sous le stop ${usd(st)}${tf === 'D' ? '' : ` · ${stopDueLbl(tf, v.last.date)}`}. Vérifiez dans MT5 si la position a été stoppée.`, lot: v.lot.id }); }
+    else if (p != null && (p - st) / p < 0.01 && stopWindow(stopTf(v.lot.ticker), v.last.date)) out.push({ lvl: 'warn', txt: `<strong>${t}</strong> : à ${pct((p - st) / p * 100)} du stop.`, lot: v.lot.id });
   }
   const stale = [...new Set(open.filter(v => !v.last || Core.days(v.last.date, today) > S.settings.staleDays).map(v => v.lot.ticker))].sort();
   if (stale.length) out.push({ lvl: 'warn', txt: `Cours anciens ou manquants : <strong>${stale.map(esc).join(', ')}</strong>.`, act: 'prices', btn: 'Mettre à jour' });
@@ -1167,7 +1167,7 @@ function alertsList() {
   return out;
 }
 function alertsStrip(tonight) {   // tonight : stops et radar déjà dans la carte « Ce soir »
-  const a = alertsList();
+  const a = alertsList().filter(x => !(tonight && x.hit));
   const ra = S.watch.length && !tonight ? radarAlerts().filter(x => !x.seen) : [];
   const sr = S.watch.length && !tonight ? stopRaises() : [];
   if (sr.length) a.unshift({ lvl: 'warn', txt: `<strong>Stops</strong> : ${sr.length} stop(s) peuvent être remontés sur une de vos SMA · ${sr.slice(0, 4).map(x => esc(x.v.lot.ticker)).join(', ')}${sr.length > 4 ? '…' : ''}`, act: 'stop-raises', btn: 'Voir' });
@@ -1391,6 +1391,37 @@ const stopSkip = () => { try { return JSON.parse(localStorage.getItem(SKIP_KEY))
 // SMA d'entrée d'une position (lot.smas : ['D|200', 'W|13'…]), choisies à l'achat ou plus tard. Vide : toutes les SMA de l'action.
 const smaKey = w => w.tf + '|' + w.period, smaLbl = k => { const [tf, p] = k.split('|'); return TF_SHORT[tf] + ' ' + p; };
 const posSmas = t => [...new Set(S.lots.filter(l => l.ticker === t && !Core.lotState(l).closed).flatMap(l => l.smas || []))];
+// Stop atteint : on juge à la clôture de l'unité d'entrée (la plus longue des SMA de la position : M, sinon S, sinon J).
+// J ou aucune SMA : chaque soir. S : clôtures du jeudi et du vendredi. M : clôtures des 7 derniers jours du mois.
+function stopTf(t) { const u = posSmas(t).map(k => k.split('|')[0]); return u.includes('M') ? 'M' : u.includes('W') ? 'W' : 'D'; }
+const monthEnd = d => { const x = new Date(d.slice(0, 7) + '-01T12:00:00'); x.setMonth(x.getMonth() + 1); x.setDate(0); return x.toLocaleDateString('sv-SE'); };
+function stopDue(tf, d) {   // date de la clôture qui compte (dernier jour ouvré de la semaine ou du mois)
+  if (tf === 'W') return addDays(d, Math.max(0, 5 - wdOf(d)));
+  if (tf === 'M') { let e = monthEnd(d); while (wdOf(e) === 0 || wdOf(e) === 6) e = addDays(e, -1); return e; }
+  return d;
+}
+function stopWindow(tf, d) {   // d : date de la dernière clôture connue
+  if (tf === 'W') return wdOf(d) >= 4 || wdOf(d) === 0;
+  if (tf === 'M') return +d.slice(8) >= +monthEnd(d).slice(8) - 6;
+  return true;
+}
+const WD_S = ['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'];
+const stopDueLbl = (tf, d) => { const e = stopDue(tf, d); return `clôture ${tf === 'W' ? 'hebdo' : 'mensuelle'} ${WD_S[wdOf(e)]} ${e.slice(8)}/${e.slice(5, 7)}`; };
+const stopWaitLbl = (tf, d) => tf === 'W' ? 'clôture hebdo' : 'fin ' + new Date(d + 'T12:00:00').toLocaleDateString('fr-FR', { month: 'short' });
+// Positions dont le cours est sur ou sous le stop : à juger ce soir (dans la fenêtre) ou en attente de la clôture.
+function stopHits() {
+  const by = new Map();
+  for (const l of S.lots) { if (Core.lotState(l).closed) continue; (by.get(l.ticker) || by.set(l.ticker, []).get(l.ticker)).push(l); }
+  const out = [];
+  for (const [t, ls] of by) {
+    const last = Core.lastPrice(S.prices, t); if (!last) continue;
+    const hit = ls.map(l => l.stopCurrent).filter(x => isNum(x) && x > 0 && last.price <= x);
+    if (!hit.length) continue;
+    const tf = stopTf(t);
+    out.push({ t, tf, px: last.price, date: last.date, stop: Math.max(...hit), now: stopWindow(tf, last.date), lot: ls[0].id });
+  }
+  return out.sort((a, b) => a.t < b.t ? -1 : 1);
+}
 // Choix : les SMA de l'action au radar, plus toute autre SMA ajoutée à la main (unité + période).
 const smaChip = (k, on) => `<label class="chip"><input type="checkbox" name="sma" value="${esc(k)}" ${on ? 'checked' : ''}> ${smaLbl(k)}</label>`;
 function smaChoices(t, on) {
@@ -1479,13 +1510,18 @@ function tonightCard() {
   if (L.heat != null && R.heatPct > L.heat) over.push(`perte au stop ${pct(R.heatPct)} (limite ${pct(L.heat)})`);
   if (L.margin != null && R.marginPct > L.margin) over.push(`marge ${fmtNum(R.marginPct, 0)} % (limite ${fmtNum(L.margin, 0)} %)`);
   if (L.pos != null && R.pos > L.pos) over.push(`${R.pos} positions (limite ${L.pos})`);
-  const todo = sr.length + P.top.length + (earnT.length ? 1 : 0) + (H.length ? 1 : 0), nd = done.length;
+  const SH = stopHits(), hitNow = SH.filter(x => x.now && !done.includes('hit|' + x.t + '|' + x.date)), hitWait = SH.filter(x => !x.now);
+  const hitRow = (x, now) => `<div class="tnr"><span><button class="lnk tk" data-act="chart" data-t="${esc(x.t)}">${esc(x.t)}</button> <span class="tf">${x.tf === 'D' ? 'J' : TF_SHORT[x.tf]}</span> <span class="num">${usd(x.px)} / stop ${usd(x.stop)}</span>${now && x.tf !== 'D' ? ` <small>${stopDueLbl(x.tf, x.date)}</small>` : ''}</span>${now ? `<button class="btn sm primary" data-act="tn-hit" data-k="${esc(x.t + '|' + x.date)}">Fait</button>` : `<small>${stopWaitLbl(x.tf, x.date)}</small>`}</div>`;
+  const todo = hitNow.length + sr.length + P.top.length + (earnT.length ? 1 : 0) + (H.length ? 1 : 0), nd = done.length;
   const stops = sr.map(x => { const o = x.opts[0];
     return `<div class="tnr"><span><button class="lnk tk" data-act="chart" data-t="${esc(x.v.lot.ticker)}" data-w="${esc(o.w.id)}">${esc(x.v.lot.ticker)}</button> <span class="tf">${TF_SHORT[o.w.tf]}${o.w.period}</span> <span class="num">${x.st > 0 ? usd(x.st) : 'aucun'} → <b>${usd(o.sma)}</b></span>${x.opts.length > 1 ? ` <button class="lnk" data-act="stop-raises">${x.opts.length - 1} autre(s)</button>` : ''}</span><button class="btn sm primary" data-act="tn-stop" data-t="${esc(x.v.lot.ticker)}" data-v="${Core.roundTo(o.sma, 2)}" data-w="${esc(o.w.id)}">Fait</button></div>`; }).join('');
   const picks = P.top.map(p => `<div class="tnr"><span><button class="lnk tk" data-act="chart" data-t="${esc(p.x.w.ticker)}" data-w="${esc(p.x.w.id)}">${esc(p.x.w.ticker)}</button> <span class="tf up">${TF_SHORT[p.x.w.tf]}${p.x.w.period}</span> <small>${esc(p.notes.join(' · '))}</small></span><span class="row"><button class="btn sm" data-act="tn-calc" data-id="${esc(p.x.w.id)}" data-k="${esc(p.x.key)}">Calculer</button><button class="btn sm" data-act="tn-skip" data-k="${esc(p.x.key)}" aria-label="Écarter ${esc(p.x.w.ticker)}">✕</button></span></div>`).join('');
   const light = typeof marketLight === 'function' ? marketLight() : null;
   return `<section class="card tn" id="tonight">
     <div class="sec-head"><h2>Ce soir <small>· ${fmtDate(today)}</small></h2><span class="pill ${todo ? 'warn' : 'win'}">${todo ? `${nd} fait · ${todo} à faire` : 'Tout est fait'}</span></div>
+    ${SH.length ? `<h3>Sous le stop <small>· ${hitNow.length} à juger ce soir</small></h3>
+    ${hitNow.map(x => hitRow(x, true)).join('')}${hitNow.length ? '<p class="hint">Si la clôture qui compte reste sous le stop : vendre dans MT5. « Fait » une fois vendu ou gardé.</p>' : '<p class="hint">Rien à vendre ce soir.</p>'}
+    ${hitWait.length ? `<details><summary class="hint">${hitWait.length} sous le stop · on attend la clôture</summary>${hitWait.map(x => hitRow(x, false)).join('')}</details>` : ''}` : ''}
     <h3>1. Stops à remonter dans MT5 <small>· ${sr.length}</small></h3>
     ${sr.length ? stops + '<p class="hint">« Fait » enregistre le nouveau stop dans l’app. Changez-le aussi dans MT5 : rien n’est envoyé au courtier.</p>' : '<p class="hint">Aucun stop à remonter ce soir.</p>'}
     <h3>2. Nouveaux croisements à étudier <small>· ${P.top.length} sur ${P.n}</small></h3>
@@ -2478,9 +2514,10 @@ function viewPos() {
     const first = vs.map(v => v.lot.date).sort()[0];
     const stale = !last || Core.days(last.date, today) > S.settings.staleDays;
     const lev = [...new Set(vs.map(v => v.lot.leverage))].map(x => '×' + fmtNum(x)).join(' / ');
-    const state = (stop != null && px != null && px <= stop) || stop == null ? 'danger' : un > 0.005 ? 'up' : un < -0.005 ? 'down' : '';
+    const sTf = stopTf(t), wait = stop != null && px != null && px <= stop && !stopWindow(sTf, last.date);
+    const state = ((stop != null && px != null && px <= stop) || stop == null) && !wait ? 'danger' : un > 0.005 ? 'up' : un < -0.005 ? 'down' : '';
     const html = `<article class="pcard ${state}" data-q="${esc((t + ' ' + vs.map(v => v.lot.note || '').join(' ')).toLowerCase())}">
-      <header><div><span class="tk">${esc(t)}</span> <button class="src ${manualSet().has(t) ? '' : 'on'}" data-act="quote-toggle" data-t="${esc(t)}" title="Source du cours : touchez pour changer">${manualSet().has(t) ? 'Cours manuel' : 'Cours Finnhub'}</button> ${stop != null && stop >= avg ? '<span class="pill win">Sans risque</span>' : ''}${state === 'danger' ? `<span class="pill loss">${stop == null ? 'Sans stop' : 'Stop atteint'}</span>` : ''}
+      <header><div><span class="tk">${esc(t)}</span> <button class="src ${manualSet().has(t) ? '' : 'on'}" data-act="quote-toggle" data-t="${esc(t)}" title="Source du cours : touchez pour changer">${manualSet().has(t) ? 'Cours manuel' : 'Cours Finnhub'}</button> ${stop != null && stop >= avg ? '<span class="pill win">Sans risque</span>' : ''}${state === 'danger' ? `<span class="pill loss">${stop == null ? 'Sans stop' : 'Stop atteint'}</span>` : ''}${wait ? `<span class="pill earn" title="Alerte à la clôture de l’unité d’entrée">Sous le stop · ${sTf === 'W' ? 'clôture hebdo' : 'clôture mensuelle'}</span>` : ''}
         <small>${vs.length > 1 ? vs.length + ' achats · ' : ''}${Core.days(first, today)} j · levier ${lev}${swapT > 0.0049 ? ` · swap ${usd(-swapT, true)}` : ''}</small></div>
         <div class="pl ${cls(un)}">${usd(un, true)}<small>${pct(un / (q * avg) * 100, true)}</small></div></header>
       ${px != null ? rail(avg, stop, px) : '<p class="hint">Aucun cours saisi.</p>'}
@@ -3395,6 +3432,7 @@ document.addEventListener('click', e => {
     }
     case 'chart': sheetChart(b.dataset.t, b.dataset.w); break;
     case 'ch-range': if (chartSt) { chartSt.n = +b.dataset.n; document.querySelectorAll('.chr .btn').forEach(x => x.classList.toggle('on', x === b)); $('#chWrap').innerHTML = chartSvg(); chartBind(); } break;
+    case 'tn-hit': tnMark('hit|' + b.dataset.k); render(); break;
     case 'tn-skip': markSeen([b.dataset.k]); tnMark('x|' + b.dataset.k); render(); break;
     case 'tn-calc': tnMark('c|' + b.dataset.k); markSeen([b.dataset.k]); /* falls through */
     case 'radar-calc': {
