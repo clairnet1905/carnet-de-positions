@@ -342,6 +342,23 @@ window.__appTests = async function () {
     return ok ? true : txt.slice(0, 300);
   });
 
+  await t('Journal des clôturées : par période, rangé par date de clôture, analyse visible', async () => {
+    const td = todayISO(), mon = addDays(td, -((wdOf(td) + 6) % 7)), sell = d => [{ id: 's' + d, type: 'sell', date: d, qty: 10, price: 110, fee: 0 }];
+    S.lots = [lot({ ticker: 'WK1', date: addDays(mon, -30), note: 'Clôture au-dessus de la SMA 50 hebdo', events: sell(mon) }),
+      lot({ ticker: 'WK2', date: addDays(mon, -40), events: sell(td) }),
+      lot({ ticker: 'OLD', date: addDays(mon, -90), events: sell(addDays(mon, -3)) }),
+      lot({ ticker: 'OPN', date: addDays(mon, -5) })];
+    journalFilter = 'closed'; tab = 'pos';
+    const tks = () => [...document.querySelectorAll('#view details.lot .tk')].map(e => e.textContent).filter(t => t !== 'OPN' || true);
+    jPeriod = 'w0'; render(); const a = tks(), txt = document.querySelector('#view').textContent;
+    jPeriod = 'w1'; render(); const b = tks();
+    jPeriod = 'all'; render(); const c = tks(), months = document.querySelectorAll('.jmonth').length;
+    jPeriod = 'w0';
+    const ok = a.join() === (td === mon ? 'WK1,WK2'.split(',').sort().join() === a.slice().sort().join() ? a.join() : 'x' : 'WK2,WK1') && b.join() === 'OLD' && c.length === 3 && !c.includes('OPN') && months >= 1
+      && /Analyse : Clôture au-dessus de la SMA 50 hebdo/.test(txt) && /2 trades · 2 gagnants, 0 perdant/.test(txt);
+    return ok ? true : JSON.stringify({ a, b, c, months, s: (txt.match(/Cette semaine[^·]*·[^·]*·[^·]*/) || [''])[0] });
+  });
+
   await t('Graphique : bougies du robot, SMA, stop et ventes ; clôtures sans bougies', async () => {
     const D = days(90);
     const u = unpackHist({ s: D[0], o: D.map((d, i) => i ? Core.days(D[i - 1], d) : 0), c: D.map((d, i) => 100 + i), n: 90, x: D.slice(-70).flatMap(() => [-50, 120, -130]), xn: 70 });
