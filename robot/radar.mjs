@@ -348,6 +348,7 @@ const rss = x => [...x.matchAll(/<item>([\s\S]*?)<\/item>/g)].map(m => {
 }).filter(n => n.t && n.u);
 const gnews = q => get('https://news.google.com/rss/search?q=' + encodeURIComponent(q) + '&hl=en-US&gl=US&ceid=US:en').then(r => r.ok ? r.text() : '').then(rss).catch(() => []);
 // Pages de cotation (graphiques, cours, places étrangères) : ce ne sont pas des articles.
+const QUOTE_I = /stock (price|quote)|quote and history|interactive (stock )?chart|advanced charts?|stock forecasts?|price target history|historical (prices|data)|options chain|key statistics|\((?:[A-Z]{1,6}\d{6}[CP]\d{8})\)/i;
 const QUOTE_PAGE = /Stock (Price|Quote)|Stock Forecasts?|Price Target History|Advanced Charts?|Interactive Chart|Historical (Prices|Data)|Options Chain|Company Profile|Key Statistics|\|\s*[A-Z.]{1,8}(US)?\s*$|\((\w[\w ]*): ?[\w .-]+\)\s*$|\bCl [A-Z]\b/;
 // Traduction automatique en français (service Google gratuit, sans clé). Titres publics seulement ; en cas d'échec on garde l'anglais.
 async function toFr(list) {
@@ -384,7 +385,7 @@ if (byHand || Date.now() - newsAt > 3 * 3600e3) {
       const rel = n => (word && n.t.toLowerCase().includes(word.toLowerCase())) || new RegExp('\\b' + t.replace('.', '\\.') + '\\b').test(n.t);
       const prem = await gnews((nm ? `"${nm}"` : `${t} stock`) + ' ' + PREMIUM + ' when:7d'); await sleep(300);
       const gen = await gnews((nm ? `"${nm}" OR ${t} stock` : `${t} stock`) + ' when:3d'); await sleep(300);
-      const seen = new Set(), keep = prem.concat(gen).filter(n => rel(n) && !QUOTE_PAGE.test(n.t)).sort((a, b) => tierOf(a.s) - tierOf(b.s) || b.d - a.d)
+      const seen = new Set(), keep = prem.concat(gen).filter(n => rel(n) && !QUOTE_PAGE.test(n.t) && !QUOTE_I.test(n.t)).sort((a, b) => tierOf(a.s) - tierOf(b.s) || b.d - a.d)
         .filter(n => { const k = n.t.toLowerCase().slice(0, 60); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 5);
       if (keep.length) { news[t] = keep.sort((a, b) => b.d - a.d); newsN += keep.length; }
     } catch (e) { log('Actualités ' + t + ' : ' + e.message); }
