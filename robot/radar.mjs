@@ -333,10 +333,53 @@ for (const x of sig) R.notified[x.key] = ls;
 for (const k of extra) R.notified[k] = ls;
 for (const k in R.notified) if (days(R.notified[k], ls) > 60) delete R.notified[k];
 
+// ----- Actualités des positions (Google News, sans clé : Reuters, Bloomberg… en tête) et dividendes à venir (calendrier Nasdaq, sans clé) -----
+// Titres et liens seulement. Une erreur ici n'arrête jamais le robot.
+const UA = { 'User-Agent': 'Mozilla/5.0 (compatible; carnet-de-positions-robot)', Accept: 'application/json, application/rss+xml, text/xml, */*' };
+const NEWS_TIER = ['Reuters', 'Bloomberg', 'The Wall Street Journal', 'WSJ', 'Financial Times', 'CNBC', 'Barron', 'MarketWatch', 'Associated Press', 'AP News', "Investor's Business Daily", 'Yahoo Finance', 'Fortune', 'Forbes'];
+const tierOf = src => { const i = NEWS_TIER.findIndex(x => (src || '').toLowerCase().includes(x.toLowerCase())); return i < 0 ? 99 : i; };
+const xmlTxt = x => (x || '').replace(/<!\[CDATA\[|\]\]>/g, '').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#(\d+);/g, (m, n) => String.fromCharCode(+n)).trim();
+const names = R.names || {}, news = {};
+let newsN = 0;
+for (const t of openT) {
+  try {
+    if (!names[t] && FINNHUB_KEY && /^[A-Z.]{1,6}$/.test(t)) {
+      const pr = await fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${encodeURIComponent(t)}&token=${FINNHUB_KEY}`).then(r => r.ok ? r.json() : null).catch(() => null);
+      if (pr && pr.name) names[t] = pr.name.replace(/,?\s+(Inc|Corp|Corporation|Co|Company|Ltd|plc|PLC|N\.V|SA|S\.A|Holdings?|Group)\.?$/i, '').trim();
+      await sleep(1100);
+    }
+    const q = (names[t] ? `"${names[t]}" OR ${t} stock` : `${t} stock`) + ' when:3d';
+    const x = await fetch('https://news.google.com/rss/search?q=' + encodeURIComponent(q) + '&hl=en-US&gl=US&ceid=US:en', { headers: UA }).then(r => r.ok ? r.text() : '');
+    const items = [...x.matchAll(/<item>([\s\S]*?)<\/item>/g)].map(m => {
+      const it = m[1], src = xmlTxt((it.match(/<source[^>]*>([\s\S]*?)<\/source>/) || [])[1]);
+      let title = xmlTxt((it.match(/<title>([\s\S]*?)<\/title>/) || [])[1]); if (src && title.endsWith(' - ' + src)) title = title.slice(0, -(src.length + 3));
+      return { t: title, s: src, u: xmlTxt((it.match(/<link>([\s\S]*?)<\/link>/) || [])[1]), d: new Date(xmlTxt((it.match(/<pubDate>([\s\S]*?)<\/pubDate>/) || [])[1])).getTime() || 0 };
+    }).filter(n => n.t && n.u);
+    const seen = new Set(), keep = items.sort((a, b) => tierOf(a.s) - tierOf(b.s) || b.d - a.d).filter(n => { const k = n.t.toLowerCase().slice(0, 60); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 5);
+    if (keep.length) { news[t] = keep.sort((a, b) => b.d - a.d); newsN += keep.length; }
+    await sleep(400);
+  } catch (e) { log('Actualités ' + t + ' : ' + e.message); }
+}
+log(`Actualités : ${newsN} titre(s) pour ${Object.keys(news).length} position(s)`);
+const divcal = [], divT = new Set(openT.concat(S.watch.filter(w => !w.idx).map(w => w.ticker)));
+for (let d = ls, k = 0; k < 10; d = addDays(d, 1)) {
+  const wd = new Date(d + 'T12:00:00Z').getUTCDay(); if (wd === 0 || wd === 6 || d === ls) continue; k++;
+  try {
+    const j = await fetch('https://api.nasdaq.com/api/calendar/dividends?date=' + d, { headers: UA }).then(r => r.ok ? r.json() : null);
+    for (const r of (((j || {}).data || {}).calendar || {}).rows || []) {
+      if (!divT.has(r.symbol) || !(r.dividend_Rate > 0)) continue;
+      const iso = v => { const m = /^(\d\d)\/(\d\d)\/(\d{4})$/.exec(v || ''); return m ? `${m[3]}-${m[1]}-${m[2]}` : null; };
+      divcal.push({ t: r.symbol, ex: iso(r.dividend_Ex_Date) || d, amt: r.dividend_Rate, pay: iso(r.payment_Date) });
+    }
+    await sleep(300);
+  } catch (e) { log('Dividendes ' + d + ' : ' + e.message); }
+}
+log(`Dividendes à venir : ${divcal.length} détachement(s) sur vos actions`);
+
 // ----- Enregistrement -----
 const packed = {};
 for (const s in hist) if (need[s]) packed[s] = pack(hist[s], candleSym.has(s) ? CANDLE_N : 0);   // les actions retirées du radar sont oubliées
-R = { v: 1, ls, adj: ADJ, at: Date.now(), hist: packed, divfix: DF, notified: R.notified, risk: riskState, deadSubs: dead, errors,
+R = { v: 1, ls, adj: ADJ, at: Date.now(), hist: packed, divfix: DF, notified: R.notified, risk: riskState, deadSubs: dead, errors, news, newsAt: Date.now(), divcal, names,
   log: [{ at: Date.now(), ls, full: full.length, daily: daily.length, resync: Math.min(resync.length, RESYNC_PER_RUN), signals: sig.length, sent, td: tdCalls, errors: Object.keys(errors).length }].concat(R.log || []).slice(0, 30) };
 const body = JSON.stringify(R);
 const labBody = JSON.stringify(L);
