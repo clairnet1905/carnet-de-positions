@@ -3209,7 +3209,7 @@ const mt5SnapDate = rep => !rep.gen ? rep.to : lastWeekday(wdOf(rep.gen.date) >=
 function mt5Diff(rep, since) {
   const real = S.lots.filter(l => !l.demo), have = new Set(real.map(l => l.ticker));
   const tk = sym => { if (have.has(sym)) return sym; const b = Core.mt5Ticker(sym); return b; };
-  const out = [], ign = new Set(), used = new Set(), pend = {}, cnt = { sellOk: 0, buyOk: 0, divOk: 0, opOk: 0, openOk: 0 };
+  const out = [], ign = new Set(), used = new Set(), pend = {}, lotSw = new Map(), simRem = {}, cnt = { sellOk: 0, buyOk: 0, divOk: 0, opOk: 0, openOk: 0 };
   const dd = (a, b) => Math.abs(Core.days(a, b)), px = (a, b) => Math.abs(a - b) <= Math.max(0.011, b * 0.005);
   const L = id => (st => st.lots.find(l => l.id === id));
   const deals = rep.deals.filter(d => d.date > since);
@@ -3222,7 +3222,7 @@ function mt5Diff(rep, since) {
     const hit = one ? [one] : cand.length && Math.abs(sum - d.vol) < 1e-6 ? cand : null;
     const realFee = Core.roundTo(-(d.comm + d.fee), 2);
     if (hit) {
-      cnt.sellOk++; hit.forEach(([, e]) => used.add(e.id));
+      cnt.sellOk++; hit.forEach(([l, e]) => { used.add(e.id); (lotSw.get(l.id) || lotSw.set(l.id, []).get(l.id)).push([e.date, d.swap * e.qty / d.vol]); });
       const appFee = hit.reduce((a, [, e]) => a + (e.fee || 0), 0);
       if (Math.abs(appFee - realFee) > 0.005) { const ids = hit.map(([l, e]) => [l.id, e.id, e.qty]);
         out.push({ g: 'fee', txt: `${esc(t)} vente du ${fmtDate(d.date)} : frais ${usd(appFee)} → <b>${usd(realFee)}</b>`, on: true,
@@ -3232,11 +3232,29 @@ function mt5Diff(rep, since) {
     const rem = real.filter(l => l.ticker === t && l.date <= d.date).reduce((a, l) => a + Core.lotState(l).rem, 0);
     if (rem < d.vol - 1e-6) { out.push({ g: 'sell', txt: `<b>${esc(t)}</b> ${fmtDate(d.date)} · ${qty(d.vol)} à ${usd(d.price)} : ${rem > 0 ? `seulement ${qty(rem)} ouverte(s) dans l’app` : 'aucune position ouverte dans l’app'}` }); continue; }
     pend[t] = (pend[t] || 0) + d.vol;
+    { let q = d.vol; for (const l of real.filter(l => l.ticker === t && l.date <= d.date).sort((a, b) => a.date < b.date ? -1 : 1)) {   // même répartition que l'application de la vente
+      if (simRem[l.id] == null) simRem[l.id] = Core.lotState(l).rem; const k = Math.min(q, simRem[l.id]); if (q <= 1e-9 || k <= 1e-9) continue;
+      simRem[l.id] -= k; q -= k; (lotSw.get(l.id) || lotSw.set(l.id, []).get(l.id)).push([d.date, d.swap * k / d.vol]); } }
     out.push({ g: 'sell', txt: `<b>${esc(t)}</b> ${fmtDate(d.date)} · ${qty(d.vol)} à ${usd(d.price)} · résultat MT5 ${usd(d.profit, true)}`, on: true,
       fix: st => { let q = d.vol; for (const l of st.lots.filter(l => l.ticker === t && !l.demo && l.date <= d.date).sort((a, b) => a.date < b.date ? -1 : 1)) {
         const r = Core.lotState(l).rem; if (q <= 1e-9 || r <= 1e-9) continue; const k = Math.min(q, r);
         l.events.push({ id: uid(), type: 'sell', date: d.date, qty: k, price: d.price, fee: Core.roundTo(realFee * k / d.vol, 4), mt5: d.id }); q -= k; } } });
   }
+  // Swap réel des positions clôturées : MT5 prend tout le swap à la vente. Seulement si toutes les ventes du lot sont dans le rapport, après la date de comparaison.
+  const swFix = [];
+  for (const l of real) {
+    const sh = lotSw.get(l.id); if (!sh) continue;
+    const sells = l.events.filter(e => e.type === 'sell');
+    if (sells.some(e => !used.has(e.id))) continue;
+    const rem = simRem[l.id] != null ? simRem[l.id] : Core.lotState(l).rem; if (rem > 1e-9) continue;
+    const realSw = Core.roundTo(-sh.reduce((a, x) => a + x[1], 0), 2), man = l.events.filter(e => e.type === 'funding').reduce((a, e) => a + e.amount, 0);
+    const end = sh.map(x => x[0]).concat(sells.map(e => e.date)).sort().pop(), est = Core.lotState(l).funding;
+    if (Math.abs(realSw - man) < 0.005 && Math.abs(realSw - est) < 0.005) continue;
+    swFix.push({ id: l.id, t: l.ticker, realSw, man, end, est: simRem[l.id] != null ? null : est });
+  }
+  if (swFix.length) { const known = swFix.filter(f => f.est != null);
+    out.push({ g: 'swap', txt: `${swFix.length} trade(s) clôturé(s) : swap ${known.length ? `estimé ${usd(known.reduce((a, f) => a + f.est, 0))}${known.length < swFix.length ? ' (+ ventes à ajouter)' : ''} → ` : ''}réel <b>${usd(swFix.reduce((a, f) => a + f.realSw, 0))}</b> <small>(${swFix.slice(0, 6).map(f => esc(f.t)).join(', ')}${swFix.length > 6 ? '…' : ''})</small>`, on: true,
+      fix: st => { for (const f of swFix) { const amt = Core.roundTo(f.realSw - f.man, 2); if (Math.abs(amt) >= 0.005) st.lots.find(l => l.id === f.id).events.push({ id: uid(), type: 'funding', date: f.end, amount: amt, note: 'Swap réel MT5 (vente)' }); } } }); }
   for (const l of real) for (const e of l.events) if (e.type === 'sell' && e.date > since && e.date <= rep.to && !used.has(e.id))
     out.push({ g: 'sell', txt: `<b>${esc(l.ticker)}</b> vente du ${fmtDate(e.date)} · ${qty(e.qty)} à ${usd(e.price)} : dans l’app, pas dans MT5`, lot: l.id });
   // Achats
@@ -3316,6 +3334,7 @@ function mt5Render(form) {
   const since = F(form, 'since') || mt5Since();
   if (mt5Cur.since !== since) { mt5Cur.since = since; mt5Cur.d = mt5Diff(mt5Cur.rep, since); mt5Cur.off = new Set(mt5Cur.d.out.map((x, i) => x.fix && !x.on ? i : -1).filter(i => i >= 0)); }
   else form.querySelectorAll('input[name="mt5i"]').forEach(c => { if (c.checked) mt5Cur.off.delete(+c.value); else mt5Cur.off.add(+c.value); });
+  if (form.elements.mt5gap) mt5Cur.gap = form.elements.mt5gap.checked;
   const { d, rep } = mt5Cur;
   const pick = d.out.map((x, i) => x.fix && !mt5Cur.off.has(i) ? i : -1).filter(i => i >= 0);
   const st = JSON.parse(JSON.stringify({ lots: S.lots, flows: S.flows, snapshots: S.snapshots, prices: S.prices, settings: S.settings }));
@@ -3328,6 +3347,7 @@ function mt5Render(form) {
       return `<h3>${lab} <small>· ${xs.length ? xs.length + ' à voir' : 'rien à faire'}</small></h3>${ok[g] ? `<div class="tnr"><span>${ok[g]}</span><span class="pill win">ok</span></div>` : ''}${xs.map(([x, i]) => row(x, i)).join('')}`; }).join('')
     + `<h3>Après import</h3>
       <div class="tnr"><span>Solde MT5 ${usd(rep.sum.balance)} · app ${usd(A.bal)}</span>${rep.sum.balance != null ? gap(A.bal, rep.sum.balance) : ''}</div>
+      ${rep.sum.balance != null && Math.abs(rep.sum.balance - A.bal) >= 0.015 ? `<label class="check"><input type="checkbox" name="mt5gap" ${mt5Cur.gap ? 'checked' : ''}> Ajouter une ligne de rattrapage de ${usd(rep.sum.balance - A.bal, true)} au ${fmtDate(d.D)} pour aligner le solde sur MT5</label>` : ''}
       <div class="tnr"><span>Valeur nette MT5 ${usd(rep.sum.equity)} · app ${usd(A.eq)}</span>${rep.sum.equity ? (Math.abs(A.eq / rep.sum.equity - 1) < 0.01 ? '<span class="pill win">ok</span>' : `<span class="pill warn">écart ${usd(A.eq - rep.sum.equity, true)}</span>`) : ''}</div>
       ${rep.sum.level != null ? `<div class="tnr"><span>Niveau de marge MT5 ${fmtNum(rep.sum.level, 0)} %</span>${rep.sum.level < (S.settings.marginMin || 150) ? `<span class="pill warn">sous ${fmtNum(S.settings.marginMin || 150, 0)} %</span>` : '<span class="pill win">ok</span>'}</div>` : ''}
       <p class="hint">Un écart de solde restant vient d’une opération d’avant le ${fmtDate(since)} : ligne de rattrapage dans Réglages › Versements. Valeur nette de l’app calculée avec les cours du rapport.${d.ign.length ? ` Ignoré (hors carnet : forex, or, ventes à découvert) : ${d.ign.slice(0, 8).map(esc).join(', ')}${d.ign.length > 8 ? '…' : ''}.` : ''}</p>`;
@@ -3362,10 +3382,16 @@ function sheetMt5Diff(rep) {
       mt5Render(form);
       const pick = mt5Cur.d.out.map((x, i) => x.fix && !mt5Cur.off.has(i) ? i : -1).filter(i => i >= 0);
       for (const i of pick) mt5Cur.d.out[i].fix(S);
+      let g = 0;
+      if (mt5Cur.gap && rep.sum.balance != null) {
+        const A = mt5AppAcct(JSON.parse(JSON.stringify({ lots: S.lots, flows: S.flows, snapshots: S.snapshots, prices: S.prices, settings: S.settings })), mt5Cur.d.D, rep);
+        g = Core.roundTo(rep.sum.balance - A.bal, 2);
+        if (Math.abs(g) >= 0.01) S.flows.push({ id: uid(), kind: 'pnl', date: mt5Cur.d.D, amount: g, note: 'Alignement du solde sur MT5 (import du ' + fmtDate(rep.to) + ')' });
+      }
       S.settings.mt5 = { upTo: rep.to, acct: rep.acct, at: todayISO() };
       try { localStorage.removeItem(MT5_SNOOZE); } catch (e) {}
       mt5Cur = null;
-      save(pick.length ? `Import MT5 : ${pick.length} ligne(s) appliquée(s)` : 'Import MT5 : tout était déjà à jour');
+      save((pick.length ? `Import MT5 : ${pick.length} ligne(s) appliquée(s)` : 'Import MT5 : tout était déjà à jour') + (Math.abs(g) >= 0.01 ? ` · rattrapage ${usd(g, true)}` : ''));
     } });
 }
 function mt5Due() {
