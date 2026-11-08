@@ -291,7 +291,8 @@ if (S.settings.pushWeekly !== false && new Date(ls + 'T12:00:00Z').getUTCDay() =
   const feu = k ? (up / k >= 0.7 ? 'vert' : up / k <= 0.3 ? 'rouge' : 'orange') : null;
   const lines = [n ? `${n} trade(s) clôturé(s) : ${net >= 0 ? '+' : ''}${usd(net)}${nR ? ` · ${sumR >= 0 ? '+' : ''}${sumR.toFixed(2).replace('.', ',')} R` : ''} (swap estimé non compris)` : 'Aucun trade clôturé cette semaine',
     `${openT.length} position(s) ouverte(s) · ${raised} stop(s) remonté(s)`, feu ? `Feu ${feu} : ${up}/${k} de vos SMA d’indices au-dessus` : ''].filter(Boolean);
-  payloads.push({ title: 'Bilan de la semaine', body: lines.join('\n'), tag: 'week-' + ls, url: './#dash' });
+  const nb = [n ? `${n} trade(s) clôturé(s)${nR ? ` · ${sumR >= 0 ? '+' : ''}${sumR.toFixed(2).replace('.', ',')} R` : ''}` : 'Aucun trade clôturé cette semaine'].concat(lines.slice(1));
+  payloads.push({ title: 'Bilan de la semaine', body: lines.join('\n'), nb: nb.join('\n'), tag: 'week-' + ls, url: './#dash' });
   extra.push('week|' + ls);
 }
 // Limites de risque : une notification quand une limite est franchie, sur la clôture (même calcul que le panneau Risque de l'app).
@@ -315,6 +316,19 @@ if (payloads.length && subs.length && pub && VAPID_PRIVATE_KEY) {
     catch (e) { log(`Envoi refusé (${sub.label || 'appareil'}) : ${e.statusCode || e.message}`); if (e.statusCode === 404 || e.statusCode === 410) dead.push(sub.id); }
   }
 } else if (payloads.length) log('Notification non envoyée : ' + (!subs.length ? 'aucun appareil abonné' : !pub ? 'clés de notification non créées dans l’app' : 'secret VAPID_PRIVATE_KEY manquant'));
+// ntfy (app gratuite, sans compte) : mêmes messages, sans les montants du compte (champ nb). Le nom du canal n'est jamais écrit dans le journal.
+const NT = S.settings.ntfy || {};
+if (payloads.length && NT.on && /^[A-Za-z0-9_-]{12,64}$/.test(NT.topic || '')) {
+  let ok = 0;
+  for (const p of payloads) {
+    try {
+      const r = await fetch('https://ntfy.sh/', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic: NT.topic, title: p.title, message: p.nb || p.body, click: new URL(p.url || './', SITE).href, priority: /^(risk|stops)/.test(p.tag || '') ? 4 : 3 }) });
+      if (r.ok) ok++; else log('ntfy refusé : ' + r.status);
+    } catch (e) { log('ntfy : ' + e.message); }
+  }
+  log(`ntfy : ${ok}/${payloads.length} notification(s) envoyée(s)`);
+}
 for (const x of sig) R.notified[x.key] = ls;
 for (const k of extra) R.notified[k] = ls;
 for (const k in R.notified) if (days(R.notified[k], ls) > 60) delete R.notified[k];

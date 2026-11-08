@@ -55,7 +55,11 @@ export function riskCheck(S, Core, closeOf, ls, prev) {
     if (R.noStop) lines.push(`${R.noStop} position(s) sans stop : risque non compté`);
     if (noPx.length) lines.push('Sans cours du jour : ' + noPx.slice(0, 5).join(', ') + ' (dernier cours connu)');
     lines.push('Rien n’est vendu ni changé : à vous de voir.');
-    payload = { title: `Risque · ${over.length} limite${over.length > 1 ? 's' : ''} dépassée${over.length > 1 ? 's' : ''}`, body: lines.join('\n'), tag: 'risk-' + ls, url: './#dash', badge: over.length };
+    // Version sans montant du compte (ntfy) : pourcentages et tickers seulement.
+    const safe = over.map(k => k === 'heat' ? `Perte si tous les stops sautent : ${fr(heatPct, 1)} % de la valeur nette (limite ${fr(L.heat, 1)} %)` : text[k]());
+    if (top.length) safe.push('Plus gros risques : ' + top.map(([t]) => t).join(', '));
+    safe.push(...lines.filter(l => /sans stop|Sans cours du jour|Rien n’est vendu/.test(l)));
+    payload = { nb: safe.join('\n'), title: `Risque · ${over.length} limite${over.length > 1 ? 's' : ''} dépassée${over.length > 1 ? 's' : ''}`, body: lines.join('\n'), tag: 'risk-' + ls, url: './#dash', badge: over.length };
   } else if (on && O.back && was.length && !over.length) {
     payload = { title: 'Risque · revenu sous vos limites', body: `Perte au stop ${heatPct != null ? fr(heatPct, 1) : '—'} %${level != null ? ` · niveau de marge ${fr(level)} %` : ''}`, tag: 'risk-' + ls, url: './#dash' };
   }
