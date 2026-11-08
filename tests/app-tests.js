@@ -213,6 +213,24 @@ window.__appTests = async function () {
     return again === 1 ? true : 'réimport : ' + again + ' ligne(s) proposée(s) au lieu du seul rapprochement';
   });
 
+  await t('Import MT5 : swap réel d’un trade clôturé repris de la vente, rattrapage du solde au choix', async () => {
+    const TXT = "Rapport d'historique de trading\nCompte: 1234567 (USD, Demo-MT5, real, Hedge)\nDate: 2026.11.08 08:41\nPositions\nHeure Position Symbole Type Volume Prix S / L T / P Heure Prix Commission Echange Profit\n2026.10.01 16:35:00 8000001 AAA.NYSE buy 4 / 10 100.00 2026.10.05 16:35:00 110.00 -0.04 -0.10 40.00\nTransactions\nHeure Op\u00e9ration Symbole Type Direction Volume Prix Ordre Commission Frais Echange Profit Solde Commentaire\n2026.10.01 16:35:00 9000001 AAA.NYSE buy in 10 100.00 8000001 -0.02 0.00 0.00 0.00 999.98\n2026.10.02 00:20:00 9000002 dividend in 0 0.00 0.00 0.00 0.00 1.50 1 001.48 Dividend 8000001 AAA.NYSE\n2026.10.05 16:35:00 9000003 AAA.NYSE sell out 4 110.00 8000002 -0.02 0.00 -0.10 40.00 1 041.36\n2026.10.05 18:00:00 9000010 BBB.NAS sell out 2 50.00 8000011 -0.02 0.00 -0.30 4.00 1 045.04\n2026.10.06 10:00:00 9000004 EURUSD sell in 0.01 1.15000 8000003 0.00 0.00 0.00 0.00 1 045.04\n2026.10.06 18:00:00 9000005 EURUSD buy out 0.01 1.14000 8000004 0.00 0.00 0.10 10.00 1 055.14 [tp 1.14000]\n2026.10.07 14:52:22 9000006 balance 0.00 0.00 0.00 0.15 1 055.29 SWAP adjustment\n-0.04 0.00 0.00 50.15 1 051.61\nPositions ouvertes\nHeure Position Symbole Type Volume Prix S / L T / P Prix du march\u00e9 Echange Profit Commentaire\n2026.10.01 16:35:00 8000001 AAA.NYSE buy 6 100.00 105.00 -0.30 30.00\nSolde: 1 055.29 Marge libre: 961.61\nFacilit\u00e9s de cr\u00e9dit : 0.00 Marge: 120.00\nP/L flottant: 29.70 Niveau de la marge: 901.34%\nAction: 1 084.99";
+    S.lots = [lot({ id: 'm1', ticker: 'AAA', date: '2026-10-01', price: 100, qty: 10, entryFee: 0.02 }),
+      lot({ id: 'm2', ticker: 'BBB', date: '2026-09-28', price: 48, qty: 2, entryFee: 0, events: [{ id: 'sb', type: 'sell', date: '2026-10-05', qty: 2, price: 50, fee: 0.02 }] })];
+    S.lots[0].events.push({ id: 'sa', type: 'sell', date: '2026-10-05', qty: 4, price: 110, fee: 0.02 }, { id: 'da', type: 'dividend', date: '2026-10-02', amount: 1.5 });
+    sheetMt5(); $('#f-paste').value = TXT; $('#sheetOk').click(); await wait(300);
+    const box = $('#mt5Diff'); if (!box) return 'écran absent : ' + $('#sheetErr').textContent;
+    if (!/1 trade\(s\) clôturé\(s\).*BBB/.test(box.textContent)) return 'swap du trade clôturé absent : ' + box.textContent.replace(/\s+/g, ' ').slice(0, 400);
+    const g = $('#sheetForm').elements.mt5gap; if (!g) return 'pas de proposition de rattrapage';
+    g.checked = true; g.dispatchEvent(new Event('input', { bubbles: true })); await wait(50);
+    $('#sheetOk').click(); await wait(300);
+    const fb = S.lots[1].events.filter(e => e.type === 'funding'), fl = S.flows.find(f => f.kind === 'pnl' && /Alignement/.test(f.note || ''));
+    if (fb.length !== 1 || !near(fb[0].amount, 0.3) || fb[0].date !== '2026-10-05') return 'swap BBB ' + JSON.stringify(fb);
+    if (!fl) return 'rattrapage absent';
+    const A = mt5AppAcct(JSON.parse(JSON.stringify({ lots: S.lots, flows: S.flows, snapshots: S.snapshots, prices: S.prices, settings: S.settings })), mt5SnapDate(Core.parseMt5(TXT)), Core.parseMt5(TXT));
+    return Math.abs(A.bal - 1055.29) < 0.006 && near(fl.amount, 10.1, 0.006) ? true : 'solde après ' + A.bal + ' rattrapage ' + fl.amount;
+  });
+
   await t('Graphique : bougies du robot, SMA, stop et ventes ; clôtures sans bougies', async () => {
     const D = days(90);
     const u = unpackHist({ s: D[0], o: D.map((d, i) => i ? Core.days(D[i - 1], d) : 0), c: D.map((d, i) => 100 + i), n: 90, x: D.slice(-70).flatMap(() => [-50, 120, -130]), xn: 70 });
