@@ -172,6 +172,26 @@ window.__appTests = async function () {
     return near(S.lots[0].stopCurrent, v) && S.lots[0].events.some(e => e.type === 'stop' && e.to === v) ? true : 'stop ' + S.lots[0].stopCurrent;
   });
 
+  await t('Stop atteint : jugé à la clôture de l’unité d’entrée (J chaque soir, S jeudi/vendredi, M fin de mois)', async () => {
+    if (!stopWindow('W', '2026-11-05') || !stopWindow('W', '2026-11-06') || stopWindow('W', '2026-11-04')) return 'fenêtre hebdo';
+    if (stopWindow('M', '2026-11-06') || !stopWindow('M', '2026-11-24') || !stopWindow('M', '2026-11-30') || stopWindow('M', '2026-11-23')) return 'fenêtre mensuelle';
+    if (stopDue('M', '2026-10-05') !== '2026-10-30' || stopDue('W', '2026-11-04') !== '2026-11-06') return 'clôture qui compte';
+    const d = '2026-11-06', m = '2026-11-25';
+    S.lots = [lot({ ticker: 'MMM', smas: ['M|10'] }), lot({ ticker: 'DDD', smas: ['D|50'] }), lot({ ticker: 'WWW', smas: ['D|50', 'W|13'] })];
+    S.prices.MMM = [{ date: d, price: 85 }]; S.prices.DDD = [{ date: d, price: 85 }]; S.prices.WWW = [{ date: '2026-11-04', price: 85 }];
+    const al = alertsList().filter(x => x.hit).map(x => x.txt).join(' ');
+    if (!/DDD/.test(al) || /MMM|WWW/.test(al)) return 'alertes : ' + al.replace(/<[^>]+>/g, '');
+    tab = 'dash'; render();
+    let card = $('#tonight'); if (!card) return 'carte absente';
+    if (card.querySelectorAll('[data-act="tn-hit"]').length !== 1 || !/2 sous le stop/.test(card.textContent)) return 'Ce soir : ' + card.textContent.replace(/\s+/g, ' ').slice(0, 200);
+    tab = 'pos'; render();
+    if (!/Sous le stop · clôture mensuelle/.test($('#view').textContent)) return 'carte position MMM';
+    S.prices.MMM = [{ date: m, price: 85 }]; tab = 'dash'; render(); card = $('#tonight');
+    if (card.querySelectorAll('[data-act="tn-hit"]').length !== 2) return 'fin de mois : MMM absent';
+    card.querySelector('[data-act="tn-hit"]').click(); await wait(100);
+    return $('#tonight').querySelectorAll('[data-act="tn-hit"]').length === 1 ? true : '« Fait » sans effet';
+  });
+
   await t('Graphique : bougies du robot, SMA, stop et ventes ; clôtures sans bougies', async () => {
     const D = days(90);
     const u = unpackHist({ s: D[0], o: D.map((d, i) => i ? Core.days(D[i - 1], d) : 0), c: D.map((d, i) => 100 + i), n: 90, x: D.slice(-70).flatMap(() => [-50, 120, -130]), xn: 70 });
