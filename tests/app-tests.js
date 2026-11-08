@@ -22,7 +22,7 @@ window.__appTests = async function () {
 
   await t('Tous les onglets s’affichent sans erreur', () => {
     loadDemo();
-    for (const k of ['dash', 'calc', 'pos', 'radar', 'lab', 'earn', 'set']) { tab = k; render(); if ($('#view').innerHTML.length < 100) return 'onglet vide : ' + k; }
+    for (const k of ['dash', 'calc', 'pos', 'radar', 'ana', 'lab', 'earn', 'set']) { tab = k; render(); if ($('#view').innerHTML.length < 100) return 'onglet vide : ' + k; }
     return true;
   });
 
@@ -275,6 +275,21 @@ window.__appTests = async function () {
     tab = 'dash'; render(); const ob = document.createElement('button'); ob.dataset.act = 'open-lot'; ob.dataset.lot = 'p1'; document.body.appendChild(ob); ob.click(); ob.remove(); await wait(100);
     const o = document.querySelector('details.pmini[open]');
     return o && o.querySelector('.tk').textContent === 'AAA' && o.querySelector('.pcard') ? true : 'Voir une position depuis une alerte';
+  });
+
+  await t('Passe visuelle : valeur puis Ce soir sur le bord, onglet Analyse, Réglages en Compte et Configuration', async () => {
+    S.lots = [lot()]; S.prices.AAA = [{ date: days(2)[1], price: 105 }]; tab = 'dash'; render();
+    const v = $('#view'), hero = v.querySelector('.hero-card'), tn = v.querySelector('#tonight');
+    if (!hero || !tn || !(hero.compareDocumentPosition(tn) & Node.DOCUMENT_POSITION_FOLLOWING)) return 'valeur nette pas en tête';
+    if (/Ce qui marche pour vous|Qualité des sorties/.test(v.textContent)) return 'statistiques encore sur le bord';
+    if (!$('#tab-ana')) return 'onglet Analyse absent';
+    $('#tab-ana').click(); await wait(50);
+    if (!/Performance/.test($('#view').textContent) || !/Positions clôturées/.test($('#view').textContent)) return 'Analyse incomplète';
+    tab = 'set'; setPart = 'acct'; render();
+    if (!$('#setForm') || /Synchronisation et sauvegarde|Sauvegarde et données/.test($('#view').textContent)) return 'partie Compte';
+    $('[data-act="set-part"][data-f="conf"]').click(); await wait(50);
+    const ok = !$('#setForm') && /Synchronisation et sauvegarde|Sauvegarde et données/.test($('#view').textContent);
+    setPart = 'acct'; return ok ? true : 'partie Configuration';
   });
 
   await t('Graphique : bougies du robot, SMA, stop et ventes ; clôtures sans bougies', async () => {
