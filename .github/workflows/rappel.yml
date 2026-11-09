@@ -1,0 +1,32 @@
+name: Rappel clôture Europe (cours manuels)
+
+on:
+  schedule:
+    # 17 h 35 à Paris : 16 h 35 UTC en hiver, 15 h 35 UTC en été. Le script n'envoie qu'entre 17 h 30 et 18 h 30 (heure de Paris).
+    - cron: '35 15 * * 1-5'
+    - cron: '35 16 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Envoyer maintenant (test), quelle que soit l’heure'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  rappel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Rappel des cours manuels
+        working-directory: robot
+        run: node rappel.mjs
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
