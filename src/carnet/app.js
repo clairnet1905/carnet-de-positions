@@ -2596,8 +2596,9 @@ function benchBlock(P, sel, rangePts) {
 function timeAxis(dates, x, yy, W) {
   const a = dates[0], b = dates[dates.length - 1], span = Core.days(a, b), out = [];
   const MO = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
-  if (span <= 8) for (const d of dates) out.push([d, fmtWd(d).split(' ')[0]]);
-  else if (span <= 45) { let k = 0, seen = new Set(); for (const d of dates) { const w = weekKey(d); if (seen.has(w)) continue; seen.add(w); k++; out.push([d, 'sem. ' + k, fmtWd(w)]); } }
+  // Semaine : jours de bourse seulement. Mois : semaines du mois affiché (pas la clôture de référence du mois d'avant).
+  if (span <= 8) { for (const d of dates) if (wdOf(d) >= 1 && wdOf(d) <= 5) out.push([d, fmtWd(d).split(' ')[0]]); }
+  else if (span <= 45) { let k = 0, seen = new Set(); for (const d of dates) { if (d.slice(0, 7) !== b.slice(0, 7)) continue; const w = weekKey(d); if (seen.has(w)) continue; seen.add(w); k++; out.push([d, 'sem. ' + k, fmtWd(w)]); } }
   else if (span <= 730) { let seen = new Set(); for (const d of dates) { const m = d.slice(0, 7); if (seen.has(m)) continue; seen.add(m); out.push([d, MO[+d.slice(5, 7) - 1]]); } }
   else { let seen = new Set(); for (const d of dates) { const y = d.slice(0, 4); if (seen.has(y)) continue; seen.add(y); out.push([d, y]); } }
   const gap = W < 500 ? 38 : 46; let lastX = -1e9, s = '';
