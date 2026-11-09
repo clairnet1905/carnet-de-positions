@@ -458,8 +458,8 @@ window.__appTests = async function () {
     const bad = [];
     const lab = dates => { const k = 600 / Math.max(1, Core.days(dates[0], dates[dates.length - 1])), xs = d => 60 + Core.days(dates[0], d) * k;
       return [...new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${timeAxis(dates, xs, 100, 700)}</svg>`, 'image/svg+xml').querySelectorAll('text')].map(n => n.firstChild.nodeValue); };
-    const wk = lab(['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06']); if (wk.join() !== 'lun.,mar.,mer.,jeu.,ven.') bad.push('semaine : ' + wk);
-    const mo = lab(['2026-11-02', '2026-11-04', '2026-11-09', '2026-11-16', '2026-11-23', '2026-11-27']); if (mo.join() !== 'sem. 1,sem. 2,sem. 3,sem. 4') bad.push('mois : ' + mo);
+    const wk = lab(['2026-10-30', '2026-10-31', '2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06'].slice(2)); if (lab(['2026-11-06', '2026-11-07', '2026-11-09']).join() !== 'ven.,lun.') bad.push('samedi affiché'); if (wk.join() !== 'lun.,mar.,mer.,jeu.,ven.') bad.push('semaine : ' + wk);
+    const mo = lab(['2026-10-30', '2026-11-02', '2026-11-04', '2026-11-09', '2026-11-16', '2026-11-23', '2026-11-27']); if (mo.join() !== 'sem. 1,sem. 2,sem. 3,sem. 4') bad.push('mois : ' + mo);
     const yr = lab(['2026-09-07', '2026-09-30', '2026-10-01', '2026-10-20', '2026-11-02', '2026-11-09']); if (yr.join() !== 'sept.,oct.,nov.') bad.push('année : ' + yr);
     const keep = localStorage.getItem(ID_KEY), D = days(5), day = nextWeekday(D[4]);
     try {
