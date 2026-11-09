@@ -532,7 +532,7 @@ async function refreshQuotes(manual, hotOnly) {
   let saved = 0, appended = 0, err = '', shown = Date.now();
   // Les cours s'affichent au fur et à mesure, sans attendre la fin de la liste.
   Live.prices = Object.assign({}, Live.prices);
-  const show = () => { Live.at = Date.now(); shown = Live.at; if (tab === 'dash' || tab === 'radar') render(); };
+  const show = () => { Live.at = Date.now(); shown = Live.at; if (tab === 'dash' || tab === 'radar' || tab === 'ana') render(); };
   for (let i = 0; i < tickers.length; i++) {
     const t = tickers[i];
     if (pace && i) await new Promise(r => setTimeout(r, pace));
@@ -2465,14 +2465,14 @@ function benchBlock(P, sel, rangePts) {
   // Jour et semaine : la séance du jour compte ; mois, année, max : sans cours du jour, la dernière clôture suffit (c'est dit sous les tuiles).
   const short = perfRange === 'day' || perfRange === 'week';
   const a = at(sel.from), b = at(sel.to) || (short ? null : at(at.last)); if (!(a > 0)) return { tiles: '', kv: '', at: null };
-  const dd = d => fmtDate(d).replace(/ \d{4}$/, ''), base = dd(at.day(sel.from));
+  const dd = d => fmtWd(d), base = dd(at.day(sel.from));
   let tiles;
   if (!(b > 0)) {
     tiles = `<div class="btiles"><div><small>Votre compte</small><b class="num ${cls(sel.r)}">${pct(sel.r, true)}</b></div><div><small>S&amp;P 500</small><b class="num">—</b></div><div><small>Écart</small><b class="num">—</b></div></div><p class="hint bnote">S&amp;P : clôture du ${dd(sel.to)} ce soir après le passage du robot.</p>`;
   } else {
     const rS = (b / a - 1) * 100, gap = sel.r - rS;
     const src = sel.to > at.last && at.live && sel.to >= at.live.date ? `cours en direct de SPY à ${hhmm(at.live.at)}, vs clôture du ${base}` : `clôture${at.day(sel.to) === sel.to ? ' officielle' : ''} du ${dd(at.day(sel.to))}, vs ${base}`;
-    tiles = `<div class="btiles"><div><small>Votre compte</small><b class="num ${cls(sel.r)}">${pct(sel.r, true)}</b></div><div><small>S&amp;P 500</small><b class="num ${cls(rS)}">${pct(rS, true)}</b></div><div><small>Écart</small><b class="num ${cls(gap)}">${(gap >= 0 ? '+' : '−') + fmtNum(Math.abs(gap), 2)} pt</b></div></div><p class="hint bnote">S&amp;P : ${src}.</p>`;
+    tiles = `<div class="btiles"><div><small>Votre compte</small><b class="num ${cls(sel.r)}">${pct(sel.r, true)}</b></div><div><small>S&amp;P 500</small><b class="num ${cls(rS)}">${pct(rS, true)}</b></div><div><small>Écart</small><b class="num ${cls(gap)}">${(gap >= 0 ? '+' : '−') + fmtNum(Math.abs(gap), 2)} pt</b></div></div><p class="hint bnote">S&amp;P : ${src}</p>`;
   }
   // Bêta sur les 60 dernières variations de séance du compte (toutes périodes) ; séances gagnantes sur la période affichée.
   const all = benchPairs(P.pts, at).slice(-60), inR = benchPairs(rangePts, at);
