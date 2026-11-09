@@ -384,7 +384,7 @@ window.__appTests = async function () {
   });
 
   await t('S&P en Jour : cours en direct de SPY avant le robot, « — » sans cours, dernière clôture pour le mois', async () => {
-    const D = days(30), last = D[29], today = addDays(last, 1), keep = Live.prices, pr = perfRange;
+    const D = days(30), last = D[29], today = nextWeekday(last), keep = Live.prices, pr = perfRange;
     Radar.hist.SPY = { bars: D.map((d, i) => [d, 500 + i]), n: 30, full: 1, last, ls: last, adj: 'splits' };
     const sel = { from: last, to: today, r: 0.5 }, pts = [{ date: last, index: 1, r: null }, { date: today, index: 1.005, r: 0.005 }], P = { pts, itd: null };
     const txt = () => { const m = document.createElement('div'); m.innerHTML = benchBlock(P, sel, pts).tiles; return m.textContent.replace(/\s+/g, ' '); };
@@ -395,7 +395,10 @@ window.__appTests = async function () {
       const b = txt(); if (!/S&P 500\+1,00 %/.test(b) || !/direct/.test(b)) return 'direct : ' + b;
       perfRange = 'month'; Live.prices = {};
       const c = txt(); if (/S&P 500—/.test(c) || !/clôture du/.test(c)) return 'mois : ' + c;
-      Radar.hist.SPY.bars.push([today, 529 * 1.02]); Radar.hist.SPY.last = today; perfRange = 'day';
+      perfRange = 'day'; sel.to = addDays(last, 1); while (nyDay(sel.to).open) sel.to = addDays(sel.to, 1);   // jour sans séance (week-end ou férié) : la dernière clôture fait foi
+      const e = txt(); if (!/S&P 5000,00 %/.test(e)) return 'jour sans séance : ' + e;
+      sel.to = today;
+      Radar.hist.SPY.bars.push([today, 529 * 1.02]); Radar.hist.SPY.last = today;
       const d = txt(); if (!/S&P 500\+2,00 %/.test(d) || !/clôture officielle/.test(d)) return 'après robot : ' + d;
       return true;
     } finally { Live.prices = keep; perfRange = pr; delete Radar.hist.SPY; }
@@ -414,6 +417,23 @@ window.__appTests = async function () {
     chk('heure d’été décalée', c('2026-03-10', 9, 0), 'ext', /\(14:30 à Paris\)/);
     if (nyHolidays(2026).H['2026-04-03'] !== 'Vendredi saint' || nyHolidays(2026).H['2026-07-03'] !== 'Independence Day') bad.push('fériés 2026');
     nyTick(); const el = document.getElementById('nyc'); if (!el || !/^\d\d:\d\d$/.test(el.querySelector('b').textContent)) bad.push('pastille absente');
+    return bad.length ? bad.join(' | ') : true;
+  });
+
+  await t('Calendrier NYSE : jours fériés dans les séances, la clôture et la fiche', async () => {
+    const bad = [];
+    if (prevWeekday('2026-11-27') !== '2026-11-25') bad.push('séance avant le lendemain de Thanksgiving : ' + prevWeekday('2026-11-27'));
+    if (nextWeekday('2026-12-24') !== '2026-12-28') bad.push('séance après la veille de Noël : ' + nextWeekday('2026-12-24'));
+    if (marketOpen(nyToMs('2026-11-26', 600))) bad.push('ouvert à Thanksgiving');
+    if (!marketOpen(nyToMs('2026-11-27', 700)) || marketOpen(nyToMs('2026-11-27', 800))) bad.push('séance courte du 27/11');
+    if (lastSession(nyToMs('2026-11-26', 1000)) !== '2026-11-25') bad.push('dernière séance à Thanksgiving : ' + lastSession(nyToMs('2026-11-26', 1000)));
+    if (lastSession(nyToMs('2026-11-27', 790)) !== '2026-11-27') bad.push('clôture courte du 27/11 non prise : ' + lastSession(nyToMs('2026-11-27', 790)));
+    const ev = nyEvents('2026-11-09', 365), f = k => ev.find(e => e.t === k);
+    if (!f('Thanksgiving') || f('Thanksgiving').d !== '2026-11-26' || f('Thanksgiving').k !== 'fe') bad.push('Thanksgiving dans la liste');
+    if (!f('Lendemain de Thanksgiving') || !f('Veille de Noël')) bad.push('séances courtes : ' + ev.filter(e => e.k === 'co').map(e => e.d).join(','));
+    const dst = ev.find(e => e.k === 'hr'); if (!dst || dst.d !== '2027-03-15' || !/14:30/.test(dst.sub) || !/ven\. 26 mars/.test(dst.sub)) bad.push('décalage horaire : ' + JSON.stringify(dst));
+    sheetMarket(); await wait(20); const txt = $('#sheetBody').textContent; closeSheet();
+    if (!/Prochains jours particuliers/.test(txt) || !/Thanksgiving/.test(txt)) bad.push('fiche');
     return bad.length ? bad.join(' | ') : true;
   });
 
