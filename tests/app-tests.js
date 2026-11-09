@@ -454,6 +454,23 @@ window.__appTests = async function () {
     return h2 ? 'alerte restée après la saisie : ' + h2.sub : true;
   });
 
+  await t('Performance : repères de temps sous la courbe, courbe heure par heure en vue Jour', async () => {
+    const bad = [];
+    const lab = dates => { const k = 600 / Math.max(1, Core.days(dates[0], dates[dates.length - 1])), xs = d => 60 + Core.days(dates[0], d) * k;
+      return [...new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${timeAxis(dates, xs, 100, 700)}</svg>`, 'image/svg+xml').querySelectorAll('text')].map(n => n.firstChild.nodeValue); };
+    const wk = lab(['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06']); if (wk.join() !== 'lun.,mar.,mer.,jeu.,ven.') bad.push('semaine : ' + wk);
+    const mo = lab(['2026-11-02', '2026-11-04', '2026-11-09', '2026-11-16', '2026-11-23', '2026-11-27']); if (mo.join() !== 'sem. 1,sem. 2,sem. 3,sem. 4') bad.push('mois : ' + mo);
+    const yr = lab(['2026-09-07', '2026-09-30', '2026-10-01', '2026-10-20', '2026-11-02', '2026-11-09']); if (yr.join() !== 'sept.,oct.,nov.') bad.push('année : ' + yr);
+    const keep = localStorage.getItem(ID_KEY), D = days(5), day = nextWeekday(D[4]);
+    try {
+      localStorage.setItem(ID_KEY, JSON.stringify({ day, pts: [{ t: nyToMs(day, 600), eq: 1010, spy: 101 }, { t: nyToMs(day, 700), eq: 1020, spy: 102 }, { t: nyToMs(day, 900), eq: 990, spy: 100 }] }));
+      const P = { pts: [{ date: D[4], value: 1000, index: 1 }] }, svg = intradaySVG({ from: D[4], to: day, r: -1 }, P, () => 100);
+      if (!/15h30|16h/.test(svg) || !/S&amp;P 500/.test(svg) || !/2,00 %/.test(svg)) bad.push('vue Jour : ' + svg.slice(0, 160));
+      if (intradaySVG({ from: D[4], to: addDays(day, 1), r: 0 }, P, null)) bad.push('courbe d’un autre jour affichée');
+    } finally { if (keep == null) localStorage.removeItem(ID_KEY); else localStorage.setItem(ID_KEY, keep); }
+    return bad.length ? bad.join(' | ') : true;
+  });
+
   reset(); tab = 'dash';
   return out;
 };
