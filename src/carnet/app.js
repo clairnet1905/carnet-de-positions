@@ -198,8 +198,10 @@ function perfPrices() {
   }
   // Position saisie après coup (ou cours jamais enregistrés) : les jours sans cours sont complétés par la clôture
   // de l'historique du radar si l'action y est. Points marqués estimés (cours ajustés des dividendes en mode ADJ).
+  const man = manualSet();
   for (const l of S.lots) {
-    const t = l.ticker, w = S.watch.find(x => x.ticker === t && !x.idx), h = w && histFixed(symOf(w), Radar.hist[symOf(w)]);
+    const t = l.ticker; if (man.has(t)) continue;   // saisie manuelle (ex. EL Essilor) : le radar du même symbole peut suivre une autre action (EL Estée Lauder)
+    const w = S.watch.find(x => x.ticker === t && !x.idx), h = w && histFixed(symOf(w), Radar.hist[symOf(w)]);
     if (!h || !h.bars || !h.bars.length) continue;
     const ls = Core.lotState(l), end = ls.closed ? ls.closeDate : todayISO(), bars = new Map(h.bars.map(b => [b[0], b[1]]));
     const have = new Set((out[t] || []).map(x => x.date)), add = [];
@@ -3302,15 +3304,15 @@ function healthChecks() {
   }
   const noStop = open.filter(l => !(l.stopCurrent > 0));
   if (noStop.length) out.push({ lvl: 'imp', title: `${noStop.length} position(s) ouverte(s) sans stop`, sub: noStop.map(l => esc(l.ticker)).join(', ') + ' : risque non borné, absent du panneau de risque.', btn: btn('Mettre un stop', 'stop', { lot: noStop[0].id }) });
-  // Jours de détention sans cours, même après le cours reporté et l'historique du radar.
-  const pp = perfPrices(), days = [...new Set(Object.values(S.prices).flat().map(x => x.date))].filter(d => d >= start && d <= today && wdOf(d) >= 1 && wdOf(d) <= 5).sort();
-  const gaps = [];
+  // Position ouverte dont le dernier cours a plus de 3 jours de bourse (les anciens trous ne comptent plus : le cours du jour fait foi).
+  const pp = perfPrices(), gaps = [];
   for (const l of real) {
-    const ls = Core.lotState(l), end = ls.closed ? ls.closeDate : today, have = new Set((pp.prices[l.ticker] || []).map(x => x.date));
-    const miss = days.filter(d => d >= l.date && d < end && !have.has(d)).length;
-    if (miss >= 3) gaps.push([l, miss]);
+    if (Core.lotState(l).closed || l.date >= today) continue;
+    const last = (pp.prices[l.ticker] || []).map(x => x.date).filter(d => d <= today).sort().pop() || l.date;
+    let miss = 0; for (let d = addDays(last, 1); d < today; d = addDays(d, 1)) if (wdOf(d) >= 1 && wdOf(d) <= 5) miss++;
+    if (miss >= 3 && !gaps.some(([g]) => g.ticker === l.ticker)) gaps.push([l, miss, last]);
   }
-  if (gaps.length) out.push({ lvl: 'imp', title: `${gaps.length} position(s) avec des jours sans cours`, sub: gaps.slice(0, 6).map(([l, n]) => `${esc(l.ticker)} : ${n} jour(s)`).join(' · ') + '. Ces jours sont écartés de la performance. L’historique du radar les complète si l’action y est.', btn: inRadar(gaps[0][0].ticker) || skip.has(gaps[0][0].ticker) ? btn('Mettre à jour les cours', 'prices') : btn(`Ajouter ${gaps[0][0].ticker} au radar`, 'health-radar', { t: gaps[0][0].ticker }) });
+  if (gaps.length) out.push({ lvl: 'imp', title: `${gaps.length} position(s) sans cours récent`, sub: gaps.slice(0, 6).map(([l, n, d]) => `${esc(l.ticker)} : dernier cours le ${fmtWd(d)}`).join(' · ') + '. Saisissez le cours du jour : il suffit, les jours oubliés avant ne comptent pas.', btn: inRadar(gaps[0][0].ticker) || skip.has(gaps[0][0].ticker) ? btn('Mettre à jour les cours', 'prices') : btn(`Ajouter ${gaps[0][0].ticker} au radar`, 'health-radar', { t: gaps[0][0].ticker }) });
   // Cours enregistré le jour d'une vente (saisie à la main) différent du prix de vente : reste d'une saisie corrigée.
   for (const l of real) for (const e of l.events.filter(x => x.type === 'sell')) {
     const pr = (S.prices[l.ticker] || []).find(x => x.date === e.date); if (!pr || pr.src) continue;
