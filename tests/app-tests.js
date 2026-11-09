@@ -401,6 +401,22 @@ window.__appTests = async function () {
     } finally { Live.prices = keep; perfRange = pr; delete Radar.hist.SPY; }
   });
 
+  await t('Horloge de New York : séance, avant l’ouverture, week-end, férié, séance courte, décalage d’heure d’été', async () => {
+    const c = (d, h, m) => nyClock(nyToMs(d, h * 60 + m)), bad = [];
+    const chk = (k, x, st, re) => { if (x.st !== st || !re.test(x.msg)) bad.push(k + ' : ' + x.st + ' / ' + x.msg); };
+    const a = c('2026-11-09', 10, 42); if (a.time !== '10:42') bad.push('heure ' + a.time);
+    chk('séance', a, 'open', /clôture dans 5 h 18 \(22:00 à Paris\)/);
+    chk('avant', c('2026-11-09', 8, 55), 'ext', /Ouverture dans 35 min \(15:30 à Paris\)/);
+    chk('soir', c('2026-11-09', 18, 10), 'ext', /Séance terminée · ouverture mar\. 10 nov\./);
+    chk('week-end', c('2026-11-14', 12, 0), 'shut', /^Fermé · ouverture lun\. 16 nov\./);
+    chk('Thanksgiving', c('2026-11-26', 10, 0), 'shut', /férié : Thanksgiving/);
+    chk('séance courte', c('2026-11-27', 10, 0), 'open', /clôture dans 3 h 00 \(19:00 à Paris\) · séance courte/);
+    chk('heure d’été décalée', c('2026-03-10', 9, 0), 'ext', /\(14:30 à Paris\)/);
+    if (nyHolidays(2026).H['2026-04-03'] !== 'Vendredi saint' || nyHolidays(2026).H['2026-07-03'] !== 'Independence Day') bad.push('fériés 2026');
+    nyTick(); const el = document.getElementById('nyc'); if (!el || !/^\d\d:\d\d$/.test(el.querySelector('b').textContent)) bad.push('pastille absente');
+    return bad.length ? bad.join(' | ') : true;
+  });
+
   reset(); tab = 'dash';
   return out;
 };
