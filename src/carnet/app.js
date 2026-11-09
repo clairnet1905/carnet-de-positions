@@ -2437,8 +2437,16 @@ function perfWhy(P) {
 // ----- Comparaison avec le S&P 500 : ETF SPY de l'historique du radar (cours ajustés, dividendes inclus), aux dates des observations du compte -----
 function spyAt() {
   const h0 = Radar.hist.SPY, h = h0 && (histFixed('SPY', h0) || h0); if (!h || !h.bars || h.bars.length < 2) return null;
-  const b = h.bars;
-  return d => { let lo = 0, hi = b.length - 1, r = null; while (lo <= hi) { const m = (lo + hi) >> 1; if (b[m][0] <= d) { r = b[m][1]; lo = m + 1; } else hi = m - 1; } return r; };
+  const b = h.bars, last = b[b.length - 1][0], lv = Live.prices.SPY;
+  // Séance pas encore clôturée par le robot : cours en direct de SPY (récupéré toutes les 2 minutes), sinon rien plutôt qu'un faux 0 %.
+  const live = lv && lv.price > 0 && lv.date > last ? lv : null;
+  const at = d => {
+    if (d > last) return live && d >= live.date ? live.price : null;
+    let lo = 0, hi = b.length - 1, r = null; while (lo <= hi) { const m = (lo + hi) >> 1; if (b[m][0] <= d) { r = b[m][1]; lo = m + 1; } else hi = m - 1; } return r;
+  };
+  at.last = last; at.live = live;
+  at.day = d => { let r = null; for (let i = b.length - 1; i >= 0; i--) if (b[i][0] <= d) { r = b[i][0]; break; } return r; };
+  return at;
 }
 // Variations entre deux observations consécutives (compte, SPY). Seulement les écarts de 5 jours ou moins (séances, pas des trous).
 function benchPairs(pts, at) {
@@ -2454,9 +2462,18 @@ function benchBlock(P, sel, rangePts) {
   const at = spyAt();
   if (!at) return { tiles: `<p class="hint">Comparaison avec le S&amp;P 500 : historique de SPY en attente${S.watch.some(w => w.ticker === 'SPY') ? ' (chargé par le radar)' : ' : ajoutez SPY au radar (carte Marché US › SMA)'}.</p>`, kv: '', at: null };
   if (!sel || rangePts.length < 2) return { tiles: '', kv: '', at: null };
-  const a = at(sel.from), b = at(sel.to); if (!(a > 0 && b > 0)) return { tiles: '', kv: '', at: null };
-  const rS = (b / a - 1) * 100, gap = sel.r - rS;
-  const tiles = `<div class="btiles"><div><small>Votre compte</small><b class="num ${cls(sel.r)}">${pct(sel.r, true)}</b></div><div><small>S&amp;P 500</small><b class="num ${cls(rS)}">${pct(rS, true)}</b></div><div><small>Écart</small><b class="num ${cls(gap)}">${(gap >= 0 ? '+' : '−') + fmtNum(Math.abs(gap), 2)} pt</b></div></div>`;
+  // Jour et semaine : la séance du jour compte ; mois, année, max : sans cours du jour, la dernière clôture suffit (c'est dit sous les tuiles).
+  const short = perfRange === 'day' || perfRange === 'week';
+  const a = at(sel.from), b = at(sel.to) || (short ? null : at(at.last)); if (!(a > 0)) return { tiles: '', kv: '', at: null };
+  const dd = d => fmtDate(d).replace(/ \d{4}$/, ''), base = dd(at.day(sel.from));
+  let tiles;
+  if (!(b > 0)) {
+    tiles = `<div class="btiles"><div><small>Votre compte</small><b class="num ${cls(sel.r)}">${pct(sel.r, true)}</b></div><div><small>S&amp;P 500</small><b class="num">—</b></div><div><small>Écart</small><b class="num">—</b></div></div><p class="hint bnote">S&amp;P : clôture du ${dd(sel.to)} ce soir après le passage du robot.</p>`;
+  } else {
+    const rS = (b / a - 1) * 100, gap = sel.r - rS;
+    const src = sel.to > at.last && at.live && sel.to >= at.live.date ? `cours en direct de SPY à ${hhmm(at.live.at)}, vs clôture du ${base}` : `clôture${at.day(sel.to) === sel.to ? ' officielle' : ''} du ${dd(at.day(sel.to))}, vs ${base}`;
+    tiles = `<div class="btiles"><div><small>Votre compte</small><b class="num ${cls(sel.r)}">${pct(sel.r, true)}</b></div><div><small>S&amp;P 500</small><b class="num ${cls(rS)}">${pct(rS, true)}</b></div><div><small>Écart</small><b class="num ${cls(gap)}">${(gap >= 0 ? '+' : '−') + fmtNum(Math.abs(gap), 2)} pt</b></div></div><p class="hint bnote">S&amp;P : ${src}.</p>`;
+  }
   // Bêta sur les 60 dernières variations de séance du compte (toutes périodes) ; séances gagnantes sur la période affichée.
   const all = benchPairs(P.pts, at).slice(-60), inR = benchPairs(rangePts, at);
   let beta = null;
@@ -2468,7 +2485,7 @@ function benchBlock(P, sel, rangePts) {
   const won = inR.filter(([y, x]) => y > x).length;
   let kvs = kv('Sensibilité au marché (bêta)', beta == null ? 'Pas assez de séances' : `${fmtNum(beta, 2)}`, beta == null ? `il faut au moins 8 séances consécutives observées (${all.length} pour l’instant)` : `quand le S&amp;P fait −1 %, votre compte fait environ ${pct(-beta, true)} · ${all.length} séance(s) observée(s)`, beta != null && beta > 1.5 ? 'neg' : '');
   if (inR.length) kvs += kv('Séances meilleures que le S&amp;P', `${won} / ${inR.length}`, 'sur les séances observées de la période');
-  if (perfRange !== 'itd' && P.itd) { const a0 = at(P.itd.from), b0 = at(P.itd.to); if (a0 > 0 && b0 > 0) { const r0 = (b0 / a0 - 1) * 100; kvs += kv('Depuis le début', `${pct(P.itd.r, true)} vs ${pct(r0, true)}`, `${fmtDate(P.itd.from)} → ${fmtDate(P.itd.to)} · compte vs S&amp;P 500`, cls(P.itd.r - r0)); } }
+  if (perfRange !== 'itd' && P.itd) { const a0 = at(P.itd.from), b0 = at(P.itd.to) || at(at.last); if (a0 > 0 && b0 > 0) { const r0 = (b0 / a0 - 1) * 100; kvs += kv('Depuis le début', `${pct(P.itd.r, true)} vs ${pct(r0, true)}`, `${fmtDate(P.itd.from)} → ${fmtDate(P.itd.to)} · compte vs S&amp;P 500`, cls(P.itd.r - r0)); } }
   return { tiles, kv: kvs, at };
 }
 function chartSVG(pts, bench) {
