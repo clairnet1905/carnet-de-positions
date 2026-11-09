@@ -269,10 +269,10 @@ function nyParts(ms) {
   for (const x of NY_FMT.formatToParts(new Date(ms))) p[x.type] = x.value;
   return { date: `${p.year}-${p.month}-${p.day}`, min: +p.hour * 60 + +p.minute };
 }
-// Séance régulière NYSE / Nasdaq : 9 h 30 – 16 h à New York, du lundi au vendredi (jours fériés non gérés).
+// Séance régulière NYSE / Nasdaq : 9 h 30 – 16 h à New York (13 h les séances courtes), hors week-ends et jours fériés.
 function marketOpen(ms) {
-  const n = nyParts(ms), wd = new Date(n.date + 'T12:00:00').getDay();
-  return wd >= 1 && wd <= 5 && n.min >= 570 && n.min < 960;
+  const n = nyParts(ms), D = nyDay(n.date);
+  return D.open && n.min >= 570 && n.min < D.close;
 }
 // ----- Horloge de New York (en-tête) : heure, état du marché, jours fériés et séances courtes NYSE -----
 function nyHolidays(y) {
@@ -306,6 +306,30 @@ function nyClock(ms) {
     msg = d === n.date ? `Ouverture dans ${dur(570 - n.min)} (${loc(t)} à Paris)` : `${D.open ? 'Séance terminée' : D.hol ? 'Fermé · férié : ' + D.hol : 'Fermé'} · ouverture ${fmtWd(d)} à ${loc(t)} (heure de Paris)`;
   }
   return { time, st, msg };
+}
+// Fiche « Bourse de New York » : état du marché et jours particuliers des 12 prochains mois.
+function nyEvents(from, days) {
+  const out = [], loc = t => new Date(t).toLocaleTimeString('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit' });
+  let prevOpen = null;
+  for (let i = 0, d = from; i <= days; i++, d = addDays(d, 1)) {
+    const D = nyDay(d), w = wdOf(d);
+    if (w === 0 || w === 6) continue;
+    if (D.hol) out.push({ d, k: 'fe', t: D.hol, sub: '' });
+    else if (D.close < 960) out.push({ d, k: 'co', t: nyDay(addDays(d, -1)).hol === 'Thanksgiving' ? 'Lendemain de Thanksgiving' : d.slice(5, 7) === '12' ? 'Veille de Noël' : 'Veille de la fête nationale', sub: 'clôture ' + loc(nyToMs(d, D.close)) + ' à Paris' });
+    const o = loc(nyToMs(d, 570));
+    if (prevOpen && o !== prevOpen && o !== '15:30') { let e = d; for (let x = addDays(d, 1); ; x = addDays(x, 1)) { const wx = wdOf(x); if (wx === 0 || wx === 6) continue; if (loc(nyToMs(x, 570)) !== o) break; e = x; } out.push({ d, k: 'hr', t: 'Décalage d’heure d’été', sub: `jusqu’au ${fmtWd(e)} : ouverture ${o} à Paris` }); }
+    prevOpen = o;
+  }
+  return out;
+}
+function sheetMarket() {
+  const now = Date.now(), c = nyClock(now), today = nyParts(now).date, loc = t => new Date(t).toLocaleTimeString('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit' });
+  const ev = nyEvents(today, 365), first = ev.find(e => e.k === 'fe');
+  const rows = ev.map(e => `<div class="mkr"><span class="num">${fmtWd(e.d)}</span><span>${esc(e.t)}${e.sub || e === first ? `<small>${e === first && !e.sub ? (e.d === today ? 'aujourd’hui' : 'dans ' + Core.days(today, e.d) + ' jour(s)') : esc(e.sub)}</small>` : ''}</span><span class="mkp ${e.k}">${e.k === 'fe' ? 'Fermé' : e.k === 'co' ? 'Séance courte' : 'Horaire'}</span></div>`).join('');
+  openSheet({ title: 'Bourse de New York', body: `<div class="mknow ${c.st}"><i></i><p><b>${c.st === 'open' ? 'Séance ouverte' : c.st === 'ext' ? 'Hors séance' : 'Fermé'} · NY ${c.time}</b><br>${esc(c.msg.replace(/^(Séance ouverte|Séance terminée|Fermé) · /, '').replace(/^./, x => x.toUpperCase()))}</p></div>
+    <div class="mkh"><span>Horaires normaux</span><span>${loc(nyToMs(nextWeekday(today), 570))} – ${loc(nyToMs(nextWeekday(today), 960))} à Paris</span></div>
+    <h3 class="mkt">Prochains jours particuliers</h3>${rows || '<p class="hint">Aucun dans les 12 prochains mois.</p>'}
+    <p class="hint">Liste des 12 prochains mois. Ces jours-là, l’app ne cherche pas de cours en direct et compare avec la dernière vraie séance.</p>` });
 }
 function nyTick() {
   const el = document.getElementById('nyc'); if (!el) return;
@@ -586,8 +610,8 @@ async function refreshQuotes(manual, hotOnly) {
       const d = nyParts(q.t * 1000).date;
       got[t] = Live.prices[t] = { date: d, price: q.c, live: true, at: q.t * 1000, dp: q.dp };
       if (i === IDX.length - 1 || Date.now() - shown > 8000) show();
-      // Séance terminée (16 h 05 à New York passé, ou jour suivant) : le dernier cours est la clôture.
-      if (ny.date > d || ny.min >= 965) {
+      // Séance terminée (5 minutes après la clôture à New York, ou jour suivant) : le dernier cours est la clôture.
+      if (ny.date > d || ny.min >= nyDay(d).close + 5) {
         if (openT.has(t)) {
           const ex = (S.prices[t] || []).find(x => x.date === d);
           if (!ex || (ex.src === 'auto' && ex.price !== q.c)) { addPrice(t, d, q.c, false, 'auto'); saved++; }
@@ -671,8 +695,9 @@ const HDB = {
   set(k, v) { return this.run('readwrite', s => s.put(v, k)); }
 };
 const wdOf = memo(d => new Date(d + 'T12:00:00').getDay());
-function nextWeekday(d) { do { d = addDays(d, 1); } while (wdOf(d) === 0 || wdOf(d) === 6); return d; }
-function prevWeekday(d) { do { d = addDays(d, -1); } while (wdOf(d) === 0 || wdOf(d) === 6); return d; }
+// Jours de séance : hors week-ends et jours fériés de la Bourse de New York.
+function nextWeekday(d) { do { d = addDays(d, 1); } while (!nyDay(d).open); return d; }
+function prevWeekday(d) { do { d = addDays(d, -1); } while (!nyDay(d).open); return d; }
 // Action du radar dont Finnhub fournit la clôture du jour (symbole US, cours automatique).
 const finnhubCovers = sym => !!quoteKey() && !manualSet().has(sym) && S.watch.some(w => !w.sym && w.ticker === sym);
 // Ajoute la clôture du jour (Finnhub) à l'historique gardé sur l'appareil, si elle suit directement la dernière clôture connue.
@@ -703,7 +728,7 @@ function lastSession(ms) {
   const m = Math.floor(ms / 60000);
   if (m === lsMemo.min) return lsMemo.d;
   const n = nyParts(ms); let d = n.date;
-  if (!(wdOf(d) >= 1 && wdOf(d) <= 5 && n.min >= 965)) { do { d = addDays(d, -1); } while (wdOf(d) === 0 || wdOf(d) === 6); }
+  if (!(nyDay(d).open && n.min >= nyDay(d).close + 5)) d = prevWeekday(d);
   lsMemo.min = m; lsMemo.d = d;
   return d;
 }
@@ -2481,7 +2506,7 @@ function spyAt() {
   // Séance pas encore clôturée par le robot : cours en direct de SPY (récupéré toutes les 2 minutes), sinon rien plutôt qu'un faux 0 %.
   const live = lv && lv.price > 0 && lv.date > last ? lv : null;
   const at = d => {
-    if (d > last) return live && d >= live.date ? live.price : null;
+    if (d > last) { if (live && d >= live.date) return live.price; if (nextWeekday(last) > d) return b[b.length - 1][1]; return null; }   // pas de séance depuis la dernière clôture (férié, week-end) : elle fait foi
     let lo = 0, hi = b.length - 1, r = null; while (lo <= hi) { const m = (lo + hi) >> 1; if (b[m][0] <= d) { r = b[m][1]; lo = m + 1; } else hi = m - 1; } return r;
   };
   at.last = last; at.live = live;
@@ -3838,7 +3863,7 @@ document.addEventListener('click', e => {
   const a = b.dataset.act, lot = b.dataset.lot ? findLot(b.dataset.lot) : null;
   switch (a) {
     case 'close-sheet': closeSheet(); break;
-    case 'nyc': nyTick(); toast(nyClock(Date.now()).msg); break;
+    case 'nyc': nyTick(); sheetMarket(); break;
     case 'go-calc': tab = 'calc'; render(); break;
     case 'reset-calc': calcDraft = freshDraft(); render(); break;
     case 'record-buy': sheetBuy(); break;
