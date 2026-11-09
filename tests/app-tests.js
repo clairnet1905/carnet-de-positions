@@ -383,6 +383,24 @@ window.__appTests = async function () {
     return ok ? true : 'mention bougies reconstruites ou distance au stop absente';
   });
 
+  await t('S&P en Jour : cours en direct de SPY avant le robot, « — » sans cours, dernière clôture pour le mois', async () => {
+    const D = days(30), last = D[29], today = addDays(last, 1), keep = Live.prices, pr = perfRange;
+    Radar.hist.SPY = { bars: D.map((d, i) => [d, 500 + i]), n: 30, full: 1, last, ls: last, adj: 'splits' };
+    const sel = { from: last, to: today, r: 0.5 }, pts = [{ date: last, index: 1, r: null }, { date: today, index: 1.005, r: 0.005 }], P = { pts, itd: null };
+    const txt = () => { const m = document.createElement('div'); m.innerHTML = benchBlock(P, sel, pts).tiles; return m.textContent.replace(/\s+/g, ' '); };
+    try {
+      perfRange = 'day'; Live.prices = {};
+      const a = txt(); if (!/S&P 500—/.test(a) || /0,00 %/.test(a) || !/ce soir/.test(a)) return 'sans cours : ' + a;
+      Live.prices = { SPY: { date: today, price: 529 * 1.01, at: Date.now(), live: true } };
+      const b = txt(); if (!/S&P 500\+1,00 %/.test(b) || !/direct/.test(b)) return 'direct : ' + b;
+      perfRange = 'month'; Live.prices = {};
+      const c = txt(); if (/S&P 500—/.test(c) || !/clôture du/.test(c)) return 'mois : ' + c;
+      Radar.hist.SPY.bars.push([today, 529 * 1.02]); Radar.hist.SPY.last = today; perfRange = 'day';
+      const d = txt(); if (!/S&P 500\+2,00 %/.test(d) || !/clôture officielle/.test(d)) return 'après robot : ' + d;
+      return true;
+    } finally { Live.prices = keep; perfRange = pr; delete Radar.hist.SPY; }
+  });
+
   reset(); tab = 'dash';
   return out;
 };
