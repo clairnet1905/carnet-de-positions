@@ -598,7 +598,7 @@ async function refreshQuotes(manual, hotOnly) {
   let saved = 0, appended = 0, err = '', shown = Date.now();
   // Les cours s'affichent au fur et à mesure, sans attendre la fin de la liste.
   Live.prices = Object.assign({}, Live.prices);
-  const show = () => { Live.at = Date.now(); shown = Live.at; if (tab === 'dash' || tab === 'radar' || tab === 'ana') render(); };
+  const show = () => { Live.at = Date.now(); shown = Live.at; idRecord(Live.at); if (tab === 'dash' || tab === 'radar' || tab === 'ana') render(); };
   for (let i = 0; i < tickers.length; i++) {
     const t = tickers[i];
     if (pace && i) await new Promise(r => setTimeout(r, pace));
@@ -630,6 +630,43 @@ async function refreshQuotes(manual, hotOnly) {
   else { if (tab !== 'calc') render(); if (manual) toast(err ? 'Cours : ' + err : 'Cours mis à jour'); }
 }
 // Affichage : les cours en direct remplacent le dernier cours enregistré, sans être sauvegardés.
+// ----- Courbe du jour : valeur du compte relevée avec les cours en direct (un point par quart d'heure, sur cet appareil, journée en cours seulement) -----
+const ID_KEY = 'carnet-positions:intraday';
+function idRead() { try { const v = JSON.parse(localStorage.getItem(ID_KEY) || 'null'); return v && Array.isArray(v.pts) ? v : null; } catch (e) { return null; } }
+function idRecord(ms) {
+  if (!marketOpen(ms) && !(nyDay(nyParts(ms).date).open && nyParts(ms).min < nyDay(nyParts(ms).date).close + 10)) return;
+  const day = nyParts(ms).date, saved = S.prices; let eq = null;
+  try { S.prices = withLive(saved); syncSwap(); eq = Core.accountState(S, todayISO(), 'last').equity; } catch (e) {} finally { S.prices = saved; syncSwap(); }
+  if (!(eq > 0)) return;
+  const spy = Live.prices.SPY && Live.prices.SPY.date === day ? Live.prices.SPY.price : null;
+  let v = idRead(); if (!v || v.day !== day) v = { day, pts: [] };
+  const slot = Math.floor(ms / 9e5), last = v.pts[v.pts.length - 1], pt = { t: ms, eq: Math.round(eq * 100) / 100, spy };
+  if (last && Math.floor(last.t / 9e5) === slot) v.pts[v.pts.length - 1] = pt; else v.pts.push(pt);
+  try { localStorage.setItem(ID_KEY, JSON.stringify(v)); } catch (e) {}
+}
+// Courbe heure par heure (vue Jour) : % par rapport à la clôture de référence, axe en heures de Paris.
+function intradaySVG(sel, P, bench) {
+  const v = idRead(); if (!v || v.day !== sel.to || v.pts.length < 2) return '';
+  const ref = (P.pts.find(p => p.date === sel.from) || {}).value, b0 = bench && bench(sel.from);
+  if (!(ref > 0)) return '';
+  const pts = v.pts.map(p => ({ t: p.t, r: (p.eq / ref - 1) * 100, s: p.spy && b0 > 0 ? (p.spy / b0 - 1) * 100 : null }));
+  const vw = (document.querySelector('#view') || {}).clientWidth || 700;
+  const W = Math.round(Math.max(320, Math.min(700, vw - 38))), H = W < 500 ? 200 : 240, L = 46, R = 10, Tp = 14, B = 28;
+  const t0 = nyToMs(v.day, 570), t1 = nyToMs(v.day, nyDay(v.day).close);
+  const all = pts.flatMap(p => [p.r, p.s]).filter(x => x != null);
+  let lo = Math.min(0, ...all), hi = Math.max(0, ...all); if (hi - lo < 0.2) { hi += 0.1; lo -= 0.1; }
+  const pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
+  const x = t => L + Math.min(1, Math.max(0, (t - t0) / (t1 - t0))) * (W - L - R), y = r => Tp + (hi - r) / (hi - lo) * (H - Tp - B);
+  let g = ''; for (const r of [hi - pad, (hi + lo) / 2, lo + pad]) g += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(r).toFixed(1)}" y2="${y(r).toFixed(1)}"/><text x="${L - 6}" y="${(y(r) + 4).toFixed(1)}" text-anchor="end">${fmtNum(r, 2)} %</text>`;
+  const loc = t => new Date(t).toLocaleTimeString('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit' });
+  let ax = ''; for (let t = t0; t <= t1 + 1; ) { const lab = loc(t).replace(':00', 'h').replace(':', 'h'); ax += `<text x="${x(t).toFixed(1)}" y="${H - 8}" text-anchor="${t === t0 ? 'start' : x(t) > W - 30 ? 'end' : 'middle'}">${lab}</text>`; t = t === t0 && loc(t0).endsWith(':30') ? t0 + 18e5 : t + (W < 500 ? 72e5 : 36e5); }
+  const line = k => pts.map((p, i) => p[k] == null ? '' : `${i && pts[i - 1][k] != null ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p[k]).toFixed(1)}`).join('');
+  const dots = pts.map(p => `<circle class="dot" cx="${x(p.t).toFixed(1)}" cy="${y(p.r).toFixed(1)}" r="2.5"><title>${loc(p.t)} : ${pct(p.r, true)}</title></circle>`).join('');
+  const sp = line('s');
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Courbe de la journée heure par heure">${g}<line class="zero" x1="${L}" x2="${W - R}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}"/>${sp ? `<path class="bench" d="${sp}"/>` : ''}<path class="line" d="${line('r')}"/>${dots}${ax}</svg>
+    <div class="blegend"><span><i class="me"></i>Votre compte</span>${sp ? '<span><i class="sp"></i>S&amp;P 500 (SPY)</span>' : ''}</div>
+    <p class="hint" style="margin:0 0 8px">Relevé toutes les 15 minutes pendant que l’app est ouverte (heure de Paris) : les moments sans app ouverte sont reliés en ligne droite.</p>`;
+}
 function withLive(prices) {
   const out = Object.assign({}, prices);
   for (const t in Live.prices) {
@@ -2337,7 +2374,7 @@ function viewDash(part) {
     ${perfWhy(P)}
     ${BM.tiles}
     ${rangePts.length > 1 ? `<p class="chart-t">${PERIODS.find(x => x[0] === perfRange)[1]} : ${fmtDate(rangePts[0].date)} → ${fmtDate(rangePts[rangePts.length - 1].date)}</p>` : ''}
-    ${chartSVG(rangePts, BM.at)}
+    ${(perfRange === 'day' && P.day && intradaySVG(P.day, P, BM.at)) || chartSVG(rangePts, BM.at)}
     <dl class="kv" style="margin-top:10px">${BM.kv}${kv('Drawdown maximal', DD ? `<span class="${cls(DD.dd)}">${pct(DD.dd)}</span>` : 'Non calculable', DD && DD.dd < 0 ? `${fmtDate(DD.peak)} → ${fmtDate(DD.trough)}` : 'sur la période affichée')}</dl>
     <details class="more"><summary>Comment c’est calculé</summary>
     <p class="hint">${method} Un dépôt n’est jamais compté comme un gain, un retrait jamais comme une perte. ${P.freq ? `${P.freq.count} observations, écart médian ${fmtNum(P.freq.medianGap, 1)} jour(s), écart maximal ${P.freq.maxGap} jours. Les baisses survenues entre deux observations (intrajournalières notamment) ne sont pas mesurées.` : ''}
@@ -2555,6 +2592,18 @@ function benchBlock(P, sel, rangePts) {
   if (perfRange !== 'itd' && P.itd) { const a0 = at(P.itd.from), b0 = at(P.itd.to) || at(at.last); if (a0 > 0 && b0 > 0) { const r0 = (b0 / a0 - 1) * 100; kvs += kv('Depuis le début', `${pct(P.itd.r, true)} vs ${pct(r0, true)}`, `${fmtDate(P.itd.from)} → ${fmtDate(P.itd.to)} · compte vs S&amp;P 500`, cls(P.itd.r - r0)); } }
   return { tiles, kv: kvs, at };
 }
+// Repères sous la courbe : jours de la semaine (≤ 8 jours), semaines (≤ 45 jours), mois, ou années (plus de 2 ans).
+function timeAxis(dates, x, yy, W) {
+  const a = dates[0], b = dates[dates.length - 1], span = Core.days(a, b), out = [];
+  const MO = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+  if (span <= 8) for (const d of dates) out.push([d, fmtWd(d).split(' ')[0]]);
+  else if (span <= 45) { let k = 0, seen = new Set(); for (const d of dates) { const w = weekKey(d); if (seen.has(w)) continue; seen.add(w); k++; out.push([d, 'sem. ' + k, fmtWd(w)]); } }
+  else if (span <= 730) { let seen = new Set(); for (const d of dates) { const m = d.slice(0, 7); if (seen.has(m)) continue; seen.add(m); out.push([d, MO[+d.slice(5, 7) - 1]]); } }
+  else { let seen = new Set(); for (const d of dates) { const y = d.slice(0, 4); if (seen.has(y)) continue; seen.add(y); out.push([d, y]); } }
+  const gap = W < 500 ? 38 : 46; let lastX = -1e9, s = '';
+  for (const [d, l, tip] of out) { const px = x(d); if (px - lastX < gap) continue; lastX = px; s += `<text x="${px.toFixed(1)}" y="${yy}" text-anchor="${px < 66 ? 'start' : px > W - 30 ? 'end' : 'middle'}">${esc(l)}${tip ? `<title>${esc(l)} · ${esc(tip)}</title>` : ''}</text>`; }
+  return s;
+}
 function chartSVG(pts, bench) {
   if (pts.length < 2) return '<p class="hint">La courbe apparaîtra après deux observations.</p>';
   const vw = (document.querySelector('#view') || {}).clientWidth || 700;
@@ -2579,7 +2628,7 @@ function chartSVG(pts, bench) {
   const area = path + `L${x(pts[pts.length - 1].date).toFixed(1)},${y(sc.lo)}L${x(pts[0].date).toFixed(1)},${y(sc.lo)}Z`;
   const dots = pts.map(p => `<circle class="dot ${p.source === 'courtier' ? 'br' : (p.est ? 'est' : '')}" cx="${x(p.date).toFixed(1)}" cy="${y((p.index - 1) * 100).toFixed(1)}" r="3.5"><title>${fmtDate(p.date)} : ${pct((p.index - 1) * 100, true)} · ${usd(p.value)}</title></circle>`).join('');
   const bpath = bv ? pts.map((p, i) => bv[i] == null ? '' : `${i && bv[i - 1] != null ? 'L' : 'M'}${x(p.date).toFixed(1)},${y(bv[i]).toFixed(1)}`).join('') : '';
-  const lab = `<text x="${L}" y="${H - 8}">${fmtDate(pts[0].date)}</text><text x="${W - R}" y="${H - 8}" text-anchor="end">${fmtDate(pts[pts.length - 1].date)}</text>`;
+  const lab = timeAxis(pts.map(p => p.date), x, H - 8, W);
   const main = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Courbe de performance cumulée corrigée des apports"><defs><linearGradient id="gArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".28"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>${grid(sc, y)}<line class="zero" x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}"/><path class="area" d="${area}"/>${bpath ? `<path class="bench" d="${bpath}"/>` : ''}<path class="line" d="${path}"/>${dots}${lab}</svg>${bpath ? '<div class="blegend"><span><i class="me"></i>Votre compte</span><span><i class="sp"></i>S&amp;P 500 (SPY, dividendes inclus)</span></div>' : ''}`;
   // Drawdown : recul depuis le plus haut précédent
   let peak = pts[0].index;
