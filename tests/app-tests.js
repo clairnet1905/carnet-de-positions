@@ -437,6 +437,23 @@ window.__appTests = async function () {
     return bad.length ? bad.join(' | ') : true;
   });
 
+  await t('Santé des données : seul le cours récent compte ; saisie manuelle jamais complétée par le radar du même symbole', async () => {
+    const D = days(30), today = todayISO();
+    S.settings.startDate = addDays(D[0], -1); S.settings.manualTickers = ['EL'];
+    S.lots = [lot({ ticker: 'WKL', date: D[0] }), lot({ ticker: 'EL', date: D[0] })];
+    S.prices.WKL = [{ date: D[0], price: 75 }, { date: D[29], price: 88 }];   // trou ancien, cours d'hier saisi
+    S.prices.EL = [{ date: D[0], price: 184 }, { date: D[20], price: 190 }];   // dernier cours il y a 9 jours de bourse
+    S.watch = [{ id: 'we', ticker: 'EL', period: 21, tf: 'M', sym: '' }];
+    Radar.hist.EL = { bars: D.map(d => [d, 110]) };   // EL du radar = Estée Lauder
+    const h = healthChecks().find(x => /sans cours/.test(x.title));
+    if (!h || /WKL/.test(h.sub) || !/EL : dernier cours/.test(h.sub)) return 'alerte : ' + (h ? h.sub : 'aucune');
+    const pe = perfPrices().prices.EL || [];
+    if (pe.some(x => x.price === 110)) return 'cours d’Estée Lauder mêlé à EL';
+    S.prices.EL.push({ date: D[29], price: 191 });
+    const h2 = healthChecks().find(x => /sans cours/.test(x.title));
+    return h2 ? 'alerte restée après la saisie : ' + h2.sub : true;
+  });
+
   reset(); tab = 'dash';
   return out;
 };
