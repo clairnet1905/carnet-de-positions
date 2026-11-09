@@ -43,7 +43,8 @@ a{color:var(--accent)}
 .brand{font-family:var(--f-display);font-weight:700;font-size:1.08rem;display:flex;align-items:center;gap:10px;white-space:nowrap}
 .brand svg{width:30px;height:30px;border-radius:8px;flex:none}
 .brand span{font:500 .8125rem var(--f-num);color:var(--muted);letter-spacing:.05em;display:block}
-.sync{margin-left:auto;font-size:.8125rem;color:var(--muted);display:flex;align-items:center;gap:6px;max-width:100%;background:var(--surface-2);padding:4px 10px;border-radius:99px}
+.hst{margin-left:auto;display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0}.nyc{flex:none;display:flex;align-items:center;gap:5px;font:500 .8125rem var(--f-num);color:var(--muted);background:var(--surface-2);border:0;padding:4px 9px;border-radius:99px;cursor:pointer;white-space:nowrap}.nyc b{color:var(--ink);font-weight:600}.nyc i{width:7px;height:7px;border-radius:50%;background:#888780}.nyc[data-st=open] i{background:#3B9B4A}.nyc[data-st=ext] i{background:#D9921C}
+.sync{font-size:.8125rem;color:var(--muted);display:flex;align-items:center;gap:6px;max-width:100%;background:var(--surface-2);padding:4px 10px;border-radius:99px}
 .sync i{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
 .sync[data-s="synced"] i{background:var(--gain);box-shadow:0 0 0 3px var(--gain-bg)} .sync[data-s="local"] i{background:var(--warn)} .sync[data-s="error"] i{background:var(--loss)}
 nav.tabs{display:flex;gap:4px}
@@ -59,7 +60,7 @@ nav.tabs .s{display:none}
   nav.tabs button[aria-selected="true"]{background:none}
   nav.tabs .l{display:none} nav.tabs .s{display:inline}
 }
-@media (min-width:820px){ body{padding-bottom:40px} .top .wrap{flex-wrap:nowrap} .sync{order:3;margin-left:0} nav.tabs{margin-left:auto} }
+@media (min-width:820px){ body{padding-bottom:40px} .top .wrap{flex-wrap:nowrap} .hst{order:3;margin-left:0;flex-direction:column;align-items:flex-end;gap:3px} .sync{min-width:0;max-width:260px;white-space:nowrap;overflow:hidden;padding-block:2px} .sync span{overflow:hidden;text-overflow:ellipsis;min-width:0} .sync .hdr-val{flex:none} .nyc{padding-block:2px} nav.tabs{margin-left:auto} }
 main{padding-block:18px 28px;display:grid;gap:16px}
 section.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:18px;display:grid;gap:14px;min-width:0;box-shadow:var(--shadow)}
 .sec-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
@@ -478,7 +479,8 @@ small{font-size:.8125rem}
 <header class="top">
   <div class="wrap">
     <div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#1E3A5F"/><path d="M6 22l6-6 4 3 9-10" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 26h20" stroke="#F28C80" stroke-width="2" stroke-dasharray="3 2.4"/></svg><div>Carnet<em class="bx"> de positions</em><span>USD · ACTIONS US</span></div></div>
-    <div class="sync" id="sync" data-s="local"><i></i><span class="hdr-val" id="hdrVal"></span><span id="syncText">Chargement…</span></div>
+    <div class="hst"><button type="button" class="nyc" id="nyc" data-act="nyc" data-st="shut"><i></i>NY <b>--:--</b></button>
+    <div class="sync" id="sync" data-s="local"><i></i><span class="hdr-val" id="hdrVal"></span><span id="syncText">Chargement…</span></div></div>
     <nav class="tabs" role="tablist" aria-label="Sections">
       <button role="tab" id="tab-dash" data-tab="dash"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V10M10 19V5M16 19v-7M22 19H2"/></svg><span class="l">Tableau de bord</span><span class="s">Bord</span></button>
       <button role="tab" id="tab-calc" data-tab="calc"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg><span class="l">Nouvelle position</span><span class="s">Nouvelle</span></button>

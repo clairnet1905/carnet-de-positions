@@ -274,6 +274,45 @@ function marketOpen(ms) {
   const n = nyParts(ms), wd = new Date(n.date + 'T12:00:00').getDay();
   return wd >= 1 && wd <= 5 && n.min >= 570 && n.min < 960;
 }
+// ----- Horloge de New York (en-tête) : heure, état du marché, jours fériés et séances courtes NYSE -----
+function nyHolidays(y) {
+  const iso = (m, d) => `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  const nth = (m, wd, n) => { let d = 1; while (new Date(Date.UTC(y, m - 1, d)).getUTCDay() !== wd) d++; return iso(m, d + 7 * (n - 1)); };
+  const lastMon = m => { let d = new Date(Date.UTC(y, m, 0)).getUTCDate(); while (new Date(Date.UTC(y, m - 1, d)).getUTCDay() !== 1) d--; return iso(m, d); };
+  const obs = (m, d) => { const w = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); return w === 6 ? addDays(iso(m, d), -1) : w === 0 ? addDays(iso(m, d), 1) : iso(m, d); };
+  const a = y % 19, b = Math.floor(y / 100), c = y % 100, h = (19 * a + b - Math.floor(b / 4) - Math.floor((b - Math.floor((8 * b + 13) / 25)) / 3) + 15) % 30;
+  const l = (32 + 2 * (b % 4) + 2 * Math.floor(c / 4) - h - (c % 4) - 7 * Math.floor((h + 11 * Math.floor(c / 4)) / 29)) % 7;   // Pâques (algorithme de Meeus)
+  const em = Math.floor((h + l + 114) / 31), ed = ((h + l + 114) % 31) + 1, nov4 = nth(11, 4, 4);
+  const H = { [nth(1, 1, 3)]: 'Martin Luther King Day', [nth(2, 1, 3)]: 'Presidents Day', [addDays(iso(em, ed), -2)]: 'Vendredi saint',
+    [lastMon(5)]: 'Memorial Day', [obs(6, 19)]: 'Juneteenth', [obs(7, 4)]: 'Independence Day', [nth(9, 1, 1)]: 'Labor Day', [nov4]: 'Thanksgiving', [obs(12, 25)]: 'Noël' };
+  if (new Date(Date.UTC(y, 0, 1)).getUTCDay() !== 6) H[obs(1, 1)] = 'Nouvel An';   // 1er janvier un samedi : pas de jour férié reporté
+  const early = new Set([addDays(nov4, 1)]);
+  for (const d of [iso(7, 3), iso(12, 24)]) { const w = wdOf(d); if (w >= 1 && w <= 5 && !H[d]) early.add(d); }
+  return { H, early };
+}
+const nyCal = {};
+function nyDay(d) { const y = +d.slice(0, 4), c = nyCal[y] || (nyCal[y] = nyHolidays(y)), w = wdOf(d); return { open: w >= 1 && w <= 5 && !c.H[d], hol: c.H[d] || '', close: c.early.has(d) ? 780 : 960 }; }
+function nyToMs(d, min) { let t = Date.parse(d + 'T00:00:00Z') + min * 60000; for (let k = 0; k < 2; k++) { const p = nyParts(t); t -= Date.parse(p.date + 'T00:00:00Z') + p.min * 60000 - (Date.parse(d + 'T00:00:00Z') + min * 60000); } return t; }
+function nyClock(ms) {
+  const n = nyParts(ms), D = nyDay(n.date), loc = t => new Date(t).toLocaleTimeString('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit' });
+  const dur = m => m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0');
+  const nextOpen = () => { let d = n.date; if (!(D.open && n.min < 570)) do d = addDays(d, 1); while (!nyDay(d).open); return d; };
+  const time = String(Math.floor(n.min / 60)).padStart(2, '0') + ':' + String(n.min % 60).padStart(2, '0');
+  let st, msg;
+  if (D.open && n.min >= 570 && n.min < D.close) { st = 'open'; msg = `Séance ouverte · clôture dans ${dur(D.close - n.min)} (${loc(nyToMs(n.date, D.close))} à Paris)${D.close < 960 ? ' · séance courte' : ''}`; }
+  else {
+    const d = nextOpen(), t = nyToMs(d, 570);
+    st = D.open && n.min >= 240 && n.min < 1200 ? 'ext' : 'shut';
+    msg = d === n.date ? `Ouverture dans ${dur(570 - n.min)} (${loc(t)} à Paris)` : `${D.open ? 'Séance terminée' : D.hol ? 'Fermé · férié : ' + D.hol : 'Fermé'} · ouverture ${fmtWd(d)} à ${loc(t)} (heure de Paris)`;
+  }
+  return { time, st, msg };
+}
+function nyTick() {
+  const el = document.getElementById('nyc'); if (!el) return;
+  const c = nyClock(Date.now());
+  el.dataset.st = c.st; el.querySelector('b').textContent = c.time; el.title = c.msg; el.setAttribute('aria-label', 'New York ' + c.time + ' · ' + c.msg);
+}
+setInterval(nyTick, 15000); setTimeout(nyTick, 0);
 async function fetchQuote(sym, key) {
   // Depuis un navigateur, Finnhub n'accepte la clé que dans l'adresse (l'en-tête est bloqué par CORS).
   const r = await fetch('https://finnhub.io/api/v1/quote?symbol=' + encodeURIComponent(sym) + '&token=' + encodeURIComponent(key), { cache: 'no-store' });
@@ -3798,6 +3837,7 @@ document.addEventListener('click', e => {
   const a = b.dataset.act, lot = b.dataset.lot ? findLot(b.dataset.lot) : null;
   switch (a) {
     case 'close-sheet': closeSheet(); break;
+    case 'nyc': nyTick(); toast(nyClock(Date.now()).msg); break;
     case 'go-calc': tab = 'calc'; render(); break;
     case 'reset-calc': calcDraft = freshDraft(); render(); break;
     case 'record-buy': sheetBuy(); break;
