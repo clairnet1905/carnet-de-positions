@@ -312,7 +312,8 @@ function nyTick() {
   const c = nyClock(Date.now());
   el.dataset.st = c.st; el.querySelector('b').textContent = c.time; el.title = c.msg; el.setAttribute('aria-label', 'New York ' + c.time + ' · ' + c.msg);
 }
-setInterval(nyTick, 15000); setTimeout(nyTick, 0);
+setInterval(nyTick, 15000); if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', nyTick); else setTimeout(nyTick, 0);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') nyTick(); });
 async function fetchQuote(sym, key) {
   // Depuis un navigateur, Finnhub n'accepte la clé que dans l'adresse (l'en-tête est bloqué par CORS).
   const r = await fetch('https://finnhub.io/api/v1/quote?symbol=' + encodeURIComponent(sym) + '&token=' + encodeURIComponent(key), { cache: 'no-store' });
