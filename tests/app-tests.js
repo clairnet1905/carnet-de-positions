@@ -395,9 +395,12 @@ window.__appTests = async function () {
       const b = txt(); if (!/S&P 500\+1,00 %/.test(b) || !/direct/.test(b)) return 'direct : ' + b;
       perfRange = 'month'; Live.prices = {};
       const c = txt(); if (/S&P 500—/.test(c) || !/clôture du/.test(c)) return 'mois : ' + c;
-      perfRange = 'day'; sel.to = addDays(last, 1); while (nyDay(sel.to).open) sel.to = addDays(sel.to, 1);   // jour sans séance (week-end ou férié) : la dernière clôture fait foi
-      const e = txt(); if (!/S&P 5000,00 %/.test(e)) return 'jour sans séance : ' + e;
-      sel.to = today;
+      perfRange = 'day';
+      { // jour sans séance (week-end, férié) juste après la dernière clôture : elle fait foi ; un jour de séance sans clôture : rien
+        const keepH = Radar.hist.SPY; Radar.hist.SPY = { bars: [['2026-11-05', 500], ['2026-11-06', 510]], n: 2, full: 1, last: '2026-11-06', ls: '2026-11-06', adj: 'splits' };
+        const at = spyAt(), ok = at('2026-11-08') === 510 && at('2026-11-07') === 510 && at('2026-11-09') == null;
+        Radar.hist.SPY = keepH; if (!ok) return 'jour sans séance : ' + [at('2026-11-07'), at('2026-11-08'), at('2026-11-09')];
+      }
       Radar.hist.SPY.bars.push([today, 529 * 1.02]); Radar.hist.SPY.last = today;
       const d = txt(); if (!/S&P 500\+2,00 %/.test(d) || !/clôture officielle/.test(d)) return 'après robot : ' + d;
       return true;
@@ -469,6 +472,24 @@ window.__appTests = async function () {
       if (intradaySVG({ from: D[4], to: addDays(day, 1), r: 0 }, P, null)) bad.push('courbe d’un autre jour affichée');
     } finally { if (keep == null) localStorage.removeItem(ID_KEY); else localStorage.setItem(ID_KEY, keep); }
     return bad.length ? bad.join(' | ') : true;
+  });
+
+  await t('Labo : alléger ou pas (tableau de la fiche et résumé)', async () => {
+    const row = [20, 15, 2.1, 30, 40, 55, 3, 0, 18, 14, 21, 15];
+    const unit = po => ({ first: '2006-01-03', from: '2008-01-02', to: '2026-11-06', split: '2020-06-01', bars: 5000,
+      ic: { sma: LAB_P.map((p, i) => i === 3 ? row : null), bh: [9, 30, 8, 20, 100], po }, tv: { sma: LAB_P.map((p, i) => i === 3 ? row : null), bh: [9, 30, 8, 20, 100], po } });
+    const keepRes = Lab.res, keepQ = S.settings.labQueue;
+    try {
+      Lab.res = { AAA: { at: Date.now(), D: unit({ i: 3, v: [[20, 15, 3.2, 5, 30], [12, 12, 1.6, 5, 30], [15, 13, 2.2, 5, 30]] }) },
+        BBB: { at: Date.now(), D: unit(null) } };
+      S.settings.labQueue = ['AAA', 'BBB']; tab = 'lab'; labOpen.clear(); render();
+      const v = $('#view').textContent;
+      if (!/Alléger ou pas \?/.test(v) || !/meilleur CAGR ÷ drawdown dans 1 cas sur 1/.test(v) || !/1 action\(s\) en attente/.test(v)) return 'résumé : ' + (v.match(/Alléger ou pas[^.]*\.[^.]*\./) || [''])[0];
+      labOpen.add('AAA'); render();
+      const tb = $('.lpo table'); if (!tb || !/½ à \+2 R/.test(tb.textContent) || !tb.querySelector('tr.best') || !/^Sans/.test(tb.querySelector('tr.best').textContent)) return 'fiche : ' + (tb ? tb.textContent : 'absente');
+      if (!/\+3,2 R/.test(tb.textContent)) return 'R moyen : ' + tb.textContent;
+      return true;
+    } finally { Lab.res = keepRes; S.settings.labQueue = keepQ; labOpen.clear(); tab = 'dash'; }
   });
 
   reset(); tab = 'dash';
