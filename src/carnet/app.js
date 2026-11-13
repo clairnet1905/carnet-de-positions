@@ -1413,6 +1413,21 @@ function labWeak(r, w) {
   const u = r[w.tf], i = LAB_P.indexOf(w.period), x = u && i >= 0 ? u[labFee].sma[i] : null;
   return !!x && x[3] >= LAB_MIN[w.tf] && labVerdict(x, w.tf)[1] === 'v3';
 }
+// Alléger ou pas (robot) : la meilleure SMA de l'unité rejouée sans allègement, ½ vendue à +2 R, ⅓ vendu à +3 R.
+const LAB_PO_L = ['Sans allègement', '½ vendue à +2 R', '⅓ vendu à +3 R'];
+const labPoWin = po => { if (!po || !po.v) return -1; let w = -1, ws = -1e9; po.v.forEach((x, k) => { const sc = labScore(x[0], x[1]); if (sc != null && sc > ws) { ws = sc; w = k; } }); return w; };
+// Unité retenue pour une action : celle dont la meilleure SMA a le meilleur CAGR ÷ DD (comme la fiche ouverte par défaut).
+function labMainUnit(r) {
+  const U = ['D', 'W', 'M'].filter(tf => r[tf]);
+  return U.map(tf => { const i = labBest(r[tf][labFee].sma, tf), x = i >= 0 ? r[tf][labFee].sma[i] : null; return [tf, x ? labScore(x[0], x[1]) : -9]; }).sort((a, b) => b[1] - a[1])[0];
+}
+function labPoBlock(u, tf) {
+  const po = u && u[labFee] && u[labFee].po; if (!po) return '<p class="hint">Alléger ou pas : calculé au prochain passage du robot sur cette action.</p>';
+  const w = labPoWin(po);
+  return `<div class="lpo"><h3>Alléger ou pas ? <small>${LT(tf)} ${LAB_P[po.i]} (meilleure SMA ${LL(tf)})</small></h3>
+    <table><thead><tr><th>Sortie</th><th>CAGR</th><th>DD</th><th>R moy.</th><th>≥5 R</th></tr></thead><tbody>${po.v.map((x, k) => `<tr class="${k === w ? 'best' : ''}"><td>${['Sans', '½ à +2 R', '⅓ à +3 R'][k]}</td><td class="${cls(x[0])}">${x[0] == null ? '—' : fmtNum(x[0], 1) + ' %'}</td><td>${x[1] == null ? '—' : '−' + fmtNum(x[1], 0) + ' %'}</td><td class="${cls(x[2])}">${x[2] == null ? '—' : (x[2] >= 0 ? '+' : '−') + fmtNum(Math.abs(x[2]), 1) + ' R'}</td><td>${x[3] == null ? '—' : x[3]}</td></tr>`).join('')}</tbody></table>
+    <p class="hint">1 R = écart entre la clôture d'entrée et la SMA ce jour-là, au moins ${{ D: '1,5', W: '2', M: '6', C: '1,5' }[tf]} % du prix (l'écart habituel de vos stops). Le reste sort toujours sur clôture sous la SMA. « Sans » = sans allègement ; « ½ à +2 R » = moitié vendue à +2 R. Même période et mêmes frais pour les trois lignes ; ligne verte : meilleur CAGR ÷ drawdown ; ≥5 R : trades finis à +5 R ou plus.</p></div>`;
+}
 function labCard(t) {
   const r = Lab.res[t];
   if (!r || r.err) return '';
@@ -1445,6 +1460,7 @@ function labCard(t) {
         <div class="lchk"><span class="${holds === true ? 'ok' : holds === false ? 'bad' : ''}"><b>Période récente</b> (${fmtDate(u.split).replace(/ \d{4}$/, '') + ' ' + u.split.slice(0, 4)} → ${u.to.slice(0, 4)}) : CAGR ${x[8] == null ? '—' : fmtNum(x[8], 1) + ' %'}, DD ${x[9] == null ? '—' : fmtNum(x[9], 0) + ' %'} · ${holds == null ? 'non mesurable' : holds ? 'tient toujours' : 'moins bon récemment'} <small>(acheter et garder : ${fmtNum(bh[2], 1)} %)</small></span>
           <span class="${stable === true ? 'ok' : stable === false ? 'bad' : ''}"><b>SMA voisines</b> : ${stable == null ? '—' : stable ? 'zone stable, pas un coup de chance' : 'zone fragile, pic isolé'}</span>
           ${bx ? `<span><b>Choisie sur les 70 % anciens</b> : ${LT(tf)} ${LAB_P[bi]} → sur la période récente CAGR ${x && bx[8] != null ? fmtNum(bx[8], 1) + ' %' : '—'}, DD ${bx[9] == null ? '—' : fmtNum(bx[9], 0) + ' %'}</span>` : ''}</div>
+        ${labPoBlock(u, tf)}
         <div class="row" style="margin-top:10px">${tf === 'C' ? (d => `<span class="hint" style="margin:0">Comparez avec J ${LAB_P[i]} seule : ${d ? `CAGR ${fmtNum(d[0], 1)} % · DD ${fmtNum(d[1], 0)} %` : '—'}.</span><button class="btn sm primary" data-act="lab-combo" data-t="${esc(t)}" data-i="${i}" data-w="${u[labFee].w}" data-m="${u[labFee].m}">Choisir J ${LAB_P[i]} · S ${u[labFee].w} · M ${u[labFee].m}</button>`)(r.D && r.D[labFee].sma[i]) : has ? `<span class="pill win">${TF_SHORT[tf]} ${LAB_P[i]} déjà au radar</span>` : `<button class="btn sm primary" data-act="lab-add" data-t="${esc(t)}" data-tf="${tf}" data-i="${i}">Ajouter ${TF_SHORT[tf]} ${LAB_P[i]} au radar</button>`}</div>`;
     }
     body = `${grid}${labAddBox(t, labAddPlan(t, r, U, best))}<p class="hint lleg"><i class="l4"></i>CAGR ÷ DD ≥ 0,5 <i class="l3"></i>≥ 0,35 <i class="l2"></i>≥ 0,2 <i class="l1"></i>faible <i class="l0"></i>perte · ★ meilleure de la ligne · <b class="lmine">○</b> votre SMA actuelle au radar · hachuré : trop peu de trades</p>${det}`;
@@ -1471,6 +1487,9 @@ function viewLab() {
   ${shown.length ? `<section class="card">
     <div class="sec-head"><h2>Résultats</h2><div class="seg" role="group" aria-label="Frais"><button type="button" data-act="lab-fee" data-f="tv" aria-pressed="${labFee === 'tv'}">Comme TradingView</button><button type="button" data-act="lab-fee" data-f="ic" aria-pressed="${labFee === 'ic'}">IC Markets réel</button></div></div>
     <p class="hint">${labFee === 'ic' ? 'Frais IC Markets : 0,02 $ par action et swap acheteur de 5,93 % par an chaque nuit en position.' : 'Frais du script : 0,10 % par ordre et 1 tick de glissement, sans swap.'} Meilleure SMA = meilleur CAGR ÷ drawdown avec assez de trades (${LAB_MIN.D} en J, ${LAB_MIN.W} en S, ${LAB_MIN.M} en M). Touchez une action pour la grille complète.</p>
+    ${(() => { const n = [0, 0, 0]; let k = 0; for (const t of shown) { const r = res[t], m = labMainUnit(r), w = m ? labPoWin(r[m[0]][labFee].po) : -1; if (w >= 0) { n[w]++; k++; } }
+      return k ? `<div class="lposum"><h3>Alléger ou pas ? <small>${k} action(s), meilleure SMA de chacune</small></h3><div class="lposg">${LAB_PO_L.map((l, i) => `<div><small>${l} meilleur</small><b class="${i === 0 ? 'up' : ''}">${n[i]}</b></div>`).join('')}</div>
+        <p class="hint">${n[0] >= n[1] + n[2] ? `Sur vos actions, ne pas alléger donne le meilleur CAGR ÷ drawdown dans ${n[0]} cas sur ${k}.` : `Sur vos actions, alléger fait mieux dans ${n[1] + n[2]} cas sur ${k} : comparez le détail dans chaque fiche.`}${shown.length > k ? ` ${shown.length - k} action(s) en attente du prochain passage du robot.` : ''}</p></div>` : `<p class="hint">Alléger ou pas : la comparaison arrive au fil des passages du robot (environ 40 actions par passage).</p>`; })()}
     <div class="lcards">${shown.sort().map(labCard).join('')}</div>
     <p class="fine">Résultats passés, calculés sur les cours ${adjMode() === 'all' ? 'ajustés des dividendes' : 'non ajustés'} de Twelve Data (journalier : 20 ans au plus). Choisir la meilleure de 45 combinaisons surestime l’avenir : regardez la période récente et les SMA voisines.</p>
   </section>` : ''}`;
