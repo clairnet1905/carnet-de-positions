@@ -181,8 +181,8 @@ for (const s in hist) view[s] = DF[s] && DF[s].fx.length ? Object.assign({}, his
 // 3 à 6 requêtes Twelve Data par action (J jusqu'à 20 000 séances en quatre fois, S et M depuis le début de l'actif), refaites tous les 30 jours.
 // En plus des 15 SMA × J / S / M : test combiné J + S + M (filtre par la meilleure SMA hebdo et mensuelle).
 const labQ = [...new Set((S.settings.labQueue || []).map(t => String(t).toUpperCase()))];
-// Refait une fois : résultats sans test combiné (C) ou sans date de début des données (avant le journalier sur 80 ans).
-const labDue = t => { const x = L.res[t]; return !x || x.adj !== ADJ || (!x.err && (!('C' in x) || (x.D && !('first' in x.D)))) || days(new Date(x.at).toISOString().slice(0, 10), ls) > (x.err ? 7 : LAB_REDO_DAYS); };
+// Refait une fois : résultats sans test combiné (C), sans date de début des données (avant le journalier sur 80 ans) ou sans le test « alléger ou pas ».
+const labDue = t => { const x = L.res[t]; return !x || x.adj !== ADJ || (!x.err && (!('C' in x) || (x.D && !('first' in x.D)) || (x.D && !('po' in x.D.ic)))) || days(new Date(x.at).toISOString().slice(0, 10), ls) > (x.err ? 7 : LAB_REDO_DAYS); };
 const labTodo = labQ.filter(labDue).sort((a, b) => (L.res[a] ? 1 : 0) - (L.res[b] ? 1 : 0));
 let labDone = 0; const labNew = [];
 for (const t of labTodo.slice(0, LAB_PER_RUN)) {

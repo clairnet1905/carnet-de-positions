@@ -24,9 +24,13 @@ const commission = (f, q, px) => f.pct ? q * px * f.pct / 100 : Math.max(f.min, 
 
 // Une simulation entre les bougies a et b (incluses), à plat au départ. sig(i) : 1 achat, -1 sortie, 0 rien.
 // Achat et sortie à la clôture de la bougie du signal. Position encore ouverte à la fin : comptée dans le capital (comme strategy.equity).
-function simulate(d, c, a, b, sig, f) {
+// po (facultatif) : allègement { frac, k, s } — vend la part frac de la position, une fois, à la première clôture ≥ entrée + k R,
+// avec 1 R = clôture d'entrée − SMA s ce jour-là (le stop sous la SMA), au moins floor % du prix (écart médian de vos stops réels).
+// Le reste sort sur le signal. Mesure aussi chaque trade en R.
+function simulate(d, c, a, b, sig, f, po) {
   let cash = CAPITAL, q = 0, entryCost = 0, swapT = 0, peak = CAPITAL, mdd = 0, inDays = 0;
   let gp = 0, gl = 0, wins = 0, n = 0, sumRet = 0, ruined = false;
+  let ePx = 0, R1 = 0, q0 = 0, sold = false, outP = 0, sumR = 0, nR = 0, big = 0;
   for (let i = a; i <= b; i++) {
     if (q > 0 && i > a) {
       const nights = dayNum(d[i]) - dayNum(d[i - 1]);
@@ -39,12 +43,17 @@ function simulate(d, c, a, b, sig, f) {
       q = f.pct ? cash / (px * (1 + f.pct / 100)) : (cash - f.min) / (px + f.perShare);
       const fee = commission(f, q, px);
       entryCost = q * px + fee; cash -= entryCost;
+      ePx = px; q0 = q; sold = false; outP = 0; R1 = po && po.s[i] != null ? Math.max(px - po.s[i], px * po.floor / 100) : 0;
     } else if (q > 0 && s === -1) {
       const px = Math.max(0, c[i] - f.tick), fee = commission(f, q, px), out = q * px - fee;
-      const pnl = out - entryCost - swapT;   // swap payé pendant le trade compris (frais « ic »)
+      const pnl = out + outP - entryCost - swapT;   // swap payé pendant le trade compris (frais « ic »), vente partielle comprise
       cash += out; n++; sumRet += pnl / entryCost;
       if (pnl > 0) { gp += pnl; wins++; } else gl -= pnl;
-      q = 0; entryCost = 0; swapT = 0;
+      if (R1 > 0) { const r = pnl / (q0 * R1); sumR += r; nR++; if (r >= 5) big++; }
+      q = 0; entryCost = 0; swapT = 0; outP = 0;
+    } else if (q > 0 && po && po.frac > 0 && !sold && R1 > 0 && c[i] >= ePx + po.k * R1) {
+      const qs = q0 * po.frac, px = Math.max(0, c[i] - f.tick), fee = commission(f, qs, px), out = qs * px - fee;
+      cash += out; outP += out; q -= qs; sold = true;
     }
     const eq = cash + q * c[i];
     if (eq <= 0) { ruined = true; mdd = 100; break; }   // capital épuisé (le swap a dépassé la valeur de la position)
@@ -55,7 +64,15 @@ function simulate(d, c, a, b, sig, f) {
   const eq = ruined ? 0 : cash + q * c[b], years = (dayNum(d[b]) - dayNum(d[a])) / 365.25;
   const cagr = ruined ? -100 : years > 0 && eq > 0 ? (Math.pow(eq / CAPITAL, 1 / years) - 1) * 100 : null;
   return { cagr, dd: mdd, pf: gl > 0 ? gp / gl : gp > 0 ? 999 : null, tr: n, win: n ? wins / n * 100 : null, avg: n ? sumRet / n * 100 : null,
-    expo: (dayNum(d[b]) - dayNum(d[a])) > 0 ? inDays / (dayNum(d[b]) - dayNum(d[a])) * 100 : 0, open: q > 0 ? 1 : 0 };
+    expo: (dayNum(d[b]) - dayNum(d[a])) > 0 ? inDays / (dayNum(d[b]) - dayNum(d[a])) * 100 : 0, open: q > 0 ? 1 : 0,
+    rAvg: nR ? sumR / nR : null, big };
+}
+// Alléger ou pas : la meilleure SMA de l'unité rejouée sans allègement, ½ vendue à +2 R, ⅓ vendu à +3 R (même période, mêmes frais).
+export const LAB_PO = [{ frac: 0, k: 0 }, { frac: 0.5, k: 2 }, { frac: 1 / 3, k: 3 }];
+// 1 R minimal par unité : écart médian entre l'achat et le stop initial de vos positions (J 1,6 %, S 2,2 %, M 6,1 %).
+export const LAB_R_FLOOR = { D: 1.5, W: 2, M: 6 };
+function scaleOut(d, c, a, b, sig, f, s, tf) {
+  return LAB_PO.map(p => simulate(d, c, a, b, sig, f, { ...p, s, floor: LAB_R_FLOOR[tf] }));
 }
 
 // Une unité (bougies [[date, clôture]] terminées, ordre chronologique). Renvoie les 15 SMA, « acheter et garder » et la période récente.
@@ -66,7 +83,7 @@ export function labUnit(bars, tf) {
   if (!testable.length) return null;
   const start = Math.max(...testable), end = N - 1;                 // même période pour toutes les SMA testables
   const split = start + Math.floor((end - start) * 0.7);           // 70 % pour choisir, 30 % les plus récents pour vérifier
-  const out = { first: d[0], from: d[start], to: d[end], split: d[split], bars: N, sma: {}, bh: {} };
+  const out = { first: d[0], from: d[start], to: d[end], split: d[split], bars: N, sma: {}, bh: {}, po: {} };
   for (const fk of ['tv', 'ic']) {
     const f = LAB_FEES[fk], rows = [];
     for (const n of LAB_PERIODS) {
@@ -77,6 +94,12 @@ export function labUnit(bars, tf) {
       rows.push({ all, ins, oos });
     }
     out.sma[fk] = rows;
+    const bi = bestOf(rows, tf);
+    if (bi >= 0) {
+      const s = smaSeries(c, LAB_PERIODS[bi]);
+      const sig = i => i < 1 || s[i - 1] == null ? 0 : c[i] > s[i] && c[i - 1] <= s[i - 1] ? 1 : c[i] < s[i] && c[i - 1] >= s[i - 1] ? -1 : 0;
+      out.po[fk] = { i: bi, v: scaleOut(d, c, start, end, sig, f, s, tf) };
+    }
     const hold = i => i === start ? 1 : 0;
     out.bh[fk] = { all: simulate(d, c, start, end, hold, f), oos: simulate(d, c, split, end, i => i === split ? 1 : 0, f) };
   }
@@ -106,19 +129,22 @@ export function labCombo(bars, units) {
     while (k + 1 < bars.M.length && bars.M[k + 1][0].slice(0, 7) < ym) k++;
     wI.push(j); mI.push(k);
   }
-  const out = { first: d[0], from: units.D.from, to: units.D.to, split: units.D.split, bars: d.length, sma: {}, pick: {}, bh: units.D.bh };
+  const out = { first: d[0], from: units.D.from, to: units.D.to, split: units.D.split, bars: d.length, sma: {}, pick: {}, bh: units.D.bh, po: {} };
   for (const fk of ['tv', 'ic']) {
     const f = LAB_FEES[fk], bw = bestOf(units.W.sma[fk], 'W'), bm = bestOf(units.M.sma[fk], 'M');
     if (bw < 0 || bm < 0) return null;
     const sW = smaSeries(bars.W.map(x => x[1]), LAB_PERIODS[bw]), sM = smaSeries(bars.M.map(x => x[1]), LAB_PERIODS[bm]);
     const filt = i => { const w = wI[i] >= 0 ? sW[wI[i]] : null, m = mI[i] >= 0 ? sM[mI[i]] : null; return w != null && m != null && c[i] > w && c[i] > m; };
     out.pick[fk] = { w: LAB_PERIODS[bw], m: LAB_PERIODS[bm] };
+    const mk = n => { const s = smaSeries(c, n), cond = i => s[i] != null && c[i] > s[i] && filt(i);
+      return { s, sig: i => i < 1 || s[i - 1] == null ? 0 : cond(i) && !cond(i - 1) ? 1 : c[i] < s[i] && c[i - 1] >= s[i - 1] ? -1 : 0 }; };
     out.sma[fk] = LAB_PERIODS.map((n, pi) => {
       if (!units.D.sma[fk][pi]) return null;
-      const s = smaSeries(c, n), cond = i => s[i] != null && c[i] > s[i] && filt(i);
-      const sig = i => i < 1 || s[i - 1] == null ? 0 : cond(i) && !cond(i - 1) ? 1 : c[i] < s[i] && c[i - 1] >= s[i - 1] ? -1 : 0;
+      const { sig } = mk(n);
       return { all: simulate(d, c, a, b, sig, f), ins: simulate(d, c, a, split, sig, f), oos: simulate(d, c, split, b, sig, f) };
     });
+    const bi = bestOf(out.sma[fk], 'D');
+    if (bi >= 0) { const { s, sig } = mk(LAB_PERIODS[bi]); out.po[fk] = { i: bi, v: scaleOut(d, c, a, b, sig, f, s, 'D') }; }
   }
   return out;
 }
@@ -147,6 +173,11 @@ const row = x => x && [r1(x.all.cagr), r1(x.all.dd), x.all.pf == null ? null : M
 export function packUnit(u) {
   if (!u) return null;
   const o = { first: u.first, from: u.from, to: u.to, split: u.split, bars: u.bars };
-  for (const fk of ['tv', 'ic']) o[fk] = { sma: u.sma[fk].map(row), bh: [r1(u.bh[fk].all.cagr), r1(u.bh[fk].all.dd), r1(u.bh[fk].oos.cagr), r1(u.bh[fk].oos.dd), r1(u.bh[fk].all.expo)], ...(u.pick ? u.pick[fk] : {}) };
+  for (const fk of ['tv', 'ic']) {
+    o[fk] = { sma: u.sma[fk].map(row), bh: [r1(u.bh[fk].all.cagr), r1(u.bh[fk].all.dd), r1(u.bh[fk].oos.cagr), r1(u.bh[fk].oos.dd), r1(u.bh[fk].all.expo)], ...(u.pick ? u.pick[fk] : {}) };
+    // Alléger ou pas : [cagr, dd, R moyen, trades ≥ +5 R, trades] pour sans allègement, ½ à +2 R, ⅓ à +3 R.
+    const p = u.po && u.po[fk];
+    o[fk].po = p ? { i: p.i, v: p.v.map(x => [r1(x.cagr), r1(x.dd), x.rAvg == null ? null : Math.round(x.rAvg * 100) / 100, x.big, x.tr]) } : null;
+  }
   return o;
 }
