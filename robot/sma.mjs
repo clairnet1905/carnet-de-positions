@@ -62,6 +62,7 @@ export function seenIndex(seen) {
 export function signals(S, hist, ls, notified, opts = {}) {
   const idx = seenIndex(S.seen), out = [], since = addDays(ls, -(opts.recentDays || 5));
   for (const w of S.watch || []) {
+    if (w.nosma) continue;   // ETF de secteur suivi pour son historique seulement (ex. XLRE)
     const h = hist[symOf(w)]; if (!h) continue;
     const a = analyze(w, h.bars, ls, S.settings && S.settings.nearPct); if (!a || a.short) continue;
     const id = `${w.id}|${w.tf}${w.period}`;
