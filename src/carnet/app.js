@@ -699,7 +699,45 @@ function quotesPanel() {
       <input id="q-manual" value="${esc((S.settings.manualTickers || []).join(', '))}" autocapitalize="characters" autocomplete="off" placeholder="ex. NEM, WKL"></div></div>
     <div class="row"><button class="btn sm" data-act="quotes-manual">Enregistrer la liste</button></div>
     <p class="hint">Ces actions ne sont jamais cherchées sur Finnhub : leurs cours restent ceux que vous saisissez. La liste est synchronisée entre vos appareils. La clé, elle, reste sur cet appareil : elle n’est ni synchronisée ni exportée.</p>
+    ${eodPanel()}
   </section>`;
+}
+// ----- Cours européens automatiques (EODHD) : le robot récupère la clôture des actions qui ont un code (ex. EL → EL.PA) -----
+// Code = symbole EODHD : ticker + place (.PA Paris, .AS Amsterdam, .XETRA Francfort, .MI Milan, .MC Madrid, .LSE Londres, .SW Zurich…).
+const EOD_GUESS = { EL: 'EL.PA', WKL: 'WKL.AS' };
+function eodCandidates() {
+  const eod = S.settings.eodSym || {}, man = manualSet();
+  const open = [...new Set(S.lots.filter(l => !l.demo && !Core.lotState(l).closed).map(l => l.ticker))];
+  const byHand = t => { const p = S.prices[t] || []; return p.length >= 3 && p.every(x => x.src !== 'auto'); };
+  return [...new Set([...Object.keys(eod), ...open.filter(t => man.has(t) || byHand(t))])].sort();
+}
+function eodPanel() {
+  const eod = S.settings.eodSym || {}, list = eodCandidates();
+  if (!list.length) return '';
+  const last = t => { const p = (S.prices[t] || []).filter(x => x.src === 'eod').pop(); return p ? ` · dernier : ${fmtWd(p.date)} ${fmtNum(p.price, 2)}` : ''; };
+  return `<h3 style="margin:16px 0 4px">Cours européens automatiques (EODHD)</h3>
+    <p class="hint">Le robot récupère la clôture de ces actions vers 17 h 35 et le soir, puis l’app l’enregistre : plus de saisie. Indiquez le code EODHD (ticker + place : .PA Paris, .AS Amsterdam, .XETRA Francfort, .MI Milan). Laissez vide pour continuer à saisir à la main. La clé EODHD se met dans GitHub, jamais dans l’app : <a href="${repoInfo()}/settings/secrets/actions/new" target="_blank" rel="noopener">Secrets › New repository secret</a>, nom <b>EODHD_KEY</b>.</p>
+    <div class="fields">${list.map(t => `<div class="fld"><label for="eod-${esc(t)}">${esc(t)}<small>${last(t)}</small></label><input id="eod-${esc(t)}" data-eod="${esc(t)}" value="${esc(eod[t] || EOD_GUESS[t] || '')}" placeholder="ex. ${esc(t)}.PA" autocapitalize="characters" autocomplete="off" spellcheck="false"></div>`).join('')}</div>
+    <div class="row"><button class="btn sm" data-act="eod-save">Enregistrer les codes</button></div>`;
+}
+// Clôtures EODHD du robot (Gist du radar, « carnet-eu.json ») : ajoutées aux cours, sans écraser un cours que vous avez saisi.
+function importEU(E) {
+  const eod = S.settings.eodSym || {}, done = [];
+  if (!E || !E.px) return done;
+  for (const t in E.px) {
+    if (!eod[t]) continue;
+    const first = S.lots.filter(l => l.ticker === t).map(l => l.date).sort()[0]; if (!first) continue;
+    let n = 0;
+    for (const [d, c] of E.px[t]) {
+      if (d < first || !(c > 0)) continue;
+      const ex = (S.prices[t] || []).find(x => x.date === d);
+      if (ex && (ex.src !== 'eod' || ex.price === c)) continue;   // cours saisi à la main gardé
+      addPrice(t, d, c, false, 'eod'); n++;
+    }
+    if (n) done.push(t);
+  }
+  if (done.length) save('Cours européens EODHD : ' + done.join(', '));
+  return done;
 }
 
 // ---------- Radar SMA : historique Twelve Data, SMA journalière / hebdo / mensuelle, alertes de clôture ----------
@@ -4058,6 +4096,15 @@ document.addEventListener('click', e => {
       const list = [...new Set(($('#q-manual').value || '').toUpperCase().split(/[\s,;]+/).filter(Boolean))];
       if (list.some(t => !/^[A-Z0-9.\-]{1,12}$/.test(t))) { toast('Tickers invalides : séparez-les par des virgules.'); break; }
       setManual(list, list.length ? 'Saisie manuelle : ' + list.join(', ') : 'Toutes les actions passent par Finnhub');
+      break;
+    }
+    case 'eod-save': {
+      const map = {}, bad = [];
+      document.querySelectorAll('[data-eod]').forEach(i => { const v = i.value.trim().toUpperCase(); if (!v) return; if (/^[A-Z0-9\-]{1,12}\.[A-Z]{1,6}$/.test(v)) map[i.dataset.eod] = v; else bad.push(i.dataset.eod); });
+      if (bad.length) { toast('Code invalide pour ' + bad.join(', ') + ' (ex. EL.PA)'); break; }
+      S.settings.eodSym = map;
+      const man = manualSet(); Object.keys(map).forEach(t => man.add(t));   // jamais cherchées sur Finnhub
+      setManual([...man], Object.keys(map).length ? 'Cours EODHD : ' + Object.entries(map).map(([t, v]) => t + ' → ' + v).join(', ') : 'Aucun cours EODHD');
       break;
     }
     case 'quote-toggle': {
