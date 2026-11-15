@@ -530,6 +530,28 @@ window.__appTests = async function () {
     return bad.length ? bad.join(' | ') : true;
   });
 
+  await t('Labo : filtres de fausses cassures, positions testées, gain brut', async () => {
+    const row = [20, 15, 2.1, 30, 40, 55, 3, 0, 18, 14, 21, 15];
+    const fi = { i: 3, v: [[18, 24, 41, 35], [17, 19, 27, 28], [19, 18, 24, 24], [16, 17, 19, 14], null], sv: [59, 44, 81] };
+    const unit = { first: '2006-01-03', from: '2008-01-02', to: '2026-11-06', split: '2020-06-01', bars: 5000,
+      ic: { sma: LAB_P.map((p, i) => i === 3 ? row : i === 0 ? [-3, 40, 0.8, 30, 30, 50, -1, 0, -2, 30, -3, 40] : null), bh: [9, 30, 8, 20, 100], fi, po: { i: 3, v: [[20, 15, 3, 5, 30], [12, 10, 1.6, 5, 30], [15, 11, 2.2, 5, 30]] } } };
+    unit.tv = unit.ic;
+    const keepRes = Lab.res, keepQ = S.settings.labQueue;
+    try {
+      S.lots = [lot({ ticker: 'AAA' })]; S.watch = [{ id: 'w5', ticker: 'AAA', period: 5, tf: 'D', sym: '' }];
+      Lab.res = { AAA: { at: Date.now(), D: unit } }; S.settings.labQueue = [];
+      if (labQueue().join() !== 'AAA') return 'positions dans le Labo : ' + labQueue();
+      tab = 'lab'; labOpen.clear(); render();
+      const v = $('#view').textContent;
+      if (!/Vos positions/.test(v) || !/AAA J 5/.test(v) || !/meilleure : J 21/.test(v)) return 'SMA faibles : ' + (v.match(/Vos positions.{0,160}/) || [''])[0];
+      if (!/Meilleur gain brut \(CAGR\) : ne pas alléger dans 1 cas sur 1/.test(v)) return 'gain brut : ' + (v.match(/Alléger ou pas.{0,260}/) || [''])[0];
+      labOpen.add('AAA'); labSel.AAA = ['D', 3]; render();
+      const d = [...document.querySelectorAll('details.lpo')].find(x => /Fausses cassures/.test(x.textContent));
+      if (!d || !/meilleure entrée : marge \+1 %/.test(d.textContent) || !/41 % de faux signaux/.test(d.textContent) || !/volume indisponible/.test(d.textContent) || !/81 %/.test(d.textContent)) return 'filtres : ' + (d ? d.textContent.slice(0, 200) : 'absent');
+      return true;
+    } finally { Lab.res = keepRes; S.settings.labQueue = keepQ; labOpen.clear(); delete labSel.AAA; tab = 'dash'; }
+  });
+
   reset(); tab = 'dash';
   return out;
 };
