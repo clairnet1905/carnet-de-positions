@@ -29,4 +29,5 @@ jobs:
         run: node rappel.mjs
         env:
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          EODHD_KEY: ${{ secrets.EODHD_KEY }}
           FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
