@@ -67,6 +67,43 @@ function simulate(d, c, a, b, sig, f, po) {
     expo: (dayNum(d[b]) - dayNum(d[a])) > 0 ? inDays / (dayNum(d[b]) - dayNum(d[a])) * 100 : 0, open: q > 0 ? 1 : 0,
     rAvg: nR ? sumR / nR : null, big };
 }
+// Filtres d'entrée contre les fausses cassures (meilleure SMA de l'unité, même sortie : clôture sous la SMA).
+// 0 actuelle (1re clôture au-dessus), 1 deux clôtures au-dessus, 2 clôture ≥ SMA + 1 %, 3 SMA qui monte (vs 5 bougies avant),
+// 4 volume ≥ 1,5 × moyenne des 20 bougies précédentes. Faux signal : clôture repassée sous la SMA en 5 bougies ou moins.
+export const LAB_FI = ['Actuelle', '2 clôtures', 'Marge +1 %', 'SMA qui monte', 'Volume ×1,5'];
+function entryRules(c, s, v) {
+  const up = i => s[i] != null && c[i] > s[i], cross = i => i >= 1 && s[i - 1] != null && up(i) && !up(i - 1);
+  const avgV = i => { if (!v || i < 20) return null; let t = 0; for (let k = i - 20; k < i; k++) t += v[k]; return t / 20; };
+  return [
+    cross,
+    i => i >= 2 && s[i - 2] != null && up(i) && up(i - 1) && !up(i - 2),
+    i => i >= 1 && s[i - 1] != null && c[i] >= s[i] * 1.01 && !(c[i - 1] >= s[i - 1] * 1.01),
+    i => cross(i) && i >= 5 && s[i - 5] != null && s[i] > s[i - 5],
+    v && v.some(x => x > 0) ? i => { const a = avgV(i); return cross(i) && a > 0 && v[i] >= 1.5 * a; } : null
+  ];
+}
+function tradesOf(c, s, entry, a, b) {
+  const out = []; let e = -1;
+  for (let i = a; i <= b; i++) {
+    if (e < 0) { if (i < b && entry(i)) e = i; }
+    else if (c[i] < s[i]) { out.push([e, i]); e = -1; }
+  }
+  if (e >= 0) out.push([e, null]);
+  return out;
+}
+function entryFilters(d, c, v, s, a, b, f) {
+  const rules = entryRules(c, s, v);
+  const res = rules.map(en => {
+    if (!en) return null;
+    const sig = i => c[i] < s[i] && s[i] != null && i >= 1 && c[i - 1] >= s[i - 1] ? -1 : en(i) ? 1 : 0;
+    const sim = simulate(d, c, a, b, sig, f), tr = tradesOf(c, s, en, a, b), done = tr.filter(x => x[1] != null);
+    return { cagr: sim.cagr, dd: sim.dd, tr: sim.tr, fake: done.length ? done.filter(([e, x]) => x - e <= 5).length / done.length * 100 : null };
+  });
+  // Survie des cassures (entrée actuelle) : part qui tient 5 et 20 bougies, et 20 bougies parmi celles qui ont déjà tenu 5.
+  const tr = tradesOf(c, s, rules[0], a, b), held = ([e, x]) => (x == null ? b : x) - e;
+  const n = tr.length, h5 = tr.filter(t => held(t) > 5), h20 = tr.filter(t => held(t) > 20);
+  return { v: res, sv: n ? [h5.length / n * 100, h20.length / n * 100, h5.length ? h20.length / h5.length * 100 : null] : null };
+}
 // Alléger ou pas : la meilleure SMA de l'unité rejouée sans allègement, ½ vendue à +2 R, ⅓ vendu à +3 R (même période, mêmes frais).
 export const LAB_PO = [{ frac: 0, k: 0 }, { frac: 0.5, k: 2 }, { frac: 1 / 3, k: 3 }];
 // 1 R minimal par unité : écart médian entre l'achat et le stop initial de vos positions (J 1,6 %, S 2,2 %, M 6,1 %).
@@ -77,13 +114,13 @@ function scaleOut(d, c, a, b, sig, f, s, tf) {
 
 // Une unité (bougies [[date, clôture]] terminées, ordre chronologique). Renvoie les 15 SMA, « acheter et garder » et la période récente.
 export function labUnit(bars, tf) {
-  const N = bars.length, d = bars.map(b => b[0]), c = bars.map(b => b[1]);
+  const N = bars.length, d = bars.map(b => b[0]), c = bars.map(b => b[1]), vol = bars.some(b => b.length === 3 && b[2] > 0) ? bars.map(b => b[2] || 0) : null;
   const ok = n => n <= N / 2 && N - n >= MIN_AFTER[tf];
   const testable = LAB_PERIODS.filter(ok);
   if (!testable.length) return null;
   const start = Math.max(...testable), end = N - 1;                 // même période pour toutes les SMA testables
   const split = start + Math.floor((end - start) * 0.7);           // 70 % pour choisir, 30 % les plus récents pour vérifier
-  const out = { first: d[0], from: d[start], to: d[end], split: d[split], bars: N, sma: {}, bh: {}, po: {} };
+  const out = { first: d[0], from: d[start], to: d[end], split: d[split], bars: N, sma: {}, bh: {}, po: {}, fi: {} };
   for (const fk of ['tv', 'ic']) {
     const f = LAB_FEES[fk], rows = [];
     for (const n of LAB_PERIODS) {
@@ -99,6 +136,7 @@ export function labUnit(bars, tf) {
       const s = smaSeries(c, LAB_PERIODS[bi]);
       const sig = i => i < 1 || s[i - 1] == null ? 0 : c[i] > s[i] && c[i - 1] <= s[i - 1] ? 1 : c[i] < s[i] && c[i - 1] >= s[i - 1] ? -1 : 0;
       out.po[fk] = { i: bi, v: scaleOut(d, c, start, end, sig, f, s, tf) };
+      out.fi[fk] = { i: bi, ...entryFilters(d, c, vol, s, start, end, f) };
     }
     const hold = i => i === start ? 1 : 0;
     out.bh[fk] = { all: simulate(d, c, start, end, hold, f), oos: simulate(d, c, split, end, i => i === split ? 1 : 0, f) };
@@ -178,6 +216,9 @@ export function packUnit(u) {
     // Alléger ou pas : [cagr, dd, R moyen, trades ≥ +5 R, trades] pour sans allègement, ½ à +2 R, ⅓ à +3 R.
     const p = u.po && u.po[fk];
     o[fk].po = p ? { i: p.i, v: p.v.map(x => [r1(x.cagr), r1(x.dd), x.rAvg == null ? null : Math.round(x.rAvg * 100) / 100, x.big, x.tr]) } : null;
+    // Filtres d'entrée : [cagr, dd, % faux signaux, trades] par filtre (null si pas de volume) et survie [% 5 bougies, % 20, % 20 sachant 5].
+    const q = u.fi && u.fi[fk];
+    o[fk].fi = q ? { i: q.i, v: q.v.map(x => x && [r1(x.cagr), r1(x.dd), r1(x.fake), x.tr]), sv: q.sv && q.sv.map(r1) } : null;
   }
   return o;
 }

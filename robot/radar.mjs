@@ -41,7 +41,7 @@ async function findGists() {
 
 // ----- Cours -----
 let tdCalls = 0, tdLast = 0, ADJ = 'all';
-async function twelve(sym, n, interval = '1day', end = '', adj = ADJ) {
+async function twelve(sym, n, interval = '1day', end = '', adj = ADJ, vol = false) {
   if (!TWELVEDATA_KEY) throw new Error('pas de clé Twelve Data');
   if (tdCalls >= TD_DAY_LIMIT) throw new Error('quota Twelve Data du jour réservé');
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -51,16 +51,17 @@ async function twelve(sym, n, interval = '1day', end = '', adj = ADJ) {
     const j = await r.json().catch(() => ({}));
     if (j.code === 429 || r.status === 429) { await sleep(61000); continue; }
     if (j.status === 'error' || !Array.isArray(j.values)) throw new Error(j.message || 'erreur ' + r.status);
+    if (vol) return j.values.map(v => [String(v.datetime).slice(0, 10), +v.close, +v.volume || 0]).filter(v => v[1] > 0).sort((a, b) => a[0] < b[0] ? -1 : 1);   // Labo : clôture et volume
     return j.values.map(v => [String(v.datetime).slice(0, 10), +v.close, +v.open, +v.high, +v.low]).filter(v => v[1] > 0).map(v => v.every(x => x === v[0] || x > 0) ? v : v.slice(0, 2)).sort((a, b) => a[0] < b[0] ? -1 : 1);
   }
   throw new Error('limite Twelve Data');
 }
 // Journalier depuis le début de l'actif, jusqu'à 80 ans : 5 000 séances par requête au plus (offre gratuite),
 // donc une requête de plus par tranche de 20 ans tant que la précédente était pleine (4 au plus).
-async function twelveLong(sym) {
-  let a = await twelve(sym, 5000, '1day');
+async function twelveLong(sym, vol = false) {
+  let a = await twelve(sym, 5000, '1day', '', ADJ, vol);
   for (let k = 1, got = a.length; k < 4 && got >= 4990; k++) {
-    try { const b = (await twelve(sym, 5000, '1day', addDays(a[0][0], -1))).filter(x => x[0] < a[0][0]); got = b.length; a = b.concat(a); }
+    try { const b = (await twelve(sym, 5000, '1day', addDays(a[0][0], -1), ADJ, vol)).filter(x => x[0] < a[0][0]); got = b.length; a = b.concat(a); }
     catch (e) { if (/quota|limite/.test(e.message)) throw e; break; }   // pas d'historique plus ancien
   }
   return a;
@@ -182,9 +183,12 @@ for (const s in hist) view[s] = DF[s] && DF[s].fx.length ? Object.assign({}, his
 // ----- Labo SMA : tickers demandés dans l'app (S.settings.labQueue), radar compris ; le robot n'écrit jamais dans le radar -----
 // 3 à 6 requêtes Twelve Data par action (J jusqu'à 20 000 séances en quatre fois, S et M depuis le début de l'actif), refaites tous les 30 jours.
 // En plus des 15 SMA × J / S / M : test combiné J + S + M (filtre par la meilleure SMA hebdo et mensuelle).
-const labQ = [...new Set((S.settings.labQueue || []).map(t => String(t).toUpperCase()))];
+// Vos positions ouvertes (actions US) sont testées aussi, pour juger vos SMA actuelles.
+const manualL = new Set((S.settings.manualTickers || []).map(t => String(t).toUpperCase()));
+const posL = S.settings.labPositions === false ? [] : (S.lots || []).filter(l => !l.demo && l.qty - (l.events || []).filter(e => e.type === 'sell').reduce((a, e) => a + e.qty, 0) > 1e-9).map(l => String(l.ticker).toUpperCase()).filter(t => !manualL.has(t));
+const labQ = [...new Set([...(S.settings.labQueue || []).map(t => String(t).toUpperCase()), ...posL])];
 // Refait une fois : résultats sans test combiné (C), sans date de début des données (avant le journalier sur 80 ans) ou sans le test « alléger ou pas ».
-const labDue = t => { const x = L.res[t]; return !x || x.adj !== ADJ || (!x.err && (!('C' in x) || (x.D && !('first' in x.D)) || (x.D && !('po' in x.D.ic)))) || days(new Date(x.at).toISOString().slice(0, 10), ls) > (x.err ? 7 : LAB_REDO_DAYS); };
+const labDue = t => { const x = L.res[t]; return !x || x.adj !== ADJ || (!x.err && (!('C' in x) || (x.D && !('first' in x.D)) || (x.D && !('po' in x.D.ic)) || (x.D && !('fi' in x.D.ic)))) || days(new Date(x.at).toISOString().slice(0, 10), ls) > (x.err ? 7 : LAB_REDO_DAYS); };
 const labTodo = labQ.filter(labDue).sort((a, b) => (L.res[a] ? 1 : 0) - (L.res[b] ? 1 : 0));
 let labDone = 0; const labNew = [];
 for (const t of labTodo.slice(0, LAB_PER_RUN)) {
@@ -192,7 +196,7 @@ for (const t of labTodo.slice(0, LAB_PER_RUN)) {
   try {
     const one = {}, bars = {}, units = {};
     for (const [tf, iv] of [['D', '1day'], ['W', '1week'], ['M', '1month']]) {
-      bars[tf] = doneBars(tf === 'D' ? await twelveLong(t) : await twelve(t, 5000, iv), tf, ls);
+      bars[tf] = doneBars(tf === 'D' ? await twelveLong(t, true) : await twelve(t, 5000, iv, '', ADJ, true), tf, ls);
       units[tf] = labUnit(bars[tf], tf); one[tf] = packUnit(units[tf]);
     }
     one.C = packUnit(labCombo(bars, units));
