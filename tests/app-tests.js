@@ -556,9 +556,16 @@ window.__appTests = async function () {
     const D = days(120), bad = [];
     S.watch = [{ id: 'wq', ticker: 'QQQ', period: 89, tf: 'D', sym: '', idx: true }];
     addSectors();
-    if (S.watch.filter(w => w.sect).length !== 11) bad.push('11 secteurs : ' + S.watch.filter(w => w.sect).length);
+    const nT = () => new Set(S.watch.filter(w => w.sect).map(w => w.ticker)).size, nS = S.watch.filter(w => w.sect).length;
+    if (nT() !== 11 || nS !== 32) bad.push('11 secteurs, 32 lignes : ' + nT() + ' / ' + nS);
+    if (sectWatch('XLV').map(w => w.tf + w.period).join(' ') !== 'D987 W233 M34 M21') bad.push('SMA XLV : ' + sectWatch('XLV').map(w => w.tf + w.period).join(' '));
+    if (sectWatch('XLRE').length || !S.watch.some(w => w.ticker === 'XLRE' && w.nosma) || !labQueue().includes('XLRE')) bad.push('XLRE sans SMA, au Labo');
+    if (radarAlerts().some(x => x.w.nosma)) bad.push('alerte sur XLRE');
+    S.settings.sectV = 0; S.watch = S.watch.filter(w => !w.sect).concat([{ id: 'sect-XLK-W21', ticker: 'XLK', period: 21, tf: 'W', sym: '', idx: true, sect: true }]); migrateSect();
+    if (nT() !== 11 || S.watch.some(w => w.id === 'sect-XLK-W21')) bad.push('migration W 21 provisoire');
+    if (/Suivre les 11/.test(sectorCard.toString()) || !/sectorBook/.test(sectorCard.toString())) bad.push('carte exposition par secteur écrasée');
     setIdx('SPY J 200');
-    if (S.watch.filter(w => w.sect).length !== 11 || !S.watch.some(w => w.ticker === 'SPY')) bad.push('secteurs perdus après réglage des indices');
+    if (nT() !== 11 || !S.watch.some(w => w.ticker === 'SPY')) bad.push('secteurs perdus après réglage des indices');
     Radar.hist.SPY = { bars: D.map((d, i) => [d, 100 + i * 0.1]), n: 120, full: 1, last: D[119], adj: adjMode() };
     Radar.hist.XLK = { bars: D.map((d, i) => [d, 100 + i * 0.5]), n: 120, full: 1, last: D[119], adj: adjMode() };
     sectMemo.clear(); const ss = sectStrength('Technologie');
