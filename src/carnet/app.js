@@ -1416,7 +1416,9 @@ function setLab(L, ver) {
   try { const t = JSON.stringify(Lab); if (t.length < 2.5e6) localStorage.setItem(LAB_KEY, t); } catch (e) {}
 }
 let labFee = (() => { try { return localStorage.getItem(LAB_FEE_KEY) || 'ic'; } catch (e) { return 'ic'; } })(), labSel = {}, labOpen = new Set(), labPick = {}, labChk = {};
-const labQueue = () => [...new Set((S.settings.labQueue || []).map(t => String(t).toUpperCase()))];
+// Liste du Labo + vos positions ouvertes (actions US), testées aussi par le robot pour juger vos SMA actuelles.
+const labPosT = () => { if (S.settings.labPositions === false) return []; const man = manualSet(); return [...new Set(S.lots.filter(l => !l.demo && !Core.lotState(l).closed).map(l => String(l.ticker).toUpperCase()))].filter(t => !man.has(t)); };
+const labQueue = () => [...new Set([...(S.settings.labQueue || []).map(t => String(t).toUpperCase()), ...labPosT()])];
 const labRadarT = () => new Set(S.watch.map(w => String(w.ticker).toUpperCase()));
 // Une case : [cagr, dd, pf, trades, %gagnants, temps investi, trade moyen %, ouvert, cagr récent, dd récent, cagr 70 %, dd 70 %].
 const labScore = (c, dd) => c == null || dd == null ? null : dd > 0 ? c / dd : c > 0 ? 99 : 0;
@@ -1474,6 +1476,16 @@ function labPoBlock(u, tf) {
     <table><thead><tr><th>Sortie</th><th>CAGR</th><th>DD</th><th>R moy.</th><th>≥5 R</th></tr></thead><tbody>${po.v.map((x, k) => `<tr class="${k === w ? 'best' : ''}"><td>${['Sans', '½ à +2 R', '⅓ à +3 R'][k]}</td><td class="${cls(x[0])}">${x[0] == null ? '—' : fmtNum(x[0], 1) + ' %'}</td><td>${x[1] == null ? '—' : '−' + fmtNum(x[1], 0) + ' %'}</td><td class="${cls(x[2])}">${x[2] == null ? '—' : (x[2] >= 0 ? '+' : '−') + fmtNum(Math.abs(x[2]), 1) + ' R'}</td><td>${x[3] == null ? '—' : x[3]}</td></tr>`).join('')}</tbody></table>
     <p class="hint">1 R = écart entre la clôture d'entrée et la SMA ce jour-là, au moins ${{ D: '1,5', W: '2', M: '6', C: '1,5' }[tf]} % du prix (l'écart habituel de vos stops). Le reste sort toujours sur clôture sous la SMA. « Sans » = sans allègement ; « ½ à +2 R » = moitié vendue à +2 R. Même période et mêmes frais pour les trois lignes ; ligne verte : meilleur CAGR ÷ drawdown ; ≥5 R : trades finis à +5 R ou plus.</p></details>`;
 }
+const LAB_FI_L = ['Actuelle', '2 clôtures', 'Marge +1 %', 'SMA qui monte', 'Volume ×1,5'];
+function labFiBlock(u, tf) {
+  const fi = u && u[labFee] && u[labFee].fi; if (!fi) return '';
+  let w = -1, ws = -1e9; fi.v.forEach((x, k) => { if (!x || !x[3]) return; const sc = labScore(x[0], x[1]); if (sc != null && sc > ws) { ws = sc; w = k; } });
+  const sv = fi.sv;
+  return `<details class="lpo more"><summary>Fausses cassures · ${w >= 0 ? 'meilleure entrée : ' + LAB_FI_L[w].toLowerCase() : '—'}${fi.v[0] && fi.v[0][2] != null ? ` · ${fmtNum(fi.v[0][2], 0)} % de faux signaux aujourd’hui` : ''}</summary>
+    <table><thead><tr><th>Entrée</th><th>CAGR</th><th>DD</th><th>Faux</th><th>Trades</th></tr></thead><tbody>${fi.v.map((x, k) => !x ? `<tr><td>${LAB_FI_L[k]}</td><td colspan="4" class="hint">volume indisponible</td></tr>` : `<tr class="${k === w ? 'best' : ''}"><td>${LAB_FI_L[k]}</td><td class="${cls(x[0])}">${x[3] ? fmtNum(x[0], 1) + ' %' : '—'}</td><td>${x[3] ? '−' + fmtNum(x[1], 0) + ' %' : '—'}</td><td>${x[2] == null ? '—' : fmtNum(x[2], 0) + ' %'}</td><td>${x[3]}</td></tr>`).join('')}</tbody></table>
+    ${sv ? `<div class="lsv num"><div><small>Tiennent ${tf === 'D' || tf === 'C' ? '5 séances' : '5 bougies'}</small><b>${fmtNum(sv[0], 0)} %</b></div><div><small>Tiennent 20</small><b>${fmtNum(sv[1], 0)} %</b></div><div><small>20, après 5 au-dessus</small><b class="pos">${sv[2] == null ? '—' : fmtNum(sv[2], 0) + ' %'}</b></div></div>` : ''}
+    <p class="hint">${LT(tf)} ${LAB_P[fi.i]} (meilleure SMA ${LL(tf)}). Faux signal : clôture repassée sous la SMA en 5 bougies ou moins. Même sortie pour toutes les lignes (clôture sous la SMA) ; ligne verte : meilleur CAGR ÷ drawdown. Marge +1 % : la clôture doit dépasser la SMA d'au moins 1 %. SMA qui monte : plus haute que 5 bougies avant.</p></details>`;
+}
 function labCard(t) {
   const r = Lab.res[t];
   if (!r || r.err) return '';
@@ -1507,6 +1519,7 @@ function labCard(t) {
           <span class="${stable === true ? 'ok' : stable === false ? 'bad' : ''}"><b>SMA voisines</b> : ${stable == null ? '—' : stable ? 'zone stable, pas un coup de chance' : 'zone fragile, pic isolé'}</span>
           ${bx ? `<span><b>Choisie sur les 70 % anciens</b> : ${LT(tf)} ${LAB_P[bi]} → sur la période récente CAGR ${x && bx[8] != null ? fmtNum(bx[8], 1) + ' %' : '—'}, DD ${bx[9] == null ? '—' : fmtNum(bx[9], 0) + ' %'}</span>` : ''}</div>
         ${labPoBlock(u, tf)}
+        ${labFiBlock(u, tf)}
         <div class="row" style="margin-top:10px">${tf === 'C' ? (d => `<span class="hint" style="margin:0">Comparez avec J ${LAB_P[i]} seule : ${d ? `CAGR ${fmtNum(d[0], 1)} % · DD ${fmtNum(d[1], 0)} %` : '—'}.</span><button class="btn sm primary" data-act="lab-combo" data-t="${esc(t)}" data-i="${i}" data-w="${u[labFee].w}" data-m="${u[labFee].m}">Choisir J ${LAB_P[i]} · S ${u[labFee].w} · M ${u[labFee].m}</button>`)(r.D && r.D[labFee].sma[i]) : has ? `<span class="pill win">${TF_SHORT[tf]} ${LAB_P[i]} déjà au radar</span>` : `<button class="btn sm primary" data-act="lab-add" data-t="${esc(t)}" data-tf="${tf}" data-i="${i}">Ajouter ${TF_SHORT[tf]} ${LAB_P[i]} au radar</button>`}</div>`;
     }
     body = `${grid}${labAddBox(t, labAddPlan(t, r, U, best))}<p class="hint lleg"><i class="l4"></i>CAGR ÷ DD ≥ 0,5 <i class="l3"></i>≥ 0,35 <i class="l2"></i>≥ 0,2 <i class="l1"></i>faible <i class="l0"></i>perte · ★ meilleure de la ligne · <b class="lmine">○</b> votre SMA actuelle au radar · hachuré : trop peu de trades</p>${det}`;
@@ -1533,9 +1546,12 @@ function viewLab() {
   ${shown.length ? `<section class="card">
     <div class="sec-head"><h2>Résultats</h2><div class="seg" role="group" aria-label="Frais"><button type="button" data-act="lab-fee" data-f="tv" aria-pressed="${labFee === 'tv'}">Comme TradingView</button><button type="button" data-act="lab-fee" data-f="ic" aria-pressed="${labFee === 'ic'}">IC Markets réel</button></div></div>
     <p class="hint">${labFee === 'ic' ? 'Frais IC Markets : 0,02 $ par action et swap acheteur de 5,93 % par an chaque nuit en position.' : 'Frais du script : 0,10 % par ordre et 1 tick de glissement, sans swap.'} Meilleure SMA = meilleur CAGR ÷ drawdown avec assez de trades (${LAB_MIN.D} en J, ${LAB_MIN.W} en S, ${LAB_MIN.M} en M). Touchez une action pour la grille complète.</p>
-    ${(() => { const n = [0, 0, 0]; let k = 0; for (const t of shown) { const r = res[t], m = labMainUnit(r), w = m ? labPoWin(r[m[0]][labFee].po) : -1; if (w >= 0) { n[w]++; k++; } }
+    ${(() => { const weak = []; for (const t of shown) for (const w of S.watch.filter(x => x.ticker === t && !x.idx && labPosT().includes(t))) if (labWeak(res[t], w)) { const u = res[t][w.tf], bi = labBest(u[labFee].sma, w.tf), x = u[labFee].sma[LAB_P.indexOf(w.period)]; weak.push(`<b class="neg">${esc(t)} ${TF_SHORT[w.tf]} ${w.period}</b> <small>CAGR ${fmtNum(x[0], 1)} % · DD ${fmtNum(x[1], 0)} %${bi >= 0 && LAB_P[bi] !== w.period ? ` · meilleure : ${TF_SHORT[w.tf]} ${LAB_P[bi]}` : ''}</small>`); }
+      const nPos = labPosT().filter(t => res[t] && !res[t].err).length;
+      return nPos ? `<div class="lposum"><h3>Vos positions <small>${nPos} testée(s) sur ${labPosT().length}</small></h3>${weak.length ? `<p class="hint" style="margin:0 0 4px">SMA jugées faibles (à revoir) :</p>${weak.map(x => `<div>${x}</div>`).join('')}` : '<p class="hint" style="margin:0">Aucune de vos SMA de position n’est jugée faible.</p>'}</div>` : ''; })()}
+    ${(() => { const n = [0, 0, 0], g = [0, 0, 0]; let k = 0; for (const t of shown) { const r = res[t], m = labMainUnit(r), po = m ? r[m[0]][labFee].po : null, w = labPoWin(po); if (w >= 0) { n[w]++; k++; let b = 0; po.v.forEach((x, j) => { if (x[0] != null && x[0] > po.v[b][0]) b = j; }); g[b]++; } }
       return k ? `<div class="lposum"><h3>Alléger ou pas ? <small>${k} action(s), meilleure SMA de chacune</small></h3><div class="lposg">${LAB_PO_L.map((l, i) => `<div><small>${l} meilleur</small><b class="${i === 0 ? 'up' : ''}">${n[i]}</b></div>`).join('')}</div>
-        <p class="hint">${n[0] >= n[1] + n[2] ? `Sur vos actions, ne pas alléger donne le meilleur CAGR ÷ drawdown dans ${n[0]} cas sur ${k}.` : `Sur vos actions, alléger fait mieux dans ${n[1] + n[2]} cas sur ${k} : comparez le détail dans chaque fiche.`}${shown.length > k ? ` ${shown.length - k} action(s) en attente du prochain passage du robot.` : ''}</p></div>` : `<p class="hint">Alléger ou pas : la comparaison arrive au fil des passages du robot (environ 40 actions par passage).</p>`; })()}
+        <p class="hint">${n[0] >= n[1] + n[2] ? `Sur vos actions, ne pas alléger donne le meilleur CAGR ÷ drawdown dans ${n[0]} cas sur ${k}.` : `Sur vos actions, alléger fait mieux au CAGR ÷ drawdown dans ${n[1] + n[2]} cas sur ${k} (des reculs plus petits).`} Meilleur gain brut (CAGR) : <b>${g[0] >= g[1] + g[2] ? `ne pas alléger dans ${g[0]} cas sur ${k}` : `alléger dans ${g[1] + g[2]} cas sur ${k}`}</b>.${shown.length > k ? ` ${shown.length - k} action(s) en attente du prochain passage du robot.` : ''}</p></div>` : `<p class="hint">Alléger ou pas : la comparaison arrive au fil des passages du robot (environ 40 actions par passage).</p>`; })()}
     <div class="lcards">${shown.sort().map(labCard).join('')}</div>
     <p class="fine">Résultats passés, calculés sur les cours ${adjMode() === 'all' ? 'ajustés des dividendes' : 'non ajustés'} de Twelve Data (journalier : 20 ans au plus). Choisir la meilleure de 45 combinaisons surestime l’avenir : regardez la période récente et les SMA voisines.</p>
   </section>` : ''}`;
@@ -2816,9 +2832,10 @@ function updateCalc() {
   }
   const lev = r.params.leverage;
   box.innerHTML = `<div class="result">
-    <div class="sec-head"><h2>Quantité proposée</h2><small>${calcDraft.ticker ? esc(calcDraft.ticker.toUpperCase()) : 'Ticker non saisi'}</small></div>
+    <div class="sec-head"><h2>Quantité proposée</h2><small>${calcDraft.ticker ? esc(calcDraft.ticker.toUpperCase()) : 'Ticker non saisi'}${(L => L ? ` · <span class="feu-mini ${L.lvl}">${esc(L.label.toLowerCase())}</span>` : '')(typeof marketLight === 'function' ? marketLight() : null)}${Radar.robot && Radar.robot.macro && Radar.robot.macro.vix ? ` · VIX ${fmtNum(Radar.robot.macro.vix[1], 1)}` : ''}</small></div>
     <div class="qty-big">${qty(r.q)} <small>action${r.q >= 2 ? 's' : ''}</small></div>
     ${r.reason ? `<p class="reason">${esc(r.reason)}</p>` : ''}
+    ${(m => m && r.stopDistPct >= m.pct ? `<p class="okline">Stop correct : au-delà du mouvement moyen de ${esc(calcDraft.ticker.toUpperCase())} (${pct(m.pct)} par jour).</p>` : '')(calcDraft.ticker ? dailyMove(calcDraft.ticker) : null)}
     ${(m => m && r.stopDistPct < m.pct ? `<p class="reason"><b>Stop à ${pct(r.stopDistPct)} du prix.</b> ${esc(calcDraft.ticker.toUpperCase())} bouge en moyenne de <b>${pct(m.pct)}</b> par jour (${m.kind}) : ce stop risque de sauter sur un mouvement normal. Stop au-delà d'un mouvement moyen : ${usd(r.params.entry * (1 - m.pct / 100))}. La taille reste calculée sur votre stop.</p>` : '')(calcDraft.ticker ? dailyMove(calcDraft.ticker) : null)}
     <dl class="kv">
       ${kv('Exposition totale', usd(r.exposure), `plafond ${usd(r.params.cap)}`)}
