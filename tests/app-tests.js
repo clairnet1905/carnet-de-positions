@@ -492,6 +492,24 @@ window.__appTests = async function () {
     } finally { Lab.res = keepRes; S.settings.labQueue = keepQ; labOpen.clear(); tab = 'dash'; }
   });
 
+  await t('EODHD : codes des actions européennes et import des clôtures du robot', async () => {
+    const D = days(10);
+    S.settings.manualTickers = ['EL']; S.settings.eodSym = {};
+    S.lots = [lot({ ticker: 'EL', date: D[0] }), lot({ ticker: 'WKL', date: D[0] })];
+    S.prices.EL = [{ date: D[0], price: 184 }, { date: D[5], price: 190 }];
+    S.prices.WKL = [{ date: D[0], price: 75 }, { date: D[1], price: 76 }, { date: D[2], price: 77 }];
+    tab = 'set'; const keepPart = setPart; setPart = 'conf'; render(); setPart = keepPart;
+    const inEL = $('[data-eod="EL"]'), inW = $('[data-eod="WKL"]');
+    if (!inEL || !inW || inEL.value !== 'EL.PA' || inW.value !== 'WKL.AS') return 'champs : ' + (inEL && inEL.value) + ' / ' + (inW && inW.value);
+    $('[data-act="eod-save"]').click(); await wait(20);
+    if (S.settings.eodSym.EL !== 'EL.PA' || !manualSet().has('WKL')) return 'enregistrement : ' + JSON.stringify(S.settings.eodSym) + ' ' + [...manualSet()];
+    const got = importEU({ px: { EL: [[D[5], 191], [D[8], 193.5]], WKL: [[D[9], 88.5]], ZZZ: [[D[9], 1]] } });
+    const el = S.prices.EL.map(x => x.date + ':' + x.price + (x.src || '')).join(' ');
+    if (!/190$|190 /.test(el.split(' ')[1]) || !el.includes(D[8] + ':193.5eod')) return 'EL : ' + el;   // le cours saisi du jour D[5] est gardé
+    if (!S.prices.WKL.some(x => x.date === D[9] && x.src === 'eod') || S.prices.ZZZ) return 'WKL / ZZZ : ' + JSON.stringify(S.prices.WKL);
+    return got.join() === 'EL,WKL' ? true : 'import : ' + got;
+  });
+
   reset(); tab = 'dash';
   return out;
 };
