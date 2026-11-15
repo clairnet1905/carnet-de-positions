@@ -302,7 +302,7 @@ if (S.settings.pushWeekly !== false && new Date(ls + 'T12:00:00Z').getUTCDay() =
     n++; net += g; if (u > 0) { sumR += g / u; nR++; }
   }
   let up = 0, k = 0;
-  for (const w of S.watch.filter(x => x.idx)) { const h = view[symOf(w)]; if (!h) continue; const a = analyze(w, h.bars, ls, 2); if (!a || a.short) continue; k++; if (a.above) up++; }
+  for (const w of S.watch.filter(x => x.idx && !x.sect)) { const h = view[symOf(w)]; if (!h) continue; const a = analyze(w, h.bars, ls, 2); if (!a || a.short) continue; k++; if (a.above) up++; }
   const feu = k ? (up / k >= 0.7 ? 'vert' : up / k <= 0.3 ? 'rouge' : 'orange') : null;
   const lines = [n ? `${n} trade(s) clôturé(s) : ${net >= 0 ? '+' : ''}${usd(net)}${nR ? ` · ${sumR >= 0 ? '+' : ''}${sumR.toFixed(2).replace('.', ',')} R` : ''} (swap estimé non compris)` : 'Aucun trade clôturé cette semaine',
     `${openT.length} position(s) ouverte(s) · ${raised} stop(s) remonté(s)`, feu ? `Feu ${feu} : ${up}/${k} de vos SMA d’indices au-dessus` : ''].filter(Boolean);
