@@ -592,6 +592,15 @@ details.lpo>summary{font-weight:500}
 .feu-mini{font-weight:600}.feu-mini.go{color:var(--gain)}.feu-mini.mid{color:var(--warn)}.feu-mini.stop{color:var(--loss)}
 .qty-big{font-weight:500;font-size:2.4rem;text-align:center;padding:8px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
 .qty-big small{font-size:.9rem;color:var(--muted)}
+
+/* Secteurs, calculateur */
+.stab{width:100%;border-collapse:collapse;font-size:.875rem;table-layout:fixed}
+.stab th{font-weight:400;color:var(--muted);font-size:.72rem;text-align:right;padding:4px;font-family:var(--f-body)}.stab th:first-child{text-align:left;width:44%}
+.stab td{padding:7px 4px;text-align:right;border-top:1px solid var(--line)}.stab td:first-child{text-align:left;font-family:var(--f-body)}
+.stab td small{display:block;font-size:.68rem;color:var(--muted)}
+.sd{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:7px;background:var(--muted);vertical-align:middle}.sd.go{background:var(--gain)}.sd.mid{background:var(--warn)}.sd.stop{background:var(--loss)}
+#calcForm details.more{grid-column:1/-1}#calcForm details.more>.fields{margin-top:10px}
+#calcSma:empty{display:none}
 </style>
 
 <header class="top">

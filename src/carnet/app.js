@@ -794,7 +794,7 @@ async function appendClose(sym, d, c) {
 function hotTickers() {
   const best = new Map(), lim = 2 * (S.settings.nearPct || 2);
   for (const w of S.watch) {
-    if (w.sym) continue;
+    if (w.sym || w.sect) continue;
     const a = w.idx ? null : analyzeWatch(w), d = w.idx ? -1 : !a || a.short || a.pending ? 0 : Math.abs(a.dist);
     if (d <= lim && !(best.get(w.ticker) <= d)) best.set(w.ticker, d);
   }
@@ -1716,6 +1716,18 @@ function capitalFull() {
   if (L.pos != null && R.pos >= L.pos) why.push(`${R.pos} positions / ${L.pos}`);
   return why.length ? why : null;
 }
+function biggestWinner() {
+  const by = {};
+  for (const v of S.lots.filter(l => !l.demo).map(lotView)) if (!v.ls.closed) (by[v.lot.ticker] = by[v.lot.ticker] || []).push(v);
+  let w = null;
+  for (const t in by) {
+    const vs = by[t], un = vs.reduce((a, v) => a + v.unreal, 0), u1 = vs.reduce((a, v) => a + (planR(v.lot) || 0) * (v.lot.qty > 0 ? v.ls.rem / v.lot.qty : 0), 0);
+    if (!(u1 > 0)) continue;
+    const r = un / u1, mg = vs.reduce((a, v) => a + v.ls.rem * (v.last ? v.last.price : v.lot.price) / (v.lot.leverage || 1), 0);
+    if (r >= 3 && (!w || r > w.r)) w = { t, r, mg };
+  }
+  return w;
+}
 function weakestPos() {
   const today = todayISO(), by = {};
   for (const v of S.lots.filter(l => !l.demo).map(lotView)) if (!v.ls.closed) (by[v.lot.ticker] = by[v.lot.ticker] || []).push(v);
@@ -1736,10 +1748,12 @@ function tonightPicks() {
   for (const x of radarAlerts()) {
     if (x.seen || x.lvl !== 'up' || x.w.idx || held.has(x.w.ticker)) continue;
     const g = labGrade(x.w), e = nextEarn(x.w.ticker), eDays = e ? Core.days(today, e[0]) : null, sec = sectorOf(x.w.ticker), sp = sec ? share[sec] || 0 : null;
-    const score = (g ? g[1] : 1) * 10 + (eDays != null && eDays <= 7 ? -8 : 0) + (sp != null && sp >= lim ? -6 : 0) + (x.date >= addDays(today, -3) ? 2 : 0);
+    const ss = sec ? sectStrength(sec) : null;
+    const score = (g ? g[1] : 1) * 10 + (eDays != null && eDays <= 7 ? -8 : 0) + (sp != null && sp >= lim ? -6 : 0) + (x.date >= addDays(today, -3) ? 2 : 0) + (ss ? (ss.lvl === 'go' ? 4 : ss.lvl === 'stop' ? -4 : 0) : 0);
     const notes = [g ? 'Labo : ' + g[0].toLowerCase() : 'Labo : pas testée'];
     if (eDays != null && eDays <= 7) notes.push(`résultats dans ${eDays} j`); else if (e) notes.push('pas de résultats sous 7 j');
     if (sec && sp != null) notes.push(`${sec} ${fmtNum(sp, 0)} %${sp >= lim ? ' (au-dessus de votre seuil)' : ''}`);
+    if (ss && ss.lvl) notes.push(ss.lvl === 'go' ? 'secteur fort' : ss.lvl === 'stop' ? 'secteur faible' : 'secteur neutre');
     const cur = best.get(x.w.ticker);
     if (!cur || score > cur.score) best.set(x.w.ticker, { x, score, notes });
   }
@@ -1834,7 +1848,7 @@ function tonightCard() {
     <h3>1. Stops à remonter dans MT5 <small>· ${sr.length}</small></h3>
     ${sr.length ? stops + '<p class="hint">« Fait » enregistre le nouveau stop dans l’app. Changez-le aussi dans MT5 : rien n’est envoyé au courtier.</p>' : '<p class="hint">Aucun stop à remonter ce soir.</p>'}
     <h3>2. Nouveaux croisements à étudier <small>· ${P.top.length} sur ${P.n}</small></h3>
-    ${(full => full && P.top.length ? (wk => `<div class="capfull"><p><b>Capital plein</b> · ${esc(full.join(' · '))}. Signaux classés du meilleur au moins bon ci-dessous : ne prenez que le haut de la liste.</p>${wk ? `<p>Position la plus faible : <b>${esc(wk.t)}</b> (${wk.r >= 0 ? '+' : '−'}${fmtNum(Math.abs(wk.r), 1)} R, tenue depuis ${wk.held} j). La fermer dans MT5 libérerait la place pour <b>${esc(P.top[0].x.w.ticker)}</b>. À vous de juger : rien n'est vendu.</p><div class="row"><button class="btn sm" data-act="chart" data-t="${esc(wk.t)}">Graphique ${esc(wk.t)}</button><button class="btn sm primary" data-act="radar-calc" data-id="${esc(P.top[0].x.w.id)}">Calculer ${esc(P.top[0].x.w.ticker)}</button></div>` : '<p>Aucune position faible à remplacer (toutes au-dessus de +0,5 R ou tenues depuis moins de 15 jours) : attendez qu’une place se libère.</p>'}</div>`)(weakestPos()) : '')(capitalFull())}
+    ${(full => full && P.top.length ? (wk => `<div class="capfull"><p><b>Capital plein</b> · ${esc(full.join(' · '))}. Signaux classés du meilleur au moins bon ci-dessous : ne prenez que le haut de la liste.</p>${wk ? `<p>Position la plus faible : <b>${esc(wk.t)}</b> (${wk.r >= 0 ? '+' : '−'}${fmtNum(Math.abs(wk.r), 1)} R, tenue depuis ${wk.held} j). La fermer dans MT5 libérerait la place pour <b>${esc(P.top[0].x.w.ticker)}</b>. À vous de juger : rien n'est vendu.</p><div class="row"><button class="btn sm" data-act="chart" data-t="${esc(wk.t)}">Graphique ${esc(wk.t)}</button><button class="btn sm primary" data-act="radar-calc" data-id="${esc(P.top[0].x.w.id)}">Calculer ${esc(P.top[0].x.w.ticker)}</button></div>` : '<p>Aucune position faible à remplacer (toutes au-dessus de +0,5 R ou tenues depuis moins de 15 jours).</p>'}${(bw => bw ? `<p><b>Autre option</b> : alléger ⅓ de <b>${esc(bw.t)}</b> (+${fmtNum(bw.r, 1)} R) libère environ ${usd(bw.mg / 3)} de marge et encaisse +${fmtNum(bw.r / 3, 1)} R ; les ⅔ restants continuent avec leur stop. À n’utiliser que s’il n’y a pas de position faible : vos gros gagnants font le résultat.</p>` : '')(biggestWinner())}</div>`)(weakestPos()) : '')(capitalFull())}
     ${P.top.length ? picks + `<p class="hint">Croisements à la hausse non vus, hors positions déjà ouvertes, triés par note du Labo, résultats et secteur. ${P.n > P.top.length ? `Les ${P.n - P.top.length} autres et les alertes « proches » restent dans le radar. ` : ''}${light ? esc(light.label + ' : ' + light.txt) + '.' : ''}</p>` : '<p class="hint">Aucun nouveau croisement à la hausse.</p>'}
     <h3>3. Avant d’aller dormir</h3>
     <div class="tnr"><span>Résultats d’ici le ${fmtDate(nextD)} : ${earnT.length ? '<b>' + earnT.map(esc).join(', ') + '</b>' : 'aucun'}</span>${earnT.length ? '<button class="btn sm" data-act="go-tab" data-tab="earn">Voir</button>' : '<small>ok</small>'}</div>
@@ -2376,16 +2390,16 @@ function sectorCalcHint(ticker, risk, expo) {
 const IDX = [['SPY', 'S&P 500'], ['QQQ', 'Nasdaq 100'], ['DIA', 'Dow Jones']];
 const IDX_DEF = 'SPY J 200 J 233 S 21 S 55 M 8\nQQQ J 89 J 233 S 13 S 89 M 5 M 21\nDIA J 50 S 55 M 13';
 const TF_ORD = { D: 0, W: 1, M: 2 };
-const idxWatch = t => S.watch.filter(w => w.idx && w.ticker === t).sort((x, y) => TF_ORD[x.tf] - TF_ORD[y.tf] || y.period - x.period);
+const idxWatch = t => S.watch.filter(w => w.idx && !w.sect && w.ticker === t).sort((x, y) => TF_ORD[x.tf] - TF_ORD[y.tf] || y.period - x.period);
 const idxText = () => IDX.map(([t]) => idxWatch(t)).filter(ws => ws.length).map(ws => ws[0].ticker + ' ' + ws.map(w => TF_SHORT[w.tf] + ' ' + w.period).join(' ')).join('\n');
 function setIdx(text) {
   const { rows, bad } = parseSmaList(text), known = new Set(IDX.map(x => x[0]));
-  const keep = S.watch.filter(w => w.idx), out = [];
+  const keep = S.watch.filter(w => w.idx && !w.sect), out = [];
   for (const { t, pairs } of rows) {
     if (!known.has(t)) { bad.push(t); continue; }
     for (const [tf, n] of pairs) if (!out.some(w => w.ticker === t && w.tf === tf && w.period === n)) out.push(keep.find(w => w.ticker === t && w.tf === tf && w.period === n) || { id: `idx-${t}-${tf}${n}`, ticker: t, period: n, tf, sym: '', note: '', idx: true });  // id fixe : pas de doublon entre appareils
   }
-  S.watch = S.watch.filter(w => !w.idx).concat(out);
+  S.watch = S.watch.filter(w => !w.idx || w.sect).concat(out);   // les ETF de secteurs (sect) sont gardés
   return bad;
 }
 function migrateIdx() {
@@ -2401,6 +2415,35 @@ function idxDay(t) {
   return b && b.length > 1 ? (b[b.length - 1][1] / b[b.length - 2][1] - 1) * 100 : null;
 }
 const idxSide = a => !a || a.short ? '' : a.p > a.smaNow ? 'up' : 'down';
+// ----- Secteurs : ETF SPDR suivis comme les indices (S.watch, idx + sect), SMA hebdo 21 par défaut, à changer ensuite -----
+const SECT_ETF = { 'Technologie': 'XLK', 'Communication': 'XLC', 'Santé': 'XLV', 'Finance': 'XLF', 'Conso. cyclique': 'XLY', 'Conso. de base': 'XLP', 'Énergie': 'XLE', 'Industrie': 'XLI', 'Matériaux': 'XLB', 'Immobilier': 'XLRE', 'Services publics': 'XLU' };
+const sectWatch = etf => S.watch.filter(w => w.sect && w.ticker === etf).sort((x, y) => TF_ORD[x.tf] - TF_ORD[y.tf] || y.period - x.period);
+function addSectors() {
+  for (const etf of Object.values(SECT_ETF)) if (!sectWatch(etf).length) S.watch.push({ id: `sect-${etf}-W21`, ticker: etf, period: 21, tf: 'W', sym: '', note: '', idx: true, sect: true });
+  save('Secteurs suivis : 11 ETF, SMA hebdo 21. Historique au prochain passage du robot.');
+}
+// Force d'un secteur : position vs sa première SMA, performance 1 mois (22 séances) et 3 mois (66) moins celle de SPY.
+const sectMemo = new Map();
+function sectStrength(name) {
+  const etf = SECT_ETF[name]; if (!etf) return null;
+  const w = sectWatch(etf)[0], h = Radar.hist[etf], sp = Radar.hist.SPY;
+  if (!w || !h || !h.bars || h.bars.length < 70) return null;
+  const key = name + '|' + h.last + '|' + (sp && sp.last) + '|' + w.tf + w.period;
+  if (sectMemo.has(key)) return sectMemo.get(key);
+  const ret = (b, n) => b && b.length > n ? (b[b.length - 1][1] / b[b.length - 1 - n][1] - 1) * 100 : null;
+  const a = analyzeWatch(w), r1 = ret(h.bars, 22), r3 = ret(h.bars, 66), s1 = ret(sp && sp.bars, 22), s3 = ret(sp && sp.bars, 66);
+  const o = { name, etf, w, dist: a && !a.short ? a.dist : null, rs1: r1 != null && s1 != null ? r1 - s1 : null, rs3: r3 != null && s3 != null ? r3 - s3 : null };
+  o.lvl = o.dist == null ? '' : o.dist > 0 && (o.rs3 == null || o.rs3 > 0) ? 'go' : o.dist < 0 && (o.rs3 == null || o.rs3 < 0) ? 'stop' : 'mid';
+  sectMemo.set(key, o); return o;
+}
+function sectorCard() {
+  if (!S.watch.some(w => w.sect)) return `<section class="card"><div class="sec-head"><h2>Secteurs</h2><button class="btn sm" data-act="sect-add">Suivre les 11 secteurs</button></div><p class="hint">Les 11 secteurs du S&amp;P 500 via leurs ETF (XLK, XLF, XLV…) : position par rapport à leur SMA et force face au S&amp;P 500. Un signal d’action dans un secteur fort compte plus dans le classement.</p></section>`;
+  const rows = SECTORS.map(sectStrength).filter(Boolean).sort((a, b) => (b.rs3 ?? -1e9) - (a.rs3 ?? -1e9));
+  const f = x => x == null ? '—' : (x >= 0 ? '+' : '−') + fmtNum(Math.abs(x), 1);
+  return `<section class="card sect"><div class="sec-head"><h2>Secteurs <small>· vs S&amp;P 500</small></h2></div>
+    ${rows.length ? `<table class="stab num"><thead><tr><th>Secteur</th><th>SMA</th><th>1 mois</th><th>3 mois</th></tr></thead><tbody>${rows.map(o => `<tr><td><i class="sd ${o.lvl}"></i>${esc(o.name)} <small>${o.etf}</small></td><td class="${cls(o.dist)}">${o.dist == null ? '—' : pct(o.dist, true)}<small>${TF_SHORT[o.w.tf]} ${o.w.period}</small></td><td class="${cls(o.rs1)}">${f(o.rs1)}</td><td class="${cls(o.rs3)}">${f(o.rs3)}</td></tr>`).join('')}</tbody></table>
+      <p class="hint" style="margin:6px 0 0">1 mois et 3 mois : performance du secteur moins celle du S&amp;P 500, en points. Vert : au-dessus de sa SMA et plus fort que le marché.</p>` : '<p class="hint">Historique des ETF en attente : il arrive au prochain passage du robot.</p>'}</section>`;
+}
 function marketCard() {
   if (!Radar.loaded && S.watch.length) loadRadarCache().then(() => { if (tab === 'dash') render(); });
   const tiles = IDX.map(([t, name]) => {
@@ -2487,6 +2530,7 @@ function viewDash(part) {
   ${liveBar()}
   ${riskCard()}
   ${marketCard()}
+  ${sectorCard()}
   ${ref.stale ? `<div class="banner warn"><span>Valorisation datée de ${ref.age} jours (${fmtDate(ref.date)}). Mettez à jour les cours ou saisissez la valeur du courtier.</span><button class="btn sm" data-act="prices">Mettre à jour</button></div>` : ''}
   <p class="hint" style="text-align:center">Performance, diversification et statistiques : onglet <button class="lnk" data-tab="ana">Analyse</button>.</p>`;
   return `${demoBanner()}
@@ -2791,6 +2835,8 @@ function viewCalc() {
       <div class="fld"><label for="c-ticker">Ticker</label><input id="c-ticker" name="ticker" value="${esc(d.ticker)}" autocapitalize="characters" placeholder="ex. MSFT"></div>
       ${f('entry', 'Prix d’entrée prévu ($)', d.entry)}
       ${f('stop', 'Stop initial ($)', d.stop)}
+      <div class="fld wide" id="calcSma"></div>
+      <details class="more wide"><summary>Levier ×${esc(d.leverage)} · plafond ${esc(d.cap)} $ · frais</summary><div class="fields">
       ${f('leverage', 'Levier applicable (×)', d.leverage)}
       ${f('cap', 'Plafond d’exposition ($)', d.cap)}
       ${f('marginAvail', 'Marge disponible courtier ($)', d.marginAvail, 'placeholder="facultatif"')}
@@ -2801,6 +2847,7 @@ function viewCalc() {
       ${S.settings.fees.perShare || S.settings.fees.minComm ? `<p class="hint wide">Commission courtier en plus : ${usd(S.settings.fees.perShare || 0)} par action, ${usd(S.settings.fees.minComm || 0)} minimum, à l’entrée et à la sortie (Réglages).</p>` : ''}
       <div class="fld"><span class="lbl">Fractions d’action</span><label class="check"><input type="checkbox" id="c-fractional" name="fractional" ${d.fractional ? 'checked' : ''}> autorisées</label></div>
       ${f('decimals', 'Précision (décimales)', d.decimals, d.fractional ? '' : 'disabled')}
+      </div></details>
     </form>
     ${d.example ? '<p class="hint">Entrée 100 $ et stop 90 $ sont des valeurs d’exemple : remplacez-les.</p>' : ''}
   </section>
@@ -2823,7 +2870,15 @@ function calcInput() {
     fractional: d.fractional, decimals: d.decimals, marginAvail: d.marginAvail,
     fees: { inFixed: d.inFixed, inPct: d.inPct, outFixed: d.outFixed, outPct: d.outPct, perShare: S.settings.fees.perShare, minComm: S.settings.fees.minComm } };
 }
+// Boutons « stop sur la SMA » : SMA du radar pour ce ticker (valeur actuelle), du plus proche au plus éloigné sous l'entrée.
+function calcSmaChips() {
+  const el = $('#calcSma'); if (!el) return;
+  const t = (calcDraft.ticker || '').toUpperCase(), e = parseFloat(String(calcDraft.entry).replace(',', '.'));
+  const opts = t ? S.watch.filter(w => w.ticker === t && !w.idx).map(w => { const a = analyzeWatch(w); return a && !a.short && a.smaNow > 0 ? { w, v: a.smaNow } : null; }).filter(Boolean).filter(o => !(e > 0) || o.v < e).sort((a, b) => b.v - a.v) : [];
+  el.innerHTML = opts.length ? `<span class="lbl">Stop sur la SMA</span><div class="row" style="gap:6px">${opts.map(o => `<button type="button" class="btn sm" data-act="calc-stop" data-v="${(Math.floor(o.v * 100) / 100).toFixed(2)}" aria-pressed="${Math.abs(parseFloat(String(calcDraft.stop).replace(',', '.')) - Math.floor(o.v * 100) / 100) < 0.005}">${TF_SHORT[o.w.tf]} ${o.w.period} · ${fmtNum(Math.floor(o.v * 100) / 100, 2)}</button>`).join('')}</div>` : '';
+}
 function updateCalc() {
+  calcSmaChips();
   const box = $('#calcResult'); if (!box) return;
   const r = Core.sizePosition(calcInput());
   if (!r.ok) {
@@ -4080,6 +4135,8 @@ document.addEventListener('click', e => {
     case 'radar-import': sheetWatchImport(); break;
     case 'idx-detail': sheetIdxDetail(b.dataset.t); break;
     case 'idx-edit': sheetIdxEdit(); break;
+    case 'sect-add': addSectors(); break;
+    case 'calc-stop': { const i = $('#c-stop'); if (i) { i.value = b.dataset.v; i.dispatchEvent(new Event('input', { bubbles: true })); } break; }
     case 'sect-mode': sectMode = b.dataset.m; render(); break;
     case 'sect-detail': sheetSector(b.dataset.s); break;
     case 'sect-fix': sheetSectorFix(b.dataset.t); break;
