@@ -158,6 +158,7 @@ cut('// ---------- Démarrage ----------', '\x00' if False else '})();\n', '''//
   migrateSeen();
   migrateFees();
   migrateIdx();
+  migrateSect();
   render();
   if (Store.cfg) { setSync('saving'); syncNow(); } else setSync('local');
   window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (['dash', 'calc', 'pos', 'radar', 'ana', 'set', 'lab', 'earn'].includes(h) && h !== tab) { tab = h; render(); window.scrollTo(0, 0); } });
