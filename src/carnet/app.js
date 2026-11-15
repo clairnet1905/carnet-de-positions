@@ -963,6 +963,7 @@ function seenIndex() {
 function radarAlerts() {
   const out = [], idx = seenIndex(), lim = addDays(todayISO(), -ALERT_DAYS);
   for (const w of S.watch) {
+    if (w.nosma) continue;
     const a = analyzeWatch(w); if (!a || a.short) continue;
     const lab = `${esc(w.ticker)} · SMA ${w.period} ${TF_SHORT[w.tf]}`, id = `${w.id}|${w.tf}${w.period}`;
     for (const x of a.crosses) {
@@ -2415,34 +2416,54 @@ function idxDay(t) {
   return b && b.length > 1 ? (b[b.length - 1][1] / b[b.length - 2][1] - 1) * 100 : null;
 }
 const idxSide = a => !a || a.short ? '' : a.p > a.smaNow ? 'up' : 'down';
-// ----- Secteurs : ETF SPDR suivis comme les indices (S.watch, idx + sect), SMA hebdo 21 par défaut, à changer ensuite -----
+// ----- Secteurs : ETF SPDR suivis comme les indices (S.watch, idx + sect), avec vos SMA par secteur (SECT_SMA) -----
 const SECT_ETF = { 'Technologie': 'XLK', 'Communication': 'XLC', 'Santé': 'XLV', 'Finance': 'XLF', 'Conso. cyclique': 'XLY', 'Conso. de base': 'XLP', 'Énergie': 'XLE', 'Industrie': 'XLI', 'Matériaux': 'XLB', 'Immobilier': 'XLRE', 'Services publics': 'XLU' };
-const sectWatch = etf => S.watch.filter(w => w.sect && w.ticker === etf).sort((x, y) => TF_ORD[x.tf] - TF_ORD[y.tf] || y.period - x.period);
-function addSectors() {
-  for (const etf of Object.values(SECT_ETF)) if (!sectWatch(etf).length) S.watch.push({ id: `sect-${etf}-W21`, ticker: etf, period: 21, tf: 'W', sym: '', note: '', idx: true, sect: true });
-  save('Secteurs suivis : 11 ETF, SMA hebdo 21. Historique au prochain passage du robot.');
+// Vos SMA (15/11/2026). XLRE : aucune SMA ne marche pour votre stratégie → historique seul (force vs S&P) et test au Labo.
+const SECT_SMA = { XLY: 'D610 W100 M8', XLP: 'D610 W200 M34', XLK: 'D233 W50 M13', XLE: 'D233 W50 M13', XLF: 'D987 W200 M8', XLI: 'D233 W200 M21',
+  XLB: 'D987 W200 M13', XLV: 'D987 W233 M21 M34', XLU: 'D610 W200 M8', XLC: 'D200 W13 M8', XLRE: '' };
+const sectWatch = etf => S.watch.filter(w => w.sect && !w.nosma && w.ticker === etf).sort((x, y) => TF_ORD[x.tf] - TF_ORD[y.tf] || y.period - x.period);
+function sectPreset(etf) {
+  const sm = (SECT_SMA[etf] || '').match(/[DWM]\d+/g) || [];
+  if (!sm.length) return [{ id: `sect-${etf}-hist`, ticker: etf, period: 21, tf: 'W', sym: '', note: 'historique seul', idx: true, sect: true, nosma: true }];
+  return sm.map(k => ({ id: `sect-${etf}-${k}`, ticker: etf, period: +k.slice(1), tf: k[0], sym: '', note: '', idx: true, sect: true }));
 }
-// Force d'un secteur : position vs sa première SMA, performance 1 mois (22 séances) et 3 mois (66) moins celle de SPY.
+// Remplace les SMA des secteurs par vos réglages et met XLRE au Labo (sans rien ajouter au radar).
+function applySectSma() {
+  S.watch = S.watch.filter(w => !w.sect).concat(Object.values(SECT_ETF).flatMap(sectPreset));
+  const q = (S.settings.labQueue || []).map(t => String(t).toUpperCase());
+  for (const etf of Object.keys(SECT_SMA)) if (!SECT_SMA[etf] && !q.includes(etf)) q.push(etf);
+  S.settings.labQueue = q; S.settings.sectV = 1; sectMemo.clear();
+}
+function addSectors() {
+  applySectSma();
+  save('Secteurs suivis avec vos SMA. XLRE au Labo. Historique au prochain passage du robot.');
+}
+function migrateSect() {
+  if (S.settings.sectV >= 1 || !S.watch.some(w => w.sect)) return;
+  applySectSma(); save();
+}
+// Force d'un secteur : position vs ses SMA (majorité au-dessus ou en dessous), performance 1 mois (22 séances) et 3 mois (66) moins celle de SPY.
 const sectMemo = new Map();
 function sectStrength(name) {
   const etf = SECT_ETF[name]; if (!etf) return null;
-  const w = sectWatch(etf)[0], h = Radar.hist[etf], sp = Radar.hist.SPY;
-  if (!w || !h || !h.bars || h.bars.length < 70) return null;
-  const key = name + '|' + h.last + '|' + (sp && sp.last) + '|' + w.tf + w.period;
+  const ws = sectWatch(etf), h = Radar.hist[etf], sp = Radar.hist.SPY;
+  if (!h || !h.bars || h.bars.length < 70) return null;
+  const key = name + '|' + h.last + '|' + (sp && sp.last) + '|' + ws.map(w => w.tf + w.period).join(',');
   if (sectMemo.has(key)) return sectMemo.get(key);
   const ret = (b, n) => b && b.length > n ? (b[b.length - 1][1] / b[b.length - 1 - n][1] - 1) * 100 : null;
-  const a = analyzeWatch(w), r1 = ret(h.bars, 22), r3 = ret(h.bars, 66), s1 = ret(sp && sp.bars, 22), s3 = ret(sp && sp.bars, 66);
-  const o = { name, etf, w, dist: a && !a.short ? a.dist : null, rs1: r1 != null && s1 != null ? r1 - s1 : null, rs3: r3 != null && s3 != null ? r3 - s3 : null };
-  o.lvl = o.dist == null ? '' : o.dist > 0 && (o.rs3 == null || o.rs3 > 0) ? 'go' : o.dist < 0 && (o.rs3 == null || o.rs3 < 0) ? 'stop' : 'mid';
+  const as = ws.map(w => ({ w, a: analyzeWatch(w) })), ok = as.filter(x => x.a && !x.a.short), up = ok.filter(x => x.a.dist > 0).length;
+  const r1 = ret(h.bars, 22), r3 = ret(h.bars, 66), s1 = ret(sp && sp.bars, 22), s3 = ret(sp && sp.bars, 66);
+  const o = { name, etf, w: ws[0] || null, as, up, k: ok.length, nosma: !ws.length, dist: ok.length ? ok[0].a.dist : null, rs1: r1 != null && s1 != null ? r1 - s1 : null, rs3: r3 != null && s3 != null ? r3 - s3 : null };
+  o.lvl = !o.k ? '' : up * 2 > o.k && (o.rs3 == null || o.rs3 > 0) ? 'go' : up * 2 < o.k && (o.rs3 == null || o.rs3 < 0) ? 'stop' : 'mid';
   sectMemo.set(key, o); return o;
 }
-function sectorCard() {
+function sectEtfCard() {
   if (!S.watch.some(w => w.sect)) return `<section class="card"><div class="sec-head"><h2>Secteurs</h2><button class="btn sm" data-act="sect-add">Suivre les 11 secteurs</button></div><p class="hint">Les 11 secteurs du S&amp;P 500 via leurs ETF (XLK, XLF, XLV…) : position par rapport à leur SMA et force face au S&amp;P 500. Un signal d’action dans un secteur fort compte plus dans le classement.</p></section>`;
   const rows = SECTORS.map(sectStrength).filter(Boolean).sort((a, b) => (b.rs3 ?? -1e9) - (a.rs3 ?? -1e9));
   const f = x => x == null ? '—' : (x >= 0 ? '+' : '−') + fmtNum(Math.abs(x), 1);
   return `<section class="card sect"><div class="sec-head"><h2>Secteurs <small>· vs S&amp;P 500</small></h2></div>
-    ${rows.length ? `<table class="stab num"><thead><tr><th>Secteur</th><th>SMA</th><th>1 mois</th><th>3 mois</th></tr></thead><tbody>${rows.map(o => `<tr><td><i class="sd ${o.lvl}"></i>${esc(o.name)} <small>${o.etf}</small></td><td class="${cls(o.dist)}">${o.dist == null ? '—' : pct(o.dist, true)}<small>${TF_SHORT[o.w.tf]} ${o.w.period}</small></td><td class="${cls(o.rs1)}">${f(o.rs1)}</td><td class="${cls(o.rs3)}">${f(o.rs3)}</td></tr>`).join('')}</tbody></table>
-      <p class="hint" style="margin:6px 0 0">1 mois et 3 mois : performance du secteur moins celle du S&amp;P 500, en points. Vert : au-dessus de sa SMA et plus fort que le marché.</p>` : '<p class="hint">Historique des ETF en attente : il arrive au prochain passage du robot.</p>'}</section>`;
+    ${rows.length ? `<table class="stab num"><thead><tr><th>Secteur</th><th>SMA</th><th>1 mois</th><th>3 mois</th></tr></thead><tbody>${rows.map(o => `<tr><td><i class="sd ${o.lvl}"></i>${esc(o.name)} <small>${o.etf}</small></td><td>${o.nosma ? '<small>aucune · Labo</small>' : `<span class="ichips">${o.as.map(({ w, a }) => `<i class="${idxSide(a)}">${TF_SHORT[w.tf]}${w.period}</i>`).join('')}</span>${o.k ? `<small>${o.up}/${o.k} au-dessus</small>` : ''}`}</td><td class="${cls(o.rs1)}">${f(o.rs1)}</td><td class="${cls(o.rs3)}">${f(o.rs3)}</td></tr>`).join('')}</tbody></table>
+      <p class="hint" style="margin:6px 0 0">1 mois et 3 mois : performance du secteur moins celle du S&amp;P 500, en points. Point vert : la majorité de ses SMA sous le cours et plus fort que le marché ; rouge : l’inverse.</p>` : '<p class="hint">Historique des ETF en attente : il arrive au prochain passage du robot.</p>'}</section>`;
 }
 function marketCard() {
   if (!Radar.loaded && S.watch.length) loadRadarCache().then(() => { if (tab === 'dash') render(); });
@@ -2530,7 +2551,7 @@ function viewDash(part) {
   ${liveBar()}
   ${riskCard()}
   ${marketCard()}
-  ${sectorCard()}
+  ${sectEtfCard()}
   ${ref.stale ? `<div class="banner warn"><span>Valorisation datée de ${ref.age} jours (${fmtDate(ref.date)}). Mettez à jour les cours ou saisissez la valeur du courtier.</span><button class="btn sm" data-act="prices">Mettre à jour</button></div>` : ''}
   <p class="hint" style="text-align:center">Performance, diversification et statistiques : onglet <button class="lnk" data-tab="ana">Analyse</button>.</p>`;
   return `${demoBanner()}
