@@ -552,6 +552,26 @@ window.__appTests = async function () {
     } finally { Lab.res = keepRes; S.settings.labQueue = keepQ; labOpen.clear(); delete labSel.AAA; tab = 'dash'; }
   });
 
+  await t('Secteurs (ETF), gros gagnant à alléger, stop sur la SMA dans le calculateur', async () => {
+    const D = days(120), bad = [];
+    S.watch = [{ id: 'wq', ticker: 'QQQ', period: 89, tf: 'D', sym: '', idx: true }];
+    addSectors();
+    if (S.watch.filter(w => w.sect).length !== 11) bad.push('11 secteurs : ' + S.watch.filter(w => w.sect).length);
+    setIdx('SPY J 200');
+    if (S.watch.filter(w => w.sect).length !== 11 || !S.watch.some(w => w.ticker === 'SPY')) bad.push('secteurs perdus après réglage des indices');
+    Radar.hist.SPY = { bars: D.map((d, i) => [d, 100 + i * 0.1]), n: 120, full: 1, last: D[119], adj: adjMode() };
+    Radar.hist.XLK = { bars: D.map((d, i) => [d, 100 + i * 0.5]), n: 120, full: 1, last: D[119], adj: adjMode() };
+    sectMemo.clear(); const ss = sectStrength('Technologie');
+    if (!ss || ss.etf !== 'XLK' || !(ss.rs3 > 0)) bad.push('force XLK : ' + JSON.stringify(ss && { rs3: ss.rs3, dist: ss.dist }));
+    tab = 'dash'; render(); if (!/Technologie/.test(($('.sect') || {}).textContent || '')) bad.push('carte secteurs');
+    S.lots = [lot({ ticker: 'WIN', date: D[0], price: 100, qty: 3, riskPlan: 10, leverage: 5 })]; S.prices.WIN = [{ date: D[119], price: 120 }];
+    const bw = biggestWinner(); if (!bw || bw.t !== 'WIN' || Math.abs(bw.r - 6) > 0.01 || Math.abs(bw.mg - 72) > 0.01) bad.push('gros gagnant : ' + JSON.stringify(bw));
+    S.watch.push({ id: 'wz', ticker: 'ZZZ', period: 5, tf: 'D', sym: '' }); Radar.hist.ZZZ = { bars: D.map((d, i) => [d, 50 + (i % 3)]), n: 120, full: 1, last: D[119], adj: adjMode() };
+    calcDraft = Object.assign(freshDraft(), { ticker: 'ZZZ', entry: '60', stop: '40', example: false }); tab = 'calc'; render();
+    const chip = $('[data-act="calc-stop"]'); if (!chip) bad.push('bouton SMA absent'); else { chip.click(); await wait(20); if (calcDraft.stop !== chip.dataset.v) bad.push('stop non appliqué : ' + calcDraft.stop); }
+    return bad.length ? bad.join(' | ') : true;
+  });
+
   reset(); tab = 'dash';
   return out;
 };
