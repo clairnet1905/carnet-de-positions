@@ -535,6 +535,46 @@ body.explain .xpl{background:var(--accent-soft);color:var(--accent);border-color
 .pm-bar{height:3px}
 
 @media (min-width:820px){.hst .xpl{display:none}}
+
+/* ===== Étape 2 : radar, analyse, labo, réglages ===== */
+.rmini{border:0;border-bottom:1px solid var(--line);border-radius:0;background:transparent}
+.rmini>summary{flex-wrap:wrap;padding:10px 2px 8px;row-gap:6px}
+.rmini>summary .tk{font-weight:600}
+.rmini[open]{background:var(--surface-2);border-radius:10px;border-bottom-color:transparent;margin:4px 0}
+.rm-g{flex-basis:100%;height:3px;border-radius:2px;background:var(--surface-2);position:relative}
+.rmini[open] .rm-g{background:var(--line)}
+.rm-g u{position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--muted)}
+.rm-g i{position:absolute;top:-3px;width:3px;height:9px;margin-left:-1.5px;border-radius:2px;background:var(--ink)}
+.rmini.win .rm-g i{background:var(--gain)} .rmini.loss .rm-g i{background:var(--loss)} .rmini.warn .rm-g i{background:var(--warn)}
+.ptile{border-radius:10px;padding:8px}
+.ptile span{text-transform:none;letter-spacing:0;font-weight:500;font-size:.75rem}
+.ptile b{font-weight:500;font-size:.98rem}
+@media (max-width:560px){.ptiles{grid-template-columns:repeat(5,minmax(0,1fr));gap:4px}.ptile{padding:7px 4px;text-align:center}.ptile small{display:none}.ptile.whole{grid-column:1/-1;text-align:left}.ptile.whole small{display:block}.ptile b{font-size:.85rem}}
+.kv{gap:0;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+.kv div{background:none;border-radius:0;border-bottom:1px solid var(--line);padding:9px 4px}
+.kv dt{font-size:.75rem}
+.kv dd{font-weight:500}
+.lgrid .l4{background:var(--gain)} .lgrid .l3{background:color-mix(in srgb,var(--gain) 55%,var(--surface))} .lgrid .l2{background:color-mix(in srgb,var(--gain) 25%,var(--surface))} .lgrid .l1{background:var(--surface-2)} .lgrid .l0{background:color-mix(in srgb,var(--loss) 45%,var(--surface))}
+.lgrid button,.lgrid i{height:22px;border-radius:3px}
+.lgrid button.sel{outline:2px solid var(--ink)}
+.lgrid button.best::after{color:var(--ink)}
+.lcard{border-radius:12px}
+details.lpo{margin:12px 12px 0}
+details.lpo>summary{font-weight:500}
+/* Interrupteurs à la place des cases à cocher */
+.check input[type=checkbox]{appearance:none;-webkit-appearance:none;width:34px;height:20px;border-radius:10px;background:var(--line);position:relative;flex:none;cursor:pointer;transition:background .15s;padding:0;border:0}
+.check input[type=checkbox]::after{content:"";position:absolute;left:2px;top:2px;width:16px;height:16px;border-radius:50%;background:var(--surface);transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.3)}
+.check input[type=checkbox]:checked{background:var(--accent)}
+.check input[type=checkbox]:checked::after{left:16px}
+.check input[type=checkbox]:disabled{opacity:.4}
+.setparts{display:flex;background:var(--surface-2);border-radius:10px;padding:3px;gap:3px}
+.setparts .btn{flex:1;justify-content:center;border:0;background:transparent;color:var(--muted)}
+.setparts .btn[aria-pressed="true"]{background:var(--surface);color:var(--ink)}
+.btn{border-radius:9px;font-weight:500}
+.btn[aria-pressed="true"]{background:var(--accent-soft);border-color:transparent;color:var(--accent)}
+.hero-card .gauge strong{color:var(--ink)!important}
+.chart-t{text-transform:none!important;letter-spacing:0!important;font-weight:500}
+.rm-g.up i{background:var(--gain)!important} .rm-g.dn i{background:var(--loss)!important}
 </style>
 
 <header class="top">

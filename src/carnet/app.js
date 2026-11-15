@@ -1116,7 +1116,7 @@ function viewRadar() {
       <span class="acts"><button class="btn sm" data-act="chart" data-t="${esc(x.w.ticker)}" data-w="${x.w.id}">Graphique</button>${x.lvl === 'up' && !mineT && !x.seen ? `<button class="btn sm primary" data-act="radar-calc" data-id="${x.w.id}">Taille</button>` : ''}${x.seen ? `<button class="btn sm icon" data-act="radar-gone" data-k="${esc(x.key)}" aria-label="Supprimer cette alerte">✕</button>` : `<button class="btn sm" data-act="radar-seen" data-k="${esc(x.key)}">Vu</button>`}</span></div>`; };
   const mini = c => {
     const k = 'c:' + c.t, best = c.lines.slice().sort((x, y) => radarRank(x.a) - radarRank(y.a))[0], [pc, st] = radarStatus(best.a), ok = best.a && !best.a.short;
-    return lazy(k, `<span class="tk">${esc(c.t)}</span><span class="tf">${TF_SHORT[best.w.tf]} ${best.w.period}</span>${held.has(c.t) ? '<span class="pill open">Position</span>' : ''}<span class="rm-st">${esc(st)}</span><b class="num ${ok ? cls(best.a.dist) : ''}">${ok ? pct(best.a.dist, true) : ''}</b>`, () => card(c), 'rmini ' + pc);
+    return lazy(k, `<span class="tk">${esc(c.t)}</span><span class="tf">${TF_SHORT[best.w.tf]} ${best.w.period}</span>${held.has(c.t) ? '<span class="pill open">Position</span>' : ''}<span class="rm-st">${esc(st)}</span><b class="num ${ok ? cls(best.a.dist) : ''}">${ok ? pct(best.a.dist, true) : ''}</b>${ok ? `<span class="rm-g ${best.a.dist >= 0 ? 'up' : 'dn'}" title="Trait central : la SMA"><u></u><i style="left:${(50 + Math.max(-10, Math.min(10, best.a.dist)) * 4.6).toFixed(1)}%"></i></span>` : ''}`, () => card(c), 'rmini ' + pc);
   };
   const listOf = arr => arr.length ? arr.slice(0, radarLimit).map(mini).join('') + (arr.length > radarLimit ? `<button class="btn sm more-btn" data-act="radar-more">Afficher 30 de plus · ${arr.length - radarLimit} restante(s)</button>` : '') : '<p class="lead">Aucune action pour ce filtre.</p>';
   const nearBlock = () => nearAl.length ? `<div class="near-al"><p class="near-h">Proches de leur SMA (${nearAl.length})${nearNew ? ` · ${nearNew} nouvelle(s)` : ''}</p>${['D', 'W', 'M'].map(tf => {
@@ -1470,9 +1470,9 @@ function labMainUnit(r) {
 function labPoBlock(u, tf) {
   const po = u && u[labFee] && u[labFee].po; if (!po) return '<p class="hint">Alléger ou pas : calculé au prochain passage du robot sur cette action.</p>';
   const w = labPoWin(po);
-  return `<div class="lpo"><h3>Alléger ou pas ? <small>${LT(tf)} ${LAB_P[po.i]} (meilleure SMA ${LL(tf)})</small></h3>
+  return `<details class="lpo more"><summary>Alléger ou pas ? · ${['sans allègement', '½ à +2 R', '⅓ à +3 R'][w] || '—'} meilleur</summary><h3><small>${LT(tf)} ${LAB_P[po.i]} (meilleure SMA ${LL(tf)})</small></h3>
     <table><thead><tr><th>Sortie</th><th>CAGR</th><th>DD</th><th>R moy.</th><th>≥5 R</th></tr></thead><tbody>${po.v.map((x, k) => `<tr class="${k === w ? 'best' : ''}"><td>${['Sans', '½ à +2 R', '⅓ à +3 R'][k]}</td><td class="${cls(x[0])}">${x[0] == null ? '—' : fmtNum(x[0], 1) + ' %'}</td><td>${x[1] == null ? '—' : '−' + fmtNum(x[1], 0) + ' %'}</td><td class="${cls(x[2])}">${x[2] == null ? '—' : (x[2] >= 0 ? '+' : '−') + fmtNum(Math.abs(x[2]), 1) + ' R'}</td><td>${x[3] == null ? '—' : x[3]}</td></tr>`).join('')}</tbody></table>
-    <p class="hint">1 R = écart entre la clôture d'entrée et la SMA ce jour-là, au moins ${{ D: '1,5', W: '2', M: '6', C: '1,5' }[tf]} % du prix (l'écart habituel de vos stops). Le reste sort toujours sur clôture sous la SMA. « Sans » = sans allègement ; « ½ à +2 R » = moitié vendue à +2 R. Même période et mêmes frais pour les trois lignes ; ligne verte : meilleur CAGR ÷ drawdown ; ≥5 R : trades finis à +5 R ou plus.</p></div>`;
+    <p class="hint">1 R = écart entre la clôture d'entrée et la SMA ce jour-là, au moins ${{ D: '1,5', W: '2', M: '6', C: '1,5' }[tf]} % du prix (l'écart habituel de vos stops). Le reste sort toujours sur clôture sous la SMA. « Sans » = sans allègement ; « ½ à +2 R » = moitié vendue à +2 R. Même période et mêmes frais pour les trois lignes ; ligne verte : meilleur CAGR ÷ drawdown ; ≥5 R : trades finis à +5 R ou plus.</p></details>`;
 }
 function labCard(t) {
   const r = Lab.res[t];
