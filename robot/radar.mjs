@@ -11,7 +11,7 @@ import { riskCheck } from './risk.mjs';
 import { fetchEU, mergeEU, euroClosed, EU_FILE } from './eod.mjs';
 import { labUnit, labCombo, packUnit, doneBars, LAB_PERIODS, LAB_MIN_TRADES } from './labsma.mjs';
 
-const { GIST_TOKEN, TWELVEDATA_KEY, FINNHUB_KEY, VAPID_PRIVATE_KEY, TEST_PUSH, MASSIVE_KEY, EODHD_KEY } = process.env;
+const { GIST_TOKEN, TWELVEDATA_KEY, FINNHUB_KEY, VAPID_PRIVATE_KEY, TEST_PUSH, MASSIVE_KEY, EODHD_KEY, FRED_KEY } = process.env;
 const STATE_FILE = 'carnet-positions.json', RADAR_FILE = 'carnet-radar.json', LAB_FILE = 'carnet-lab.json';
 const LAB_PER_RUN = 40, LAB_REDO_DAYS = 30, T0 = Date.now();
 const SITE = 'https://clairnet1905.github.io/carnet-de-positions/';
@@ -445,10 +445,28 @@ if (byHand || Date.now() - divAt > 3 * 3600e3) {
   else log('Dividendes à venir : aucune source joignable ce soir (ajoutez une clé gratuite Massive : secret MASSIVE_KEY).');
 }
 
+// ----- Contexte du marché (FRED, Réserve fédérale de Saint-Louis) : VIX, stress du crédit, taux à 10 ans. 3 requêtes par passage. -----
+let macro = R.macro || null;
+if (FRED_KEY) {
+  const fred = async id => {
+    const r = await fetch(`https://api.stlouisfed.org/fred/series/observations?series_id=${id}&api_key=${encodeURIComponent(FRED_KEY)}&file_type=json&sort_order=desc&limit=40`, { signal: AbortSignal.timeout(20000) });
+    if (!r.ok) throw new Error(id + ' HTTP ' + r.status);
+    return ((await r.json()).observations || []).filter(o => o.value !== '.' && isFinite(+o.value)).map(o => [o.date, +o.value]);
+  };
+  try {
+    const [v, h, t] = await Promise.all(['VIXCLS', 'BAMLH0A0HYM2', 'DGS10'].map(fred));
+    const ago = (a, n) => a.find(x => days(x[0], a[0][0]) >= n);
+    if (v.length) {
+      macro = { at: Date.now(), vix: v[0], hy: h[0] || null, t10: t.length ? [t[0][0], t[0][1], (ago(t, 28) || [])[1] ?? null] : null };
+      log(`FRED : VIX ${v[0][1]} (${v[0][0]})${h[0] ? ` · stress crédit ${h[0][1]} %` : ''}${t[0] ? ` · taux 10 ans ${t[0][1]} %` : ''}`);
+    }
+  } catch (e) { log('FRED : ' + e.message); }
+} else log('FRED : secret FRED_KEY absent, contexte du marché non mis à jour.');
+
 // ----- Enregistrement -----
 const packed = {};
 for (const s in hist) if (need[s]) packed[s] = pack(hist[s], candleSym.has(s) ? CANDLE_N : 0);   // les actions retirées du radar sont oubliées
-R = { v: 1, ls, adj: ADJ, at: Date.now(), hist: packed, divfix: DF, notified: R.notified, risk: riskState, deadSubs: dead, errors, news, newsAt, divcal, divAt, names,
+R = { v: 1, ls, adj: ADJ, at: Date.now(), hist: packed, divfix: DF, notified: R.notified, macro, risk: riskState, deadSubs: dead, errors, news, newsAt, divcal, divAt, names,
   log: [{ at: Date.now(), ls, full: full.length, daily: daily.length, resync: Math.min(resync.length, RESYNC_PER_RUN), signals: sig.length, sent, td: tdCalls, errors: Object.keys(errors).length }].concat(R.log || []).slice(0, 30) };
 const body = JSON.stringify(R);
 const labBody = JSON.stringify(L);
