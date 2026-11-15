@@ -476,12 +476,71 @@ small{font-size:.8125rem}
 @media (max-width:819px){ .brand em{display:none} .top .wrap{flex-wrap:nowrap} .brand svg{width:26px;height:26px} .sync{min-width:0;overflow:hidden;white-space:nowrap} .sync span{overflow:hidden;text-overflow:ellipsis;min-width:0} .sync .hdr-val{flex:none;overflow:visible} }
 .setparts{display:flex;gap:8px;margin-bottom:12px} .setparts .btn{flex:1;justify-content:center}
 .setparts .btn[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}
+
+/* ===== Thème pro (v1.67) : palette terminal, chiffres alignés, cartes plates, moins de texte ===== */
+:root{
+  --bg:#F2F4F7; --surface:#FFFFFF; --surface-2:#F5F7FA; --ink:#0D1117; --muted:#5B6672; --line:#E3E7EC;
+  --accent:#1F6FEB; --accent-soft:#E7F0FD; --gain:#1A7F37; --loss:#CF222E; --gain-bg:#E6F4EA; --loss-bg:#FDECEC;
+  --shadow:none; --r:14px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0B0F14; --surface:#11171F; --surface-2:#161D27; --ink:#E6EDF3; --muted:#8B98A5; --line:#1E2733;
+  --accent:#58A6FF; --accent-ink:#0B0F14; --accent-soft:#132338; --gain:#3FB950; --loss:#F85149; --gain-bg:#0F2A18; --loss-bg:#2D1214;
+  --warn:#D29922; --warn-bg:#2A2111; --shadow:none}}
+:root[data-theme="dark"]{
+  --bg:#0B0F14; --surface:#11171F; --surface-2:#161D27; --ink:#E6EDF3; --muted:#8B98A5; --line:#1E2733;
+  --accent:#58A6FF; --accent-ink:#0B0F14; --accent-soft:#132338; --gain:#3FB950; --loss:#F85149; --gain-bg:#0F2A18; --loss-bg:#2D1214;
+  --warn:#D29922; --warn-bg:#2A2111; --shadow:none}
+body{font-variant-numeric:tabular-nums}
+section.card{padding:16px;gap:12px}
+.alert{box-shadow:none}
+h2{font-size:1.05rem;letter-spacing:-.005em}
+.kv dt,.hero-stats dt,.pill{text-transform:none;letter-spacing:0}
+.kv dt{font-weight:500}
+.kv div{border-radius:10px}
+.pill{font-weight:600;font-size:.75rem}
+.hint{font-size:.78rem}
+/* Explications : masquées par défaut, ⓘ dans l'en-tête pour les afficher. */
+body:not(.explain) .lead{display:none}
+.xpl{flex:none;width:28px;height:28px;border-radius:50%;border:1px solid var(--line);background:var(--surface-2);color:var(--muted);font:600 .8125rem var(--f-body);cursor:pointer;display:flex;align-items:center;justify-content:center}
+body.explain .xpl{background:var(--accent-soft);color:var(--accent);border-color:transparent}
+/* Carte principale : plate, valeur en grand, mini-courbe, chiffres en bande. */
+.hero-card{background:var(--surface);color:var(--ink);border:1px solid var(--line);box-shadow:none;padding:16px 16px 0;gap:6px}
+.hero-card .lbl{color:var(--muted);text-transform:none;letter-spacing:0;font-weight:500}
+.hero-card small,.hero-card .muted{color:var(--muted)}
+.hero-card .big{font-size:2.3rem;font-weight:500}
+.hero-card .chg{background:none;padding:0;font-weight:500}
+.hero-card .up{color:var(--gain)} .hero-card .down{color:var(--loss)}
+.hspark{display:block;width:100%;height:46px;margin:4px 0 2px}
+.hspark .ln{fill:none;stroke-width:1.6;stroke-linejoin:round}
+.hero-stats{grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin:0 -16px!important;border-top:1px solid var(--line)}
+.hero-stats div{background:none;border-radius:0;padding:10px 12px;border-right:1px solid var(--line);min-width:0}
+.hero-stats div:last-child{border-right:0}
+.hero-stats dt{color:var(--muted);font-size:.75rem}
+.hero-stats dd{font-weight:500;font-size:.95rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:480px){.hero-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.hero-stats div:nth-child(2){border-right:0}.hero-stats div:nth-child(-n+2){border-bottom:1px solid var(--line)}}
+.gauge{padding:10px 0 14px}
+.gauge .track{background:var(--surface-2);height:6px}
+.gauge .track i{background:var(--gain)} .gauge .track i.mid{background:var(--warn)} .gauge .track i.hi{background:var(--loss)}
+.gauge .row{color:var(--muted)}
+
+/* Positions : liste dense (une ligne par action, séparateurs fins), R en grand. */
+.pmini{border:0;border-bottom:1px solid var(--line);border-radius:0;background:transparent}
+.pmini>summary{padding:10px 2px;min-height:52px}
+.pmini[open]{background:var(--surface-2);border-radius:10px;border-bottom-color:transparent;margin:4px 0}
+.pmini[open]>summary{padding-inline:8px}
+.pm-h .tk{font-weight:600;font-size:1rem}
+.pm-r b{font-size:1rem;font-weight:500}
+.pm-r small{font-size:.75rem}
+.pm-bar{height:3px}
+
+@media (min-width:820px){.hst .xpl{display:none}}
 </style>
 
 <header class="top">
   <div class="wrap">
     <div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#1E3A5F"/><path d="M6 22l6-6 4 3 9-10" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 26h20" stroke="#F28C80" stroke-width="2" stroke-dasharray="3 2.4"/></svg><div>Carnet<em class="bx"> de positions</em><span>USD · ACTIONS US</span></div></div>
-    <div class="hst"><button type="button" class="nyc" id="nyc" data-act="nyc" data-st="shut"><i></i>NY <b>--:--</b></button>
+    <div class="hst"><button type="button" class="xpl" data-act="explain" aria-label="Afficher ou masquer les explications" title="Explications">i</button><button type="button" class="nyc" id="nyc" data-act="nyc" data-st="shut"><i></i>NY <b>--:--</b></button>
     <div class="sync" id="sync" data-s="local"><i></i><span class="hdr-val" id="hdrVal"></span><span id="syncText">Chargement…</span></div></div>
     <nav class="tabs" role="tablist" aria-label="Sections">
       <button role="tab" id="tab-dash" data-tab="dash"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V10M10 19V5M16 19v-7M22 19H2"/></svg><span class="l">Tableau de bord</span><span class="s">Bord</span></button>

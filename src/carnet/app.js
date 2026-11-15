@@ -338,6 +338,7 @@ function nyTick() {
   const c = nyClock(Date.now());
   el.dataset.st = c.st; el.querySelector('b').textContent = c.time; el.title = c.msg; el.setAttribute('aria-label', 'New York ' + c.time + ' · ' + c.msg);
 }
+try { if (localStorage.getItem('carnet-positions:explain')) document.body.classList.add('explain'); } catch (e) {}
 setInterval(nyTick, 15000); if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', nyTick); else setTimeout(nyTick, 0);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') nyTick(); });
 async function fetchQuote(sym, key) {
@@ -1307,6 +1308,13 @@ function render() {
   const hv = $('#hdrVal'); if (hv) { try { const r = referenceCapital(); hv.textContent = r && r.acc && S.lots.length ? usd(r.acc.equity) + ' ·' : ''; } catch (e) { hv.textContent = ''; } }
 }
 const kv = (label, value, extra, c) => `<div><dt>${label}</dt><dd class="${c || ''}">${value}${extra ? `<small>${extra}</small>` : ''}</dd></div>`;
+// Mini-courbe de la carte principale : les 60 derniers points de la performance (verte si en hausse sur la période).
+function heroSpark(pts) {
+  const v = (pts || []).slice(-60).map(p => p.index); if (v.length < 3) return '';
+  const lo = Math.min(...v), hi = Math.max(...v), W = 300, H = 46, k = hi > lo ? (H - 6) / (hi - lo) : 0;
+  const d = v.map((x, i) => `${i ? 'L' : 'M'}${(i / (v.length - 1) * W).toFixed(1)},${(H - 3 - (x - lo) * k).toFixed(1)}`).join('');
+  return `<svg class="hspark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><path class="ln" d="${d}" style="stroke:${v[v.length - 1] >= v[0] ? 'var(--gain)' : 'var(--loss)'}"/></svg>`;
+}
 function demoBanner() {
   return hasDemo() ? `<div class="banner warn"><span><strong>Données de démonstration affichées.</strong> Elles se mélangent aux calculs : effacez-les avant de saisir vos vraies positions.</span><button class="btn sm" data-act="clear-demo">Effacer la démo</button></div>` : '';
 }
@@ -2395,7 +2403,8 @@ function viewDash(part) {
   const hero = `<div class="hero-card">
     <div class="row" style="justify-content:space-between"><span class="lbl">Valeur nette du compte</span><small>${ref.label} · cours au ${fmtDate(acc.openCount ? acc.minPriceDate : todayISO())}</small></div>
     <div><div class="big">${usd(acc.equity)}</div>
-      <div class="row" style="margin-top:8px"><span class="chg ${hc(gain)}">${usd(gain, true)}${gainPct == null ? '' : ' · ' + pct(gainPct, true)}</span><small>par rapport à ${usd(invested)} apportés</small></div></div>
+      <div class="row" style="margin-top:4px;gap:10px">${P.day ? `<span class="chg ${hc(P.day.r)}">${pct(P.day.r, true)}</span><small>dernière séance</small>` : ''}<span class="chg ${hc(gain)}">${usd(gain, true)}${gainPct == null ? '' : ' · ' + pct(gainPct, true)}</span><small>sur ${usd(invested)} apportés</small></div></div>
+    ${heroSpark(P.pts)}
     <dl class="hero-stats" style="margin:0">
       <div><dt>Latent</dt><dd class="${hc(acc.unreal)}">${usd(acc.unreal, true)}</dd></div>
       <div><dt>Réalisé net</dt><dd class="${hc(acc.realized)}">${usd(acc.realized, true)}</dd></div>
@@ -2858,7 +2867,8 @@ function viewPos() {
       ${newsCard(t)}
       ${vs.map(v => lotDetails(v, false, vs.length === 1)).join('')}
     </article>`;
-    return { t, html, dist: dist == null ? -1e9 : dist, un, expo, state, wait, sTf, stop, px, safe: stop != null && stop >= avg, unPct: q * avg > 0 ? un / (q * avg) * 100 : 0, lastD: last ? last.date : null, q: (t + ' ' + vs.map(v => v.lot.note || '').join(' ')).toLowerCase() };
+    const u1 = vs.reduce((a, v) => a + (planR(v.lot) || 0) * (v.lot.qty > 0 ? v.ls.rem / v.lot.qty : 0), 0);   // 1 R restant, en $
+    return { t, html, rr: u1 > 0 ? un / u1 : null, dist: dist == null ? -1e9 : dist, un, expo, state, wait, sTf, stop, px, safe: stop != null && stop >= avg, unPct: q * avg > 0 ? un / (q * avg) * 100 : 0, lastD: last ? last.date : null, q: (t + ' ' + vs.map(v => v.lot.note || '').join(' ')).toLowerCase() };
   });
   const sorter = { risk: (a, b) => a.dist - b.dist, gain: (a, b) => b.un - a.un, expo: (a, b) => b.expo - a.expo, az: (a, b) => a.t < b.t ? -1 : 1 }[posSort] || ((a, b) => a.dist - b.dist);
   cards.sort(sorter);
@@ -2877,7 +2887,7 @@ function viewPos() {
     const w = below || c.stop == null ? 4 : Math.max(4, Math.min(100, c.dist * 10));
     return `<details class="pmini ${bc}" data-lazy="${k}" data-q="${esc(c.q)}" ${o ? 'open' : ''}><summary>
       <span class="pm-l"><span class="pm-h"><span class="tk">${esc(c.t)}</span><span class="tf">${TF_SHORT[c.sTf]}</span>${pill}</span><span class="pm-bar"><i style="width:${w.toFixed(0)}%"></i></span></span>
-      <span class="pm-r"><b class="num ${cls(c.un)}">${usd(c.un, true)}</b><small>${c.stop == null ? 'sans stop' : 'stop ' + pct(c.dist)}</small></span></summary><div class="lazy">${o ? c.html() : ''}</div></details>`;
+      <span class="pm-r">${c.rr == null ? `<b class="num ${cls(c.un)}">${usd(c.un, true)}</b><small>${c.stop == null ? 'sans stop' : 'stop ' + pct(c.dist)}</small>` : `<b class="num ${cls(c.rr)}">${(c.rr >= 0 ? '+' : '−') + fmtNum(Math.abs(c.rr), 1)} R</b><small class="num">${usd(c.un, true)} · ${c.stop == null ? 'sans stop' : 'stop ' + pct(c.dist)}</small>`}</span></summary><div class="lazy">${o ? c.html() : ''}</div></details>`;
   };
   const jl = views.filter(v => journalFilter === 'all' || (journalFilter === 'closed' ? v.ls.closed : !v.ls.closed))
     .sort((a, b) => (a.lot.date < b.lot.date ? 1 : -1));
@@ -3054,7 +3064,8 @@ function viewSettings() {
     ${snaps.length ? `<div class="tbl"><table><thead><tr><th>Date</th><th class="n">MT5</th><th class="n">App</th><th class="n">Marge</th><th class="n">Écart</th><th></th><th></th></tr></thead><tbody>${snapRows}</tbody></table></div>` : '<p class="hint">Aucune valeur saisie.</p>'}
   </section>
   </div>`}
-  ${setPart === 'conf' ? `${quotesPanel()}
+  ${setPart === 'conf' ? `<section class="card"><div class="sec-head"><h2>Affichage</h2><button class="btn sm" data-act="explain" aria-pressed="${document.body.classList.contains('explain')}">${document.body.classList.contains('explain') ? 'Masquer les explications' : 'Afficher les explications'}</button></div><p class="hint">Les paragraphes d’explication sont masqués pour un affichage plus compact. Sur téléphone, le bouton « i » en haut fait la même chose.</p></section>
+  ${quotesPanel()}
   <section class="card">
     <div class="sec-head"><h2>Sauvegarde et données</h2></div>
     <div class="banner ${Store.ref ? 'info' : 'warn'}"><span>${Store.ref
@@ -3973,6 +3984,7 @@ document.addEventListener('click', e => {
   switch (a) {
     case 'close-sheet': closeSheet(); break;
     case 'nyc': nyTick(); sheetMarket(); break;
+    case 'explain': { const on = document.body.classList.toggle('explain'); try { localStorage.setItem('carnet-positions:explain', on ? '1' : ''); } catch (e) {} toast(on ? 'Explications affichées' : 'Explications masquées'); if (tab === 'set') render(); break; }
     case 'go-calc': tab = 'calc'; render(); break;
     case 'reset-calc': calcDraft = freshDraft(); render(); break;
     case 'record-buy': sheetBuy(); break;
