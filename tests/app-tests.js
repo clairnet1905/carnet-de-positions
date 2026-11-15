@@ -510,6 +510,26 @@ window.__appTests = async function () {
     return got.join() === 'EL,WKL' ? true : 'import : ' + got;
   });
 
+  await t('Stop trop serré (mouvement du jour), contexte FRED, capital plein avec position à remplacer', async () => {
+    const D = days(60), bad = [];
+    S.watch = [{ id: 'wa', ticker: 'AAA', period: 5, tf: 'D', sym: '' }];
+    Radar.hist.AAA = { bars: D.map((d, i) => [d, 100 * (i % 2 ? 1.02 : 1)]), n: 60, full: 1, last: D[59], adj: adjMode() };
+    const m = dailyMove('AAA'); if (!m || Math.abs(m.pct - 1.96) > 0.1) bad.push('mouvement : ' + JSON.stringify(m));
+    calcDraft = Object.assign(freshDraft(), { ticker: 'AAA', entry: '100', stop: '99.6', example: false }); tab = 'calc'; render();
+    if (!/Stop à 0,4.*bouge en moyenne de/.test($('#calcResult').textContent)) bad.push('avertissement absent');
+    calcDraft = Object.assign(freshDraft(), { ticker: 'AAA', entry: '100', stop: '95', example: false }); render();
+    if (/bouge en moyenne de/.test($('#calcResult').textContent)) bad.push('avertissement à tort');
+    const keepR = Radar.robot; Radar.robot = Object.assign({}, keepR || {}, { macro: { vix: ['2026-11-13', 27.4], hy: ['2026-11-13', 3.2], t10: ['2026-11-13', 4.18, 4.05] } });
+    const ml = document.createElement('div'); ml.innerHTML = macroLine(); const mt = ml.textContent;
+    if (!/27,4/.test(mt) || !/nerveux/.test(mt) || !/\+0,13 sur 1 mois/.test(mt)) bad.push('FRED : ' + mt);
+    Radar.robot = keepR;
+    S.settings.riskLim = { heat: null, margin: null, pos: 1 };
+    S.lots = [lot({ ticker: 'BBB', date: D[10], price: 100, qty: 1, riskPlan: 10 })]; S.prices.BBB = [{ date: D[59], price: 95 }];
+    const w = weakestPos(); if (!w || w.t !== 'BBB' || Math.abs(w.r + 0.5) > 0.01) bad.push('position faible : ' + JSON.stringify(w));
+    if (!capitalFull()) bad.push('capital plein non détecté');
+    return bad.length ? bad.join(' | ') : true;
+  });
+
   reset(); tab = 'dash';
   return out;
 };
