@@ -276,8 +276,14 @@ async function pullSharedRadar(throttle) {
     }
     const c = await gh('/gists/' + Store.cfg.radarId + '/commits?per_page=1');
     const ver = c && c[0] && c[0].version;
-    if (Radar.robot && Radar.robot.ver === ver && Lab.ver === ver) return;
-    const g = await gh('/gists/' + Store.cfg.radarId), f = g.files[RADAR_FILE], lf = g.files['carnet-lab.json'];
+    if (Store.euVer === undefined) Store.euVer = readJSON('carnet-positions:eu-ver', null);   // mémorisé : pas de téléchargement à chaque ouverture
+    if (Radar.robot && Radar.robot.ver === ver && Lab.ver === ver && Store.euVer === ver) return;
+    const g = await gh('/gists/' + Store.cfg.radarId), f = g.files[RADAR_FILE], lf = g.files['carnet-lab.json'], ef = g.files['carnet-eu.json'];
+    // Cours européens (EODHD) récupérés par le robot : enregistrés comme cours de clôture.
+    if (Store.euVer !== ver) {
+      Store.euVer = ver; writeJSON('carnet-positions:eu-ver', ver);
+      try { if (ef) importEU(JSON.parse(ef.truncated || ef.content == null ? await (await fetch(ef.raw_url, { cache: 'no-store' })).text() : ef.content)); } catch (e) {}
+    }
     if (Lab.ver !== ver) {
       try { setLab(lf ? JSON.parse(lf.truncated || lf.content == null ? await (await fetch(lf.raw_url, { cache: 'no-store' })).text() : lf.content) : null, ver); } catch (e) {}
       if (tab === 'lab') render();
