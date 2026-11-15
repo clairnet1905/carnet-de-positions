@@ -575,6 +575,14 @@ details.lpo>summary{font-weight:500}
 .hero-card .gauge strong{color:var(--ink)!important}
 .chart-t{text-transform:none!important;letter-spacing:0!important;font-weight:500}
 .rm-g.up i{background:var(--gain)!important} .rm-g.dn i{background:var(--loss)!important}
+
+/* Contexte FRED et capital plein */
+.macro{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin-top:10px}
+.macro div{padding:8px 10px;border-right:1px solid var(--line);min-width:0}.macro div:last-child{border-right:0}
+.macro small{display:block;font-size:.72rem;color:var(--muted);font-family:var(--f-body)}
+.macro b{font-size:1rem;font-weight:500}.macro b.up{color:var(--gain)}.macro b.dn{color:var(--loss)}.macro b.wa{color:var(--warn)}
+.capfull{background:var(--warn-bg);color:var(--ink);border-radius:10px;padding:10px 12px;display:grid;gap:6px;margin:4px 0 8px}
+.capfull p{margin:0;font-size:.875rem;line-height:1.5}.capfull b{font-weight:600}
 </style>
 
 <header class="top">

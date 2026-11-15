@@ -1563,7 +1563,16 @@ function marketLight() {
   return { up, n, per, lvl, label: { go: 'Feu vert', mid: 'Feu orange', stop: 'Feu rouge' }[lvl],
     txt: { go: 'marché au-dessus de la plupart de vos SMA : contexte favorable aux achats long', mid: 'marché partagé : soyez sélectif', stop: 'marché sous la plupart de vos SMA : les achats long réussissent moins souvent' }[lvl] };
 }
-const feuLine = L => L ? `<div class="feu ${L.lvl}"><i aria-hidden="true"></i><span><strong>${L.label}</strong> · ${L.up}/${L.n} de vos SMA au-dessus (${L.per.map(p => `${p.t} ${p.u}/${p.k}`).join(', ')}) : ${L.txt}.</span></div>` : '';
+// Contexte FRED (robot) : VIX, stress du crédit (écart des obligations à haut rendement), taux à 10 ans.
+function macroLine() {
+  const M = Radar.robot && Radar.robot.macro; if (!M || !M.vix) return '';
+  const v = M.vix[1], hy = M.hy && M.hy[1], t = M.t10 && M.t10[1], t0 = M.t10 && M.t10[2];
+  const vl = v >= 30 ? ['dn', 'peur forte'] : v >= 25 ? ['wa', 'nerveux'] : v >= 20 ? ['wa', 'vigilance'] : ['up', 'calme'];
+  const hl = hy == null ? null : hy >= 5 ? ['dn', 'tendu'] : hy >= 4 ? ['wa', 'à surveiller'] : ['up', 'normal'];
+  const txt = v >= 25 ? 'marché nerveux : les cassures de SMA échouent plus souvent, soyez sélectif' : v >= 20 ? 'volatilité en hausse : privilégiez les meilleurs signaux' : 'marché calme : les cassures tiennent plus souvent';
+  return `<div class="macro num"><div><small>VIX</small><b class="${vl[0]}">${fmtNum(v, 1)}</b><small>${vl[1]}</small></div>${hy != null ? `<div><small>Stress crédit</small><b class="${hl[0]}">${fmtNum(hy, 2)} %</b><small>${hl[1]}</small></div>` : ''}${t != null ? `<div><small>Taux 10 ans</small><b>${fmtNum(t, 2)} %</b><small>${t0 != null ? (t - t0 >= 0 ? '+' : '−') + fmtNum(Math.abs(t - t0), 2) + ' sur 1 mois' : ''}</small></div>` : ''}</div><p class="hint" style="margin:4px 0 0">${txt}. Source FRED, clôture du ${fmtDate(M.vix[0])}.</p>`;
+}
+const feuLine = L => L ? `<div class=\"feu ${L.lvl}\"><i aria-hidden="true"></i><span><strong>${L.label}</strong> · ${L.up}/${L.n} de vos SMA au-dessus (${L.per.map(p => `${p.t} ${p.u}/${p.k}`).join(', ')}) : ${L.txt}.</span></div>` : '';
 // Feu du marché à une date passée, avec l'historique de SPY, QQQ et DIA (bougie en cours comprise pour S et M).
 const lightMemo = new Map();
 function lightAt(d) {
@@ -1681,6 +1690,29 @@ function sectExpoShare() {
   return by;
 }
 // Croisements à la hausse non vus, sur des actions pas déjà en portefeuille, notés puis triés (une ligne par action).
+// Capital plein (marge, perte au stop ou nombre de positions à 95 % de vos limites, ou marge ≥ 80 % sans limite) : la position
+// la plus faible (R le plus bas, tenue depuis au moins 15 jours) est proposée en échange du meilleur signal. Rien n'est vendu : c'est vous qui décidez.
+function capitalFull() {
+  const R = portfolioRisk(), L = riskLim();
+  const why = [];
+  if (L.margin != null ? R.marginPct >= L.margin * 0.95 : R.marginPct >= 80) why.push(`marge ${fmtNum(R.marginPct, 0)} %${L.margin != null ? ` / ${fmtNum(L.margin, 0)} %` : ''}`);
+  if (L.heat != null && R.heatPct >= L.heat * 0.95) why.push(`perte au stop ${pct(R.heatPct)} / ${pct(L.heat)}`);
+  if (L.pos != null && R.pos >= L.pos) why.push(`${R.pos} positions / ${L.pos}`);
+  return why.length ? why : null;
+}
+function weakestPos() {
+  const today = todayISO(), by = {};
+  for (const v of S.lots.filter(l => !l.demo).map(lotView)) if (!v.ls.closed) (by[v.lot.ticker] = by[v.lot.ticker] || []).push(v);
+  let w = null;
+  for (const t in by) {
+    const vs = by[t], first = vs.map(v => v.lot.date).sort()[0], held = Core.days(first, today);
+    const un = vs.reduce((a, v) => a + v.unreal, 0), u1 = vs.reduce((a, v) => a + (planR(v.lot) || 0) * (v.lot.qty > 0 ? v.ls.rem / v.lot.qty : 0), 0);
+    if (held < 15 || !(u1 > 0)) continue;
+    const r = un / u1;
+    if (r < 0.5 && (!w || r < w.r)) w = { t, r, held, un };
+  }
+  return w;
+}
 function tonightPicks() {
   if (!S.watch.length) return { top: [], n: 0 };
   const held = new Set(S.lots.filter(l => !Core.lotState(l).closed).map(l => l.ticker)), share = sectExpoShare(), lim = sectSet().expo, today = todayISO();
@@ -1786,6 +1818,7 @@ function tonightCard() {
     <h3>1. Stops à remonter dans MT5 <small>· ${sr.length}</small></h3>
     ${sr.length ? stops + '<p class="hint">« Fait » enregistre le nouveau stop dans l’app. Changez-le aussi dans MT5 : rien n’est envoyé au courtier.</p>' : '<p class="hint">Aucun stop à remonter ce soir.</p>'}
     <h3>2. Nouveaux croisements à étudier <small>· ${P.top.length} sur ${P.n}</small></h3>
+    ${(full => full && P.top.length ? (wk => `<div class="capfull"><p><b>Capital plein</b> · ${esc(full.join(' · '))}. Signaux classés du meilleur au moins bon ci-dessous : ne prenez que le haut de la liste.</p>${wk ? `<p>Position la plus faible : <b>${esc(wk.t)}</b> (${wk.r >= 0 ? '+' : '−'}${fmtNum(Math.abs(wk.r), 1)} R, tenue depuis ${wk.held} j). La fermer dans MT5 libérerait la place pour <b>${esc(P.top[0].x.w.ticker)}</b>. À vous de juger : rien n'est vendu.</p><div class="row"><button class="btn sm" data-act="chart" data-t="${esc(wk.t)}">Graphique ${esc(wk.t)}</button><button class="btn sm primary" data-act="radar-calc" data-id="${esc(P.top[0].x.w.id)}">Calculer ${esc(P.top[0].x.w.ticker)}</button></div>` : '<p>Aucune position faible à remplacer (toutes au-dessus de +0,5 R ou tenues depuis moins de 15 jours) : attendez qu’une place se libère.</p>'}</div>`)(weakestPos()) : '')(capitalFull())}
     ${P.top.length ? picks + `<p class="hint">Croisements à la hausse non vus, hors positions déjà ouvertes, triés par note du Labo, résultats et secteur. ${P.n > P.top.length ? `Les ${P.n - P.top.length} autres et les alertes « proches » restent dans le radar. ` : ''}${light ? esc(light.label + ' : ' + light.txt) + '.' : ''}</p>` : '<p class="hint">Aucun nouveau croisement à la hausse.</p>'}
     <h3>3. Avant d’aller dormir</h3>
     <div class="tnr"><span>Résultats d’ici le ${fmtDate(nextD)} : ${earnT.length ? '<b>' + earnT.map(esc).join(', ') + '</b>' : 'aucun'}</span>${earnT.length ? '<button class="btn sm" data-act="go-tab" data-tab="earn">Voir</button>' : '<small>ok</small>'}</div>
@@ -1928,6 +1961,18 @@ function edgeKey(dim, c) {
 // En R (1 R = risque prévu au plan), sur la quantité achetée. Clôtures seulement : pas les plus hauts et plus bas de séance.
 let exitRadarAsked = false;
 function exitNeedRadar() { if (S.watch.length && !Radar.loaded && !exitRadarAsked) { exitRadarAsked = true; loadRadarCache().then(() => render()); } }
+// Mouvement habituel d'une journée : ATR 14 (bougies du robot) ou, à défaut, variation moyenne des 14 dernières clôtures.
+function dailyMove(t) {
+  const T = String(t || '').toUpperCase(), b = tickerBars(T) || (Radar.hist[T] && Radar.hist[T].bars);
+  if (!b || b.length < 16) return null;
+  const x = b.slice(-15), ohlc = x.every(r => r.length >= 5);
+  let sum = 0;
+  for (let i = 1; i < x.length; i++) {
+    const c0 = x[i - 1][1], [, c, , h, l] = x[i];
+    sum += ohlc ? (Math.max(h, c0) - Math.min(l, c0)) / c0 : Math.abs(c / c0 - 1);
+  }
+  return { pct: sum / (x.length - 1) * 100, kind: ohlc ? 'ATR 14' : 'variation moyenne des 14 dernières clôtures' };
+}
 function tickerBars(t) {
   const w = S.watch.find(x => x.ticker === t && !x.idx), h = w && histFixed(symOf(w), Radar.hist[symOf(w)]);
   return h && h.bars && h.bars.length ? h.bars : null;
@@ -2356,6 +2401,7 @@ function marketCard() {
   return `<section class="card mkt"><div class="sec-head"><h2>Marché US <small>· ${live ? 'en direct' : 'dernière séance'}</small></h2><button class="btn sm" data-act="idx-edit">SMA</button></div>
     <div class="itiles">${tiles}</div>
     ${feuLine(marketLight())}
+    ${macroLine()}
     <p class="hint" style="margin:6px 0 0">Via les ETF SPY, QQQ et DIA. Vert : cours au-dessus de la SMA, rouge : en dessous. Touchez un indice pour le détail.</p></section>`;
 }
 function sheetIdxDetail(t) {
@@ -2773,6 +2819,7 @@ function updateCalc() {
     <div class="sec-head"><h2>Quantité proposée</h2><small>${calcDraft.ticker ? esc(calcDraft.ticker.toUpperCase()) : 'Ticker non saisi'}</small></div>
     <div class="qty-big">${qty(r.q)} <small>action${r.q >= 2 ? 's' : ''}</small></div>
     ${r.reason ? `<p class="reason">${esc(r.reason)}</p>` : ''}
+    ${(m => m && r.stopDistPct < m.pct ? `<p class="reason"><b>Stop à ${pct(r.stopDistPct)} du prix.</b> ${esc(calcDraft.ticker.toUpperCase())} bouge en moyenne de <b>${pct(m.pct)}</b> par jour (${m.kind}) : ce stop risque de sauter sur un mouvement normal. Stop au-delà d'un mouvement moyen : ${usd(r.params.entry * (1 - m.pct / 100))}. La taille reste calculée sur votre stop.</p>` : '')(calcDraft.ticker ? dailyMove(calcDraft.ticker) : null)}
     <dl class="kv">
       ${kv('Exposition totale', usd(r.exposure), `plafond ${usd(r.params.cap)}`)}
       ${kv('Marge initiale estimée', usd(r.margin), `exposition ÷ ${fmtNum(lev)}`)}
