@@ -8,9 +8,10 @@ import { addDays, days, lastSession, prevWeekday, nextWeekday, weekKey, barsNeed
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { riskCheck } from './risk.mjs';
+import { fetchEU, mergeEU, euroClosed, EU_FILE } from './eod.mjs';
 import { labUnit, labCombo, packUnit, doneBars, LAB_PERIODS, LAB_MIN_TRADES } from './labsma.mjs';
 
-const { GIST_TOKEN, TWELVEDATA_KEY, FINNHUB_KEY, VAPID_PRIVATE_KEY, TEST_PUSH, MASSIVE_KEY } = process.env;
+const { GIST_TOKEN, TWELVEDATA_KEY, FINNHUB_KEY, VAPID_PRIVATE_KEY, TEST_PUSH, MASSIVE_KEY, EODHD_KEY } = process.env;
 const STATE_FILE = 'carnet-positions.json', RADAR_FILE = 'carnet-radar.json', LAB_FILE = 'carnet-lab.json';
 const LAB_PER_RUN = 40, LAB_REDO_DAYS = 30, T0 = Date.now();
 const SITE = 'https://clairnet1905.github.io/carnet-de-positions/';
@@ -85,11 +86,12 @@ const S = JSON.parse(await fileText(main.files[STATE_FILE]));
 S.watch = S.watch || []; S.settings = S.settings || {};
 // Cours ajustés des dividendes (comme le bouton ADJ de TradingView), sauf si l'app le désactive (Radar › Réglages).
 ADJ = S.settings.adjDiv === false ? 'splits' : 'all';
-let R = { v: 1, hist: {}, notified: {}, ls: '', at: 0, log: [] }, L = { v: 1, res: {} };
+let R = { v: 1, hist: {}, notified: {}, ls: '', at: 0, log: [] }, L = { v: 1, res: {} }, EU = null;
 if (ids.radar) {
   const g = await gh('/gists/' + ids.radar);
   try { R = Object.assign(R, JSON.parse(await fileText(g.files[RADAR_FILE]))); } catch (e) { log('Historique illisible, reconstruit.'); }
   try { if (g.files[LAB_FILE]) L = Object.assign(L, JSON.parse(await fileText(g.files[LAB_FILE]))); } catch (e) { log('Résultats du Labo illisibles, recommencés.'); }
+  try { if (g.files[EU_FILE]) EU = JSON.parse(await fileText(g.files[EU_FILE])); } catch (e) {}
 }
 const hist = {};
 for (const s in R.hist) hist[s] = unpack(R.hist[s]);
@@ -223,6 +225,15 @@ const remOf = l => l.qty - (l.events || []).filter(e => e.type === 'sell').reduc
 const openLots = (S.lots || []).filter(l => !l.demo && remOf(l) > 1e-9);
 const openT = [...new Set(openLots.map(l => l.ticker))];
 const extra = [];   // clés à mémoriser après envoi
+// Cours européens (EODHD) : nouvel essai le soir ; notification seulement si la clôture du jour manque encore (ni EODHD, ni saisie).
+const eodMap = S.settings.eodSym || {};
+if (EODHD_KEY && Object.keys(eodMap).length) {
+  try { const got = await fetchEU(S, EODHD_KEY, log); EU = mergeEU(EU, got.ok, S); } catch (e) { log('EODHD : ' + e.message); }
+  const remL = l => l.qty - (l.events || []).filter(x => x.type === 'sell').reduce((a, x) => a + x.qty, 0);
+  const euOpen = Object.keys(eodMap).filter(t => (S.lots || []).some(l => !l.demo && l.ticker === t && remL(l) > 1e-9));
+  const lack = euroClosed(ls) ? [] : euOpen.filter(t => !((EU && EU.px[t]) || []).some(x => x[0] === ls) && !((S.prices || {})[t] || []).some(x => x.date === ls) && !R.notified[`eu|${t}|${ls}`]);
+  if (lack.length) { payloads.push({ title: 'Cours Europe manquant', body: `EODHD n’a pas fourni la clôture du ${ls.split('-').reverse().join('/')} pour ${lack.join(', ')} : saisissez-la dans l’app.`, tag: 'eu-' + ls, url: './#pos' }); for (const t of lack) extra.push(`eu|${t}|${ls}`); }
+} else if (Object.keys(eodMap).length) log('EODHD : secret EODHD_KEY absent, cours européens non récupérés.');
 // SMA faibles : une action du radar vient d'être testée et l'une de vos SMA y est jugée faible (frais IC Markets, assez de trades).
 // Information seulement : le radar n'est jamais modifié.
 if (S.settings.pushWeak !== false && labNew.length) {
@@ -441,7 +452,8 @@ R = { v: 1, ls, adj: ADJ, at: Date.now(), hist: packed, divfix: DF, notified: R.
   log: [{ at: Date.now(), ls, full: full.length, daily: daily.length, resync: Math.min(resync.length, RESYNC_PER_RUN), signals: sig.length, sent, td: tdCalls, errors: Object.keys(errors).length }].concat(R.log || []).slice(0, 30) };
 const body = JSON.stringify(R);
 const labBody = JSON.stringify(L);
-if (ids.radar) await gh('/gists/' + ids.radar, { method: 'PATCH', body: JSON.stringify({ files: { [RADAR_FILE]: { content: body }, [LAB_FILE]: { content: labBody } } }) });
+const euF = EU && Object.keys(EU.px || {}).length ? { [EU_FILE]: { content: JSON.stringify(EU) } } : {};
+if (ids.radar) await gh('/gists/' + ids.radar, { method: 'PATCH', body: JSON.stringify({ files: { [RADAR_FILE]: { content: body }, [LAB_FILE]: { content: labBody }, ...euF } }) });
 else await gh('/gists', { method: 'POST', body: JSON.stringify({ description: 'Carnet de positions : historique du radar SMA (gist secret, ne pas rendre public)', public: false, files: { [RADAR_FILE]: { content: body }, [LAB_FILE]: { content: labBody } } }) });
 if (labQ.length) log(`Labo SMA : ${labDone} action(s) testée(s) · ${labLeft} en attente · ${(labBody.length / 1024).toFixed(0)} Ko`);
 log(`Historique : ${full.length} complet(s), ${daily.length} clôture(s) du jour, ${Math.min(resync.length, RESYNC_PER_RUN)} vérification(s) · ${tdCalls} requête(s) Twelve Data · ${(body.length / 1024).toFixed(0)} Ko`);
