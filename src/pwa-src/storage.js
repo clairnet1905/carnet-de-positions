@@ -257,6 +257,30 @@ function unpackHist(p) {
   }
   return { bars, n: p.n, full: p.full || 0, last: bars.length ? bars[bars.length - 1][0] : '', ohlc };
 }
+// VIX et taux à 10 ans en séance : robot macro.yml (CBOE, différé 15 min) dans son propre Gist « carnet-macro.json ».
+// Relu toutes les 5 minutes pendant la séance, toutes les heures sinon. Petit fichier : rien à voir avec le radar.
+const MACRO_KEY = 'carnet-positions:macro-live', MACRO_FILE = 'carnet-macro.json';
+async function pullMacro(force) {
+  if (!Radar.macroLive) Radar.macroLive = readJSON(MACRO_KEY, null);
+  if (!Store.cfg || Store.macroBusy) return;
+  if (!force && Date.now() - (Store.macroCheck || 0) < (marketOpen(Date.now()) ? 300000 : 3600000)) return;
+  Store.macroBusy = true; Store.macroCheck = Date.now();
+  try {
+    if (!Store.cfg.macroId) {
+      for (let page = 1; page <= 10 && !Store.cfg.macroId; page++) {
+        const list = await gh('/gists?per_page=100&page=' + page);
+        const g = list.find(x => x.files && x.files[MACRO_FILE]);
+        if (g) { Store.cfg.macroId = g.id; writeJSON(SYNC_KEY, Store.cfg); }
+        if (list.length < 100) break;
+      }
+      if (!Store.cfg.macroId) return;
+    }
+    const g = await gh('/gists/' + Store.cfg.macroId), f = g.files && g.files[MACRO_FILE];
+    if (!f) { delete Store.cfg.macroId; writeJSON(SYNC_KEY, Store.cfg); return; }
+    const M = JSON.parse(f.truncated || f.content == null ? await (await fetch(f.raw_url, { cache: 'no-store' })).text() : f.content);
+    if (M && M.at && (!Radar.macroLive || M.at !== Radar.macroLive.at)) { Radar.macroLive = M; writeJSON(MACRO_KEY, M); if (tab === 'dash' || tab === 'calc') render(); }
+  } catch (e) { /* hors ligne : on réessaiera */ } finally { Store.macroBusy = false; }
+}
 function robotFresh(meta) { return !!meta && meta.ls >= prevWeekday(lastSession(Date.now())); }
 // throttle : au plus une vérification toutes les 10 minutes (une petite requête ; le fichier n'est téléchargé que s'il a changé).
 async function pullSharedRadar(throttle) {
