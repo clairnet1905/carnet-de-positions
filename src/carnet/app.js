@@ -1446,6 +1446,7 @@ function setLab(L, ver) {
   Lab.ver = ver; Lab.res = (L && L.res) || {}; Lab.at = L && L.at;
   try { const t = JSON.stringify(Lab); if (t.length < 2.5e6) localStorage.setItem(LAB_KEY, t); } catch (e) {}
 }
+let labMode = (() => { try { return localStorage.getItem('carnet-positions:lab-mode') || 'pos'; } catch (e) { return 'pos'; } })(), labSort = 'score', labQ = '';
 let labPoPick = -1;   // case « Alléger ou pas ? » touchée (0 sans, 1 ½, 2 ⅓)
 let labFee = (() => { try { return localStorage.getItem(LAB_FEE_KEY) || 'ic'; } catch (e) { return 'ic'; } })(), labSel = {}, labOpen = new Set(), labPick = {}, labChk = {};
 // Liste du Labo + vos positions ouvertes (actions US), testées aussi par le robot pour juger vos SMA actuelles.
@@ -1562,6 +1563,29 @@ function labCard(t) {
   }
   return `<article class="lcard${open ? ' open' : ''}" data-lab="${esc(t)}"><button type="button" class="lhead" data-act="lab-open" data-t="${esc(t)}"><span class="tk">${esc(t)}</span>${inR ? `<span class="pill open">Au radar : ${mineL.map(w => TF_SHORT[w.tf] + ' ' + w.period + (labWeak(r, w) ? ' <b class="lweak" title="Jugée faible par le Labo">faible</b>' : '')).join(' · ')}</span>` : ''}<span class="lbs">${summary}</span></button>${body}</article>`;
 }
+// « Mes positions » du Labo : toutes vos positions ouvertes (mise à jour seule), votre SMA du radar contre la meilleure du Labo.
+const labOpenT = () => [...new Set(S.lots.filter(l => !l.demo && !Core.lotState(l).closed).map(l => String(l.ticker).toUpperCase()))].sort();
+function labPosRow(t) {
+  const r = Lab.res[t], pill = (c, l) => `<span class="pill ${c}">${l}</span>`;
+  const row = (main, sub, p, act) => `<button type="button" class="lprow" ${act ? `data-act="lab-po-go" data-t="${esc(t)}"` : 'disabled'}><b class="tk">${esc(t)}</b><span><span>${main}</span><small>${sub}</small></span>${p}</button>`;
+  if (manualSet().has(t)) return row('<span class="muted">Pas testée</span>', 'le Labo ne couvre que les actions US (cours hors Finnhub)', '', false);
+  if (S.settings.labPositions === false) return row('<span class="muted">Pas testée</span>', 'test des positions désactivé', '', false);
+  if (!r) return row('En attente', 'testée au prochain passage du robot', pill('', 'en attente'), false);
+  if (r.err) return row('Introuvable', esc(r.err), pill('loss', 'erreur'), false);
+  const m = labMainUnit(r), mu = m && r[m[0]][labFee], mi = mu ? labBest(mu.sma, m[0]) : -1, mx = mi >= 0 ? mu.sma[mi] : null;
+  const mine = S.watch.filter(w => w.ticker === t && !w.idx);
+  let lvl = 2; const parts = mine.map(w => {
+    const u = r[w.tf] && r[w.tf][labFee], i = LAB_P.indexOf(w.period), x = u && i >= 0 ? u.sma[i] : null, bi = u ? labBest(u.sma, w.tf) : -1;
+    const sx = x ? labScore(x[0], x[1]) : null, sb = bi >= 0 ? labScore(u.sma[bi][0], u.sma[bi][1]) : null;
+    const v = labWeak(r, w) ? 0 : bi === i ? 2 : 1;   // bonne : c'est la meilleure ; voisine : correcte mais pas la meilleure ; faible : à revoir
+    lvl = Math.min(lvl, v);
+    return `${TF_SHORT[w.tf]} ${w.period}${bi >= 0 && bi !== i ? ` <span class="muted">(meilleure ${TF_SHORT[w.tf]} ${LAB_P[bi]})</span>` : ''}`;
+  });
+  const po = mu && mu.po, pw = labPoWin(po), fi = mu && mu.fi, fake = fi && fi.v && fi.v[0] && fi.v[0][2];
+  const sub = mx ? [`meilleure ${LT(m[0])} ${LAB_P[mi]} : CAGR ${fmtNum(mx[0], 1)} % · DD −${fmtNum(mx[1], 0)} %`, pw >= 0 ? (pw === 0 ? 'ne pas alléger' : LAB_PO_L[pw].replace(/^./, c => c.toLowerCase()) + ' meilleur') : '', fake != null ? `${fmtNum(fake, 0)} % de faux signaux` : ''].filter(Boolean).join(' · ') : 'historique insuffisant';
+  const p = !mine.length ? pill('', 'pas au radar') : lvl === 2 ? pill('win', 'bonne') : lvl === 1 ? pill('warn', 'voisine') : pill('loss', 'faible');
+  return row(mine.length ? `Votre SMA : ${parts.join(' · ')}` : 'Aucune SMA au radar', sub, p, true);
+}
 function viewLab() {
   const q = labQueue(), inR = labRadarT(), res = Lab.res || {}, own = new Set(labOwn());
   const todo = q;
@@ -1580,19 +1604,32 @@ function viewLab() {
       <p class="hint">${done.length} / ${todo.length} testée(s)${errs.length ? ` · ${errs.length} introuvable(s)` : ''}${wait.length ? ` · ${wait.length} en attente : environ 40 par passage du robot (après la clôture), ou lancez-le tout de suite dans <a href="${repo}/actions/workflows/radar.yml" target="_blank" rel="noopener">GitHub › Actions › Run workflow</a>` : ' · terminé'}.</p>
       <div class="lqs">${chips}</div>` : ''}
   </section>
-  ${shown.length ? `<section class="card">
+  ${(() => {
+    const posT = labOpenT(), own = new Set(labOwn()), main = t => { const r = res[t], m = r && !r.err ? labMainUnit(r) : null; return m ? m[1] : -99; };
+    const seg = `<div class="seg lmode" role="group" aria-label="Partie du Labo"><button type="button" data-act="lab-mode" data-m="pos" aria-pressed="${labMode === 'pos'}">Mes positions · ${posT.length}</button><button type="button" data-act="lab-mode" data-m="all" aria-pressed="${labMode === 'all'}">Toutes les actions · ${q.length}</button></div>`;
+    if (labMode === 'pos') {
+      const cards = posT.filter(t => shown.includes(t));
+      return `<section class="card">${seg}
+        <div class="sec-head"><h2>Mes positions</h2><div class="seg" role="group" aria-label="Frais"><button type="button" data-act="lab-fee" data-f="tv" aria-pressed="${labFee === 'tv'}">Comme TradingView</button><button type="button" data-act="lab-fee" data-f="ic" aria-pressed="${labFee === 'ic'}">IC Markets réel</button></div></div>
+        <p class="hint">Mise à jour seule : une position ouverte entre ici, une position fermée en sort. Touchez une ligne pour sa fiche complète.</p>
+        ${posT.length ? `<div class="lprows">${posT.map(labPosRow).join('')}</div>` : '<p class="hint">Aucune position ouverte.</p>'}
+        ${cards.length ? `<div class="lcards" style="margin-top:12px">${cards.map(labCard).join('')}</div>` : ''}
+      </section>`;
+    }
+    const list = shown.slice().sort((a, b) => labSort === 'az' ? (a < b ? -1 : 1) : labSort === 'own' ? ((own.has(b) ? 1 : 0) - (own.has(a) ? 1 : 0) || (a < b ? -1 : 1)) : main(b) - main(a) || (a < b ? -1 : 1));
+    return shown.length ? `<section class="card">${seg}
     <div class="sec-head"><h2>Résultats</h2><div class="seg" role="group" aria-label="Frais"><button type="button" data-act="lab-fee" data-f="tv" aria-pressed="${labFee === 'tv'}">Comme TradingView</button><button type="button" data-act="lab-fee" data-f="ic" aria-pressed="${labFee === 'ic'}">IC Markets réel</button></div></div>
     <p class="hint">${labFee === 'ic' ? 'Frais IC Markets : 0,02 $ par action et swap acheteur de 5,93 % par an chaque nuit en position.' : 'Frais du script : 0,10 % par ordre et 1 tick de glissement, sans swap.'} Meilleure SMA = meilleur CAGR ÷ drawdown avec assez de trades (${LAB_MIN.D} en J, ${LAB_MIN.W} en S, ${LAB_MIN.M} en M). Touchez une action pour la grille complète.</p>
-    ${(() => { const weak = []; for (const t of shown) for (const w of S.watch.filter(x => x.ticker === t && !x.idx && labPosT().includes(t))) if (labWeak(res[t], w)) { const u = res[t][w.tf], bi = labBest(u[labFee].sma, w.tf), x = u[labFee].sma[LAB_P.indexOf(w.period)]; weak.push(`<b class="neg">${esc(t)} ${TF_SHORT[w.tf]} ${w.period}</b> <small>CAGR ${fmtNum(x[0], 1)} % · DD ${fmtNum(x[1], 0)} %${bi >= 0 && LAB_P[bi] !== w.period ? ` · meilleure : ${TF_SHORT[w.tf]} ${LAB_P[bi]}` : ''}</small>`); }
-      const nPos = labPosT().filter(t => res[t] && !res[t].err).length;
-      return nPos ? `<div class="lposum"><h3>Vos positions <small>${nPos} testée(s) sur ${labPosT().length}</small></h3>${weak.length ? `<p class="hint" style="margin:0 0 4px">SMA jugées faibles (à revoir) :</p>${weak.map(x => `<div>${x}</div>`).join('')}` : '<p class="hint" style="margin:0">Aucune de vos SMA de position n’est jugée faible.</p>'}</div>` : ''; })()}
     ${(() => { const n = [0, 0, 0], g = [0, 0, 0], who = [[], [], []]; let k = 0; for (const t of shown) { const r = res[t], m = labMainUnit(r), po = m ? r[m[0]][labFee].po : null, w = labPoWin(po); if (w >= 0) { n[w]++; k++; who[w].push(t); let b = 0; po.v.forEach((x, j) => { if (x[0] != null && x[0] > po.v[b][0]) b = j; }); g[b]++; } }
       return k ? `<div class="lposum"><h3>Alléger ou pas ? <small>${k} action(s), meilleure SMA de chacune</small></h3><div class="lposg">${LAB_PO_L.map((l, i) => `<button type="button" data-act="lab-po-pick" data-i="${i}" aria-pressed="${labPoPick === i}" ${n[i] ? '' : 'disabled'}><small>${l} meilleur</small><b class="${i === 0 ? 'up' : ''}">${n[i]}</b></button>`).join('')}</div>
         ${labPoPick >= 0 && who[labPoPick].length ? `<p class="hint" style="margin:8px 0 4px">${LAB_PO_L[labPoPick]} meilleur pour :</p><div class="lpochips">${who[labPoPick].sort().map(t => `<button type="button" class="echip" data-act="lab-po-go" data-t="${esc(t)}">${esc(t)}</button>`).join('')}</div>` : `<p class="hint" style="margin:6px 0 0">Touchez une case pour voir les actions concernées.</p>`}
         <p class="hint">${n[0] >= n[1] + n[2] ? `Sur vos actions, ne pas alléger donne le meilleur CAGR ÷ drawdown dans ${n[0]} cas sur ${k}.` : `Sur vos actions, alléger fait mieux au CAGR ÷ drawdown dans ${n[1] + n[2]} cas sur ${k} (des reculs plus petits).`} Meilleur gain brut (CAGR) : <b>${g[0] >= g[1] + g[2] ? `ne pas alléger dans ${g[0]} cas sur ${k}` : `alléger dans ${g[1] + g[2]} cas sur ${k}`}</b>.${shown.length > k ? ` ${shown.length - k} action(s) en attente du prochain passage du robot.` : ''}</p></div>` : `<p class="hint">Alléger ou pas : la comparaison arrive au fil des passages du robot (environ 40 actions par passage).</p>`; })()}
-    <div class="lcards">${shown.sort().map(labCard).join('')}</div>
+    <div class="fields"><div class="fld wide"><label for="lab-q">Chercher</label><input id="lab-q" value="${esc(labQ)}" placeholder="AAPL" autocapitalize="characters" autocomplete="off" spellcheck="false"></div></div>
+    <div class="seg lsort" role="group" aria-label="Trier">${[['score', 'Meilleur CAGR ÷ DD'], ['az', 'A → Z'], ['own', 'Ajoutées à la main']].map(([k, l]) => `<button type="button" data-act="lab-sort" data-k="${k}" aria-pressed="${labSort === k}">${l}</button>`).join('')}</div>
+    <div class="lcards">${list.map(t => labQ && !t.includes(labQ) ? labCard(t).replace('<article ', '<article hidden ') : labCard(t)).join('')}</div>
     <p class="fine">Résultats passés, calculés sur les cours ${adjMode() === 'all' ? 'ajustés des dividendes' : 'non ajustés'} de Twelve Data (journalier : 20 ans au plus). Choisir la meilleure de 45 combinaisons surestime l’avenir : regardez la période récente et les SMA voisines.</p>
-  </section>` : ''}`;
+  </section>` : `<section class="card">${seg}<p class="hint">Résultats au prochain passage du robot.</p></section>`;
+  })()}`;
 }
 function labGo() {
   const el = $('#lab-in'), raw = (el && el.value || '').toUpperCase().match(/[A-Z][A-Z0-9.\-]{0,9}/g) || [];
@@ -4233,8 +4270,10 @@ document.addEventListener('click', e => {
     case 'lab-clear': confirmSheet('Vider le Labo', 'Retirer les actions ajoutées à la main ? Celles du radar et de vos positions restent au Labo. Les résultats des autres disparaîtront au prochain passage du robot.', 'Tout retirer', () => { S.settings.labQueue = []; save('Labo vidé'); }); break;
     case 'lab-fee': labFee = b.dataset.f; try { localStorage.setItem(LAB_FEE_KEY, labFee); } catch (e) {} render(); break;
     case 'earn-f': earnF = b.dataset.f; try { localStorage.setItem(EARN_F_KEY, earnF); } catch (e) {} render(); break;
+    case 'lab-mode': labMode = b.dataset.m === 'all' ? 'all' : 'pos'; try { localStorage.setItem('carnet-positions:lab-mode', labMode); } catch (e) {} render(); break;
+    case 'lab-sort': labSort = b.dataset.k; render(); break;
     case 'lab-po-pick': { const i = +b.dataset.i; labPoPick = labPoPick === i ? -1 : i; render(); break; }
-    case 'lab-po-go': { const t = b.dataset.t; labOpen.add(t); render(); const el = document.querySelector(`.lcard[data-lab="${CSS.escape(t)}"]`); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); break; }
+    case 'lab-po-go': { const t = b.dataset.t; labOpen.add(t); if (labMode === 'all' && labQ && !t.includes(labQ)) labQ = ''; render(); const el = document.querySelector(`.lcard[data-lab="${CSS.escape(t)}"]`); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); break; }
     case 'lab-open': { const t = b.dataset.t; if (labOpen.has(t)) labOpen.delete(t); else labOpen.add(t); render(); break; }
     case 'lab-cell': labSel[b.dataset.t] = [b.dataset.tf, +b.dataset.i]; (labPick[b.dataset.t] = labPick[b.dataset.t] || {})[b.dataset.tf] = +b.dataset.i; render(); break;
     case 'lab-combo': { const t = b.dataset.t; labPick[t] = { D: +b.dataset.i, W: LAB_P.indexOf(+b.dataset.w), M: LAB_P.indexOf(+b.dataset.m) }; labChk[t] = { D: true, W: true, M: true }; render(); toast('Les 3 SMA sont cochées dans « Ajouter au radar » : vérifiez puis ajoutez'); break; }
@@ -4402,6 +4441,7 @@ document.addEventListener('toggle', e => {
   if (d.open) { openLots.add(d.dataset.key); loadThumbs(); } else openLots.delete(d.dataset.key);
 }, true);
 document.addEventListener('input', e => {
+  if (e.target.id === 'lab-q') { labQ = e.target.value.trim().toUpperCase(); for (const c of document.querySelectorAll('.lcard[data-lab]')) c.hidden = !!labQ && !c.dataset.lab.includes(labQ); return; }
   if (e.target.id === 'pos-q') { posQuery = e.target.value; applyPosQuery(); return; }
   if (e.target.id === 'radar-q') { radarQuery = e.target.value; radarLimit = 30; const el = $('#rlist'); if (el && radarListFn) el.innerHTML = radarListFn(); return; }
   if (e.target.id === 'price-q') {
