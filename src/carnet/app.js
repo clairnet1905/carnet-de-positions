@@ -1505,6 +1505,9 @@ const LAB_PO_L = ['Sans allègement', '½ vendue à +2 R', '⅓ vendu à +3 R'];
 const labPoWin = po => { if (!po || !po.v) return -1; let w = -1, ws = -1e9; po.v.forEach((x, k) => { const sc = labScore(x[0], x[1]); if (sc != null && sc > ws) { ws = sc; w = k; } }); return w; };
 // Unité retenue pour une action : celle dont la meilleure SMA a le meilleur CAGR ÷ DD (comme la fiche ouverte par défaut).
 function labMainUnit(r) {
+  try { return labMainUnitRaw(r); } catch (e) { return null; }   // résultat incomplet : action ignorée dans les résumés
+}
+function labMainUnitRaw(r) {
   const U = ['D', 'W', 'M'].filter(tf => r[tf]);
   return U.map(tf => { const i = labBest(r[tf][labFee].sma, tf), x = i >= 0 ? r[tf][labFee].sma[i] : null; return [tf, x ? labScore(x[0], x[1]) : -9]; }).sort((a, b) => b[1] - a[1])[0];
 }
@@ -1588,6 +1591,10 @@ function labPosRow(t) {
   const p = !mine.length ? pill('', 'pas au radar') : lvl === 2 ? pill('win', 'bonne') : lvl === 1 ? pill('warn', 'voisine') : pill('loss', 'faible');
   return row(mine.length ? `Votre SMA : ${parts.join(' · ')}` : 'Aucune SMA au radar', sub, p, true);
 }
+// Un résultat du robot incomplet ne doit jamais vider tout le Labo : l'action concernée s'affiche seule en « illisible ».
+const labBroken = t => `<article class="lcard" data-lab="${esc(t)}"><div class="lhead"><span class="tk">${esc(t)}</span><span class="lbs"><small class="muted">Résultat illisible : refait au prochain passage du robot.</small></span></div></article>`;
+function labCardSafe(t) { try { return labCard(t); } catch (e) { return labBroken(t); } }
+function labPosRowSafe(t) { try { return labPosRow(t); } catch (e) { return `<button type="button" class="lprow" disabled><b class="tk">${esc(t)}</b><span><span class="muted">Résultat illisible</span><small>refait au prochain passage du robot</small></span><span class="pill">erreur</span></button>`; } }
 function viewLab() {
   const q = labQueue(), inR = labRadarT(), res = Lab.res || {}, own = new Set(labOwn());
   const todo = q;
@@ -1614,8 +1621,8 @@ function viewLab() {
       return `<section class="card">${seg}
         <div class="sec-head"><h2>Mes positions</h2><div class="seg" role="group" aria-label="Frais"><button type="button" data-act="lab-fee" data-f="tv" aria-pressed="${labFee === 'tv'}">Comme TradingView</button><button type="button" data-act="lab-fee" data-f="ic" aria-pressed="${labFee === 'ic'}">IC Markets réel</button></div></div>
         <p class="hint">Mise à jour seule : une position ouverte entre ici, une position fermée en sort. Touchez une ligne pour sa fiche complète.</p>
-        ${posT.length ? `<div class="lprows">${posT.map(labPosRow).join('')}</div>` : '<p class="hint">Aucune position ouverte.</p>'}
-        ${cards.length ? `<div class="lcards" style="margin-top:12px">${cards.map(labCard).join('')}</div>` : ''}
+        ${posT.length ? `<div class="lprows">${posT.map(labPosRowSafe).join('')}</div>` : '<p class="hint">Aucune position ouverte.</p>'}
+        ${cards.length ? `<div class="lcards" style="margin-top:12px">${cards.map(labCardSafe).join('')}</div>` : ''}
       </section>`;
     }
     const list = shown.slice().sort((a, b) => labSort === 'az' ? (a < b ? -1 : 1) : labSort === 'own' ? ((own.has(b) ? 1 : 0) - (own.has(a) ? 1 : 0) || (a < b ? -1 : 1)) : main(b) - main(a) || (a < b ? -1 : 1));
@@ -1628,7 +1635,7 @@ function viewLab() {
         <p class="hint">${n[0] >= n[1] + n[2] ? `Sur vos actions, ne pas alléger donne le meilleur CAGR ÷ drawdown dans ${n[0]} cas sur ${k}.` : `Sur vos actions, alléger fait mieux au CAGR ÷ drawdown dans ${n[1] + n[2]} cas sur ${k} (des reculs plus petits).`} Meilleur gain brut (CAGR) : <b>${g[0] >= g[1] + g[2] ? `ne pas alléger dans ${g[0]} cas sur ${k}` : `alléger dans ${g[1] + g[2]} cas sur ${k}`}</b>.${shown.length > k ? ` ${shown.length - k} action(s) en attente du prochain passage du robot.` : ''}</p></div>` : `<p class="hint">Alléger ou pas : la comparaison arrive au fil des passages du robot (environ 40 actions par passage).</p>`; })()}
     <div class="fields"><div class="fld wide"><label for="lab-q">Chercher</label><input id="lab-q" value="${esc(labQ)}" placeholder="AAPL" autocapitalize="characters" autocomplete="off" spellcheck="false"></div></div>
     <div class="seg lsort" role="group" aria-label="Trier">${[['score', 'Meilleur CAGR ÷ DD'], ['az', 'A → Z'], ['own', 'Ajoutées à la main']].map(([k, l]) => `<button type="button" data-act="lab-sort" data-k="${k}" aria-pressed="${labSort === k}">${l}</button>`).join('')}</div>
-    <div class="lcards">${list.map(t => labQ && !t.includes(labQ) ? labCard(t).replace('<article ', '<article hidden ') : labCard(t)).join('')}</div>
+    <div class="lcards">${list.map(t => labQ && !t.includes(labQ) ? labCardSafe(t).replace('<article ', '<article hidden ') : labCardSafe(t)).join('')}</div>
     <p class="fine">Résultats passés, calculés sur les cours ${adjMode() === 'all' ? 'ajustés des dividendes' : 'non ajustés'} de Twelve Data (journalier : 20 ans au plus). Choisir la meilleure de 45 combinaisons surestime l’avenir : regardez la période récente et les SMA voisines.</p>
   </section>` : `<section class="card">${seg}<p class="hint">Résultats au prochain passage du robot.</p></section>`;
   })()}`;
