@@ -684,6 +684,22 @@ window.__appTests = async function () {
     return bad.length ? bad.join(' | ') : true;
   });
 
+  await t('Labo : un résultat incomplet n’empêche pas d’afficher les autres', async () => {
+    const keepRes = Lab.res, keepQ = S.settings.labQueue, D = days(5);
+    try {
+      const row = [20, 15, 2.1, 30, 40, 55, 3, 0, 18, 14, 21, 15];
+      const ok = { first: '2006-01-03', from: '2008-01-02', to: '2026-11-06', split: '2020-06-01', bars: 5000, ic: { sma: LAB_P.map((p, i) => i === 3 ? row : null), bh: [9, 30, 8, 20, 100] }, tv: { sma: LAB_P.map((p, i) => i === 3 ? row : null), bh: [9, 30, 8, 20, 100] } };
+      Lab.res = { GOOD: { at: Date.now(), D: ok }, BROK: { at: Date.now(), D: { ic: { sma: 'x' }, tv: null } } };
+      S.settings.labQueue = ['GOOD', 'BROK']; S.lots = [lot({ ticker: 'BROK', date: D[0] })]; S.watch = [{ id: 'b', ticker: 'BROK', period: 21, tf: 'D', sym: '' }];
+      labMode = 'all'; tab = 'lab'; labOpen.add('BROK'); render();
+      const v = $('#view').textContent;
+      if (!/GOOD/.test(v) || !/Résultat illisible/.test(v)) return 'mode toutes : ' + v.slice(0, 200);
+      labMode = 'pos'; render();
+      if (!/Résultat illisible|illisible/.test($('#view').textContent)) return 'mode positions : ' + $('#view').textContent.slice(0, 200);
+      return true;
+    } finally { Lab.res = keepRes; S.settings.labQueue = keepQ; labMode = 'pos'; labOpen.clear(); tab = 'dash'; }
+  });
+
   reset(); tab = 'dash';
   return out;
 };
