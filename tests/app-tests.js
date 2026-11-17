@@ -482,7 +482,7 @@ window.__appTests = async function () {
     try {
       Lab.res = { AAA: { at: Date.now(), D: unit({ i: 3, v: [[20, 15, 3.2, 5, 30], [12, 12, 1.6, 5, 30], [15, 13, 2.2, 5, 30]] }) },
         BBB: { at: Date.now(), D: unit(null) } };
-      S.settings.labQueue = ['AAA', 'BBB']; tab = 'lab'; labOpen.clear(); render();
+      S.settings.labQueue = ['AAA', 'BBB']; labMode = 'all'; tab = 'lab'; labOpen.clear(); render();
       const v = $('#view').textContent;
       if (!/Alléger ou pas \?/.test(v) || !/meilleur CAGR ÷ drawdown dans 1 cas sur 1/.test(v) || !/1 action\(s\) en attente/.test(v)) return 'résumé : ' + (v.match(/Alléger ou pas[^.]*\.[^.]*\./) || [''])[0];
       labOpen.add('AAA'); render();
@@ -541,9 +541,11 @@ window.__appTests = async function () {
       S.lots = [lot({ ticker: 'AAA' })]; S.watch = [{ id: 'w5', ticker: 'AAA', period: 5, tf: 'D', sym: '' }];
       Lab.res = { AAA: { at: Date.now(), D: unit } }; S.settings.labQueue = [];
       if (labQueue().join() !== 'AAA') return 'positions dans le Labo : ' + labQueue();
-      tab = 'lab'; labOpen.clear(); render();
+      labMode = 'pos'; tab = 'lab'; labOpen.clear(); render();
+      const pr = (($('.lprow[data-t="AAA"]') || {}).textContent || '').replace(/\s+/g, ' ');
+      if (!/J 5/.test(pr) || !/meilleure J 21/.test(pr) || !/faible/.test(pr)) return 'SMA faibles : ' + pr;
+      labMode = 'all'; render();
       const v = $('#view').textContent;
-      if (!/Vos positions/.test(v) || !/AAA J 5/.test(v) || !/meilleure : J 21/.test(v)) return 'SMA faibles : ' + (v.match(/Vos positions.{0,160}/) || [''])[0];
       if (!/Meilleur gain brut \(CAGR\) : ne pas alléger dans 1 cas sur 1/.test(v)) return 'gain brut : ' + (v.match(/Alléger ou pas.{0,260}/) || [''])[0];
       labOpen.add('AAA'); labSel.AAA = ['D', 3]; render();
       const d = [...document.querySelectorAll('details.lpo')].find(x => /Fausses cassures/.test(x.textContent));
@@ -610,7 +612,7 @@ window.__appTests = async function () {
       S.settings.manualTickers = []; S.settings.labQueue = ['MAN'];
       S.watch = [{ id: 'r1', ticker: 'RAD', period: 50, tf: 'D', sym: '' }, { id: 'r2', ticker: 'SPY', period: 200, tf: 'D', sym: '', idx: true }, { id: 'r3', ticker: 'EUX', period: 50, tf: 'D', sym: 'EUX.PA' }];
       const q = labQueue(); if (!q.includes('RAD') || q.includes('SPY') || q.includes('EUX') || !q.includes('MAN')) bad.push('liste Labo : ' + q.join(','));
-      Lab.res = {}; tab = 'lab'; render();
+      Lab.res = {}; labMode = 'all'; tab = 'lab'; render();
       if ($('.lq [data-act="lab-del"][data-t="RAD"]')) bad.push('action du radar retirable du Labo');
       const del = $('.lq [data-act="lab-del"][data-t="MAN"]'); if (!del) bad.push('× absent'); else { del.click(); await wait(20); if ((S.settings.labQueue || []).length || S.watch.length !== 3) bad.push('retrait : ' + JSON.stringify(S.settings.labQueue)); }
       S.watch = S.watch.filter(w => w.ticker !== 'RAD'); if (labQueue().includes('RAD')) bad.push('RAD reste après retrait du radar');
@@ -623,6 +625,34 @@ window.__appTests = async function () {
         const chips = [...document.querySelectorAll('[data-act="lab-po-go"]')].map(b => b.dataset.t); if (chips.join() !== 'CCC') bad.push('actions ½ : ' + chips.join());
         const go = $('[data-act="lab-po-go"]'); if (go) { go.click(); await wait(20); if (!labOpen.has('CCC')) bad.push('fiche non ouverte'); } }
     } finally { Radar.robot = keepR; Radar.macroLive = keepL; Lab.res = keepRes; const E = JSON.parse(keepE); Earn.map = E.map; Earn.hist = E.hist; labPoPick = -1; labOpen.clear(); tab = 'dash'; }
+    return bad.length ? bad.join(' | ') : true;
+  });
+
+  await t('Labo : « Mes positions » à jour seule, « Toutes les actions » avec recherche et tri', async () => {
+    const bad = [], keepRes = Lab.res, D = days(5);
+    try {
+      const row = [20, 15, 2.1, 30, 40, 55, 3, 0, 18, 14, 21, 15], weak = [-3, 40, 0.8, 30, 30, 50, -1, 0, -2, 30, -3, 40];
+      const unit = sma => ({ first: '2006-01-03', from: '2008-01-02', to: '2026-11-06', split: '2020-06-01', bars: 5000, ic: { sma, bh: [9, 30, 8, 20, 100], po: { i: 3, v: [[20, 15, 3, 5, 30], [12, 10, 1.6, 5, 30], [15, 11, 2.2, 5, 30]] } }, tv: { sma, bh: [9, 30, 8, 20, 100] } });
+      Lab.res = { GOOD: { at: Date.now(), D: unit(LAB_P.map((p, i) => i === 3 ? row : null)) }, BAD: { at: Date.now(), D: unit(LAB_P.map((p, i) => i === 3 ? row : i === 0 ? weak : null)) }, ZZZ: { at: Date.now(), D: unit(LAB_P.map((p, i) => i === 3 ? row : null)) } };
+      S.settings.manualTickers = ['EUR']; S.settings.labQueue = ['ZZZ']; S.settings.labPositions = true;
+      S.lots = [lot({ ticker: 'GOOD', date: D[0] }), lot({ ticker: 'BAD', date: D[0] }), lot({ ticker: 'NEW', date: D[0] }), lot({ ticker: 'EUR', date: D[0] })];
+      S.watch = [{ id: 'g', ticker: 'GOOD', period: 21, tf: 'D', sym: '' }, { id: 'b', ticker: 'BAD', period: 5, tf: 'D', sym: '' }];
+      labMode = 'pos'; tab = 'lab'; labOpen.clear(); render();
+      const rows = [...document.querySelectorAll('.lprow')].map(r => r.textContent.replace(/\s+/g, ' '));
+      if (rows.length !== 4) bad.push('lignes : ' + rows.length);
+      const f = t => { const el = $(`.lprow[data-t="${t}"]`) || [...document.querySelectorAll('.lprow')].find(r => r.querySelector('.tk').textContent === t); return el ? el.textContent.replace(/\s+/g, ' ') : ''; };
+      if (!/bonne/.test(f('GOOD')) || !/faible/.test(f('BAD')) || !/en attente/.test(f('NEW')) || !/actions US/.test(f('EUR'))) bad.push('verdicts : ' + rows.join(' / '));
+      if (/ZZZ/.test(rows.join())) bad.push('action hors positions');
+      const g = $('.lprow[data-t="GOOD"]'); if (g) { g.click(); await wait(20); if (!labOpen.has('GOOD')) bad.push('fiche non ouverte'); }
+      S.lots = S.lots.filter(l => l.ticker !== 'BAD'); render();
+      if ($('.lprow[data-t="BAD"]')) bad.push('position fermée restée');
+      $('[data-act="lab-mode"][data-m="all"]').click(); await wait(20);
+      if (labMode !== 'all' || !$('#lab-q')) bad.push('mode toutes');
+      $('[data-act="lab-sort"][data-k="own"]').click(); await wait(20);
+      const first = ($('.lcard[data-lab]') || {}).dataset; if (!first || first.lab !== 'ZZZ') bad.push('tri ajoutées à la main : ' + (first && first.lab));
+      const inp = $('#lab-q'); inp.value = 'goo'; inp.dispatchEvent(new Event('input', { bubbles: true }));
+      const vis = [...document.querySelectorAll('.lcard[data-lab]')].filter(c => !c.hidden).map(c => c.dataset.lab); if (vis.join() !== 'GOOD') bad.push('recherche : ' + vis.join());
+    } finally { Lab.res = keepRes; labMode = 'pos'; labSort = 'score'; labQ = ''; labOpen.clear(); tab = 'dash'; }
     return bad.length ? bad.join(' | ') : true;
   });
 
