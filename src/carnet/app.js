@@ -613,6 +613,8 @@ async function refreshQuotes(manual, hotOnly) {
   if (hotOnly || Radar.shared) { const h = new Set(hot); tickers = tickers.filter(t => openT.has(t) || h.has(t)); }
   // Entre deux mises à jour complètes, budget réduit : la clé gratuite (60 requêtes par minute) sert aussi à l'autre appareil.
   if (hotOnly) tickers = tickers.slice(0, Math.max(QUICK_MAX, openT.size + IDX.length));
+  // ETF des secteurs : à chaque mise à jour complète (environ toutes les 10 minutes en séance), 11 requêtes de plus.
+  else tickers = [...new Set([...tickers, ...S.watch.filter(w => w.sect).map(w => w.ticker)])].filter(t => !skip.has(t));
   if (!tickers.length) return;
   Live.busy = true;
   if (manual) toast('Récupération des cours…');
@@ -2516,7 +2518,7 @@ const SECT_SMA = { XLY: 'D610 W100 M8', XLP: 'D610 W200 M34', XLK: 'D233 W50 M13
 const sectWatch = etf => S.watch.filter(w => w.sect && !w.nosma && w.ticker === etf).sort((x, y) => TF_ORD[x.tf] - TF_ORD[y.tf] || y.period - x.period);
 function sectPreset(etf) {
   const sm = (SECT_SMA[etf] || '').match(/[DWM]\d+/g) || [];
-  if (!sm.length) return [{ id: `sect-${etf}-hist`, ticker: etf, period: 21, tf: 'W', sym: '', note: 'historique seul', idx: true, sect: true, nosma: true }];
+  if (!sm.length) return [{ id: `sect-${etf}-hist`, ticker: etf, period: 60, tf: 'W', sym: '', note: 'historique seul', idx: true, sect: true, nosma: true }];
   return sm.map(k => ({ id: `sect-${etf}-${k}`, ticker: etf, period: +k.slice(1), tf: k[0], sym: '', note: '', idx: true, sect: true }));
 }
 // Remplace les SMA des secteurs par vos réglages et met XLRE au Labo (sans rien ajouter au radar).
@@ -2524,38 +2526,58 @@ function applySectSma() {
   S.watch = S.watch.filter(w => !w.sect).concat(Object.values(SECT_ETF).flatMap(sectPreset));
   const q = (S.settings.labQueue || []).map(t => String(t).toUpperCase());
   for (const etf of Object.keys(SECT_SMA)) if (!SECT_SMA[etf] && !q.includes(etf)) q.push(etf);
-  S.settings.labQueue = q; S.settings.sectV = 1; sectMemo.clear();
+  S.settings.labQueue = q; S.settings.sectV = 2; sectMemo.clear();
 }
 function addSectors() {
   applySectSma();
   save('Secteurs suivis avec vos SMA. XLRE au Labo. Historique au prochain passage du robot.');
 }
 function migrateSect() {
-  if (S.settings.sectV >= 1 || !S.watch.some(w => w.sect)) return;
+  if (S.settings.sectV >= 2 || !S.watch.some(w => w.sect)) return;   // v2 : historique d'un an pour XLRE
   applySectSma(); save();
 }
-// Force d'un secteur : position vs ses SMA (majorité au-dessus ou en dessous), performance 1 mois (22 séances) et 3 mois (66) moins celle de SPY.
+// Variations d'un ETF en % : jour, 1, 3, 6 mois, depuis le 1er janvier, 1 an. Le cours en direct (Finnhub) remplace ou complète
+// la dernière clôture pendant la séance. Périodes en dates de calendrier : clôture du dernier jour de bourse avant la date de départ.
+const SECT_PER = [['d', 'Jour'], ['m1', '1 m'], ['m3', '3 m'], ['m6', '6 m'], ['ytd', 'YTD'], ['y1', '1 an']];
+let sectSort = 'm3';
+function etfPerf(t) {
+  const h = Radar.hist[t]; if (!h || !h.bars || h.bars.length < 2) return null;
+  const b = h.bars.map(x => [x[0], x[1]]), L = Live.prices[t];
+  if (L && L.price > 0 && L.date) { if (L.date > b[b.length - 1][0]) b.push([L.date, L.price]); else if (L.date === b[b.length - 1][0]) b[b.length - 1] = [L.date, L.price]; }
+  const [ld, lc] = b[b.length - 1], first = b[0][0];
+  const back = from => { if (from < first) return null; let c = null; for (let i = b.length - 1; i >= 0; i--) if (b[i][0] < from) { c = b[i][1]; break; } return c > 0 ? (lc / c - 1) * 100 : null; };
+  const mo = n => { const d = new Date(ld + 'T12:00:00Z'); d.setUTCMonth(d.getUTCMonth() - n); return d.toISOString().slice(0, 10); };
+  return { d: (lc / b[b.length - 2][1] - 1) * 100, m1: back(addDays(mo(1), 1)), m3: back(addDays(mo(3), 1)), m6: back(addDays(mo(6), 1)), ytd: back(ld.slice(0, 4) + '-01-01'), y1: back(addDays(mo(12), 1)), date: ld, live: !!(L && L.date === ld && L.live) };
+}
+// Force d'un secteur : position vs ses SMA (majorité au-dessus ou en dessous) et performance face à SPY sur 3 mois.
 const sectMemo = new Map();
 function sectStrength(name) {
   const etf = SECT_ETF[name]; if (!etf) return null;
   const ws = sectWatch(etf), h = Radar.hist[etf], sp = Radar.hist.SPY;
   if (!h || !h.bars || h.bars.length < 70) return null;
-  const key = name + '|' + h.last + '|' + (sp && sp.last) + '|' + ws.map(w => w.tf + w.period).join(',');
+  const lv = t => { const L = Live.prices[t]; return L ? L.price + '@' + L.date : ''; };
+  const key = name + '|' + h.last + '|' + (sp && sp.last) + '|' + lv(etf) + '|' + lv('SPY') + '|' + ws.map(w => w.tf + w.period).join(',');
   if (sectMemo.has(key)) return sectMemo.get(key);
-  const ret = (b, n) => b && b.length > n ? (b[b.length - 1][1] / b[b.length - 1 - n][1] - 1) * 100 : null;
   const as = ws.map(w => ({ w, a: analyzeWatch(w) })), ok = as.filter(x => x.a && !x.a.short), up = ok.filter(x => x.a.dist > 0).length;
-  const r1 = ret(h.bars, 22), r3 = ret(h.bars, 66), s1 = ret(sp && sp.bars, 22), s3 = ret(sp && sp.bars, 66);
-  const o = { name, etf, w: ws[0] || null, as, up, k: ok.length, nosma: !ws.length, dist: ok.length ? ok[0].a.dist : null, rs1: r1 != null && s1 != null ? r1 - s1 : null, rs3: r3 != null && s3 != null ? r3 - s3 : null };
+  const P = etfPerf(etf) || {}, Q = etfPerf('SPY') || {};
+  const o = { name, etf, w: ws[0] || null, as, up, k: ok.length, nosma: !ws.length, dist: ok.length ? ok[0].a.dist : null, p: P, live: P.live,
+    rs1: P.m1 != null && Q.m1 != null ? P.m1 - Q.m1 : null, rs3: P.m3 != null && Q.m3 != null ? P.m3 - Q.m3 : null };
   o.lvl = !o.k ? '' : up * 2 > o.k && (o.rs3 == null || o.rs3 > 0) ? 'go' : up * 2 < o.k && (o.rs3 == null || o.rs3 < 0) ? 'stop' : 'mid';
   sectMemo.set(key, o); return o;
 }
 function sectEtfCard() {
   if (!S.watch.some(w => w.sect)) return `<section class="card"><div class="sec-head"><h2>Secteurs</h2><button class="btn sm" data-act="sect-add">Suivre les 11 secteurs</button></div><p class="hint">Les 11 secteurs du S&amp;P 500 via leurs ETF (XLK, XLF, XLV…) : position par rapport à leur SMA et force face au S&amp;P 500. Un signal d’action dans un secteur fort compte plus dans le classement.</p></section>`;
-  const rows = SECTORS.map(sectStrength).filter(Boolean).sort((a, b) => (b.rs3 ?? -1e9) - (a.rs3 ?? -1e9));
-  const f = x => x == null ? '—' : (x >= 0 ? '+' : '−') + fmtNum(Math.abs(x), 1);
-  return `<section class="card sect"><div class="sec-head"><h2>Secteurs <small>· vs S&amp;P 500</small></h2></div>
-    ${rows.length ? `<table class="stab num"><thead><tr><th>Secteur</th><th>SMA</th><th>1 mois</th><th>3 mois</th></tr></thead><tbody>${rows.map(o => `<tr><td><i class="sd ${o.lvl}"></i>${esc(o.name)} <small>${o.etf}</small></td><td>${o.nosma ? '<small>aucune · Labo</small>' : `<span class="ichips">${o.as.map(({ w, a }) => `<i class="${idxSide(a)}">${TF_SHORT[w.tf]}${w.period}</i>`).join('')}</span>${o.k ? `<small>${o.up}/${o.k} au-dessus</small>` : ''}`}</td><td class="${cls(o.rs1)}">${f(o.rs1)}</td><td class="${cls(o.rs3)}">${f(o.rs3)}</td></tr>`).join('')}</tbody></table>
-      <p class="hint" style="margin:6px 0 0">1 mois et 3 mois : performance du secteur moins celle du S&amp;P 500, en points. Point vert : la majorité de ses SMA sous le cours et plus fort que le marché ; rouge : l’inverse.</p>` : '<p class="hint">Historique des ETF en attente : il arrive au prochain passage du robot.</p>'}</section>`;
+  const rows = SECTORS.map(sectStrength).filter(Boolean), Q = etfPerf('SPY') || {};
+  rows.sort((a, b) => (b.p[sectSort] ?? -1e9) - (a.p[sectSort] ?? -1e9));
+  const f = x => x == null ? '—' : (x >= 0 ? '+' : '−') + fmtNum(Math.abs(x), Math.abs(x) >= 10 ? 0 : 1);   // étroit sur téléphone
+  const SHORT = { 'Technologie': 'Techno', 'Communication': 'Comm.', 'Conso. cyclique': 'Cyclique', 'Conso. de base': 'Conso. base', 'Services publics': 'Serv. publics' };
+  const live = rows.some(o => o.live) && marketOpen(Date.now()), asOf = rows.length ? rows[0].p.date : '';
+  const cell = (o, k) => { const v = o.p[k], r = Q[k]; return `<td class="${v == null || r == null ? '' : v >= r ? 'gain' : 'loss'}">${f(v)}</td>`; };
+  return `<section class="card sect"><div class="sec-head"><h2>Secteurs <small>· vs S&amp;P 500</small></h2><small class="muted">${live ? 'en direct' : asOf ? 'clôture du ' + fmtDate(asOf).replace(/ \d{4}$/, '') : ''}</small></div>
+    ${rows.length ? `<table class="stab stab6 num"><thead><tr><th>Secteur</th>${SECT_PER.map(([k, l]) => `<th><button type="button" data-act="sect-sort" data-k="${k}" class="${sectSort === k ? 'on' : ''}">${l}</button></th>`).join('')}</tr></thead>
+      <tbody><tr class="spx"><td>S&amp;P 500<small>SPY</small></td>${SECT_PER.map(([k]) => `<td>${f(Q[k])}</td>`).join('')}</tr>
+      ${rows.map(o => `<tr><td><i class="sd ${o.lvl}"></i>${esc(SHORT[o.name] || o.name)}<small>${o.etf} · ${o.nosma ? 'Labo' : o.k ? `${o.up}/${o.k}` : '—'}</small></td>${SECT_PER.map(([k]) => cell(o, k)).join('')}</tr>`).join('')}</tbody></table>
+      <p class="hint" style="margin:6px 0 0">Variation du secteur en %. Vert : mieux que le S&amp;P 500 sur la même période, rouge : moins bien. Touchez un en-tête pour trier. « 2/3 » : vos SMA sous le cours ; point vert : la majorité de ses SMA sous le cours et plus fort que le marché sur 3 mois.${marketOpen(Date.now()) ? ' Pendant la séance, cours mis à jour environ toutes les 10 minutes.' : ''}</p>` : '<p class="hint">Historique des ETF en attente : il arrive au prochain passage du robot.</p>'}</section>`;
 }
 function marketCard() {
   if (!Radar.loaded && S.watch.length) loadRadarCache().then(() => { if (tab === 'dash') render(); });
@@ -4270,6 +4292,7 @@ document.addEventListener('click', e => {
     case 'lab-clear': confirmSheet('Vider le Labo', 'Retirer les actions ajoutées à la main ? Celles du radar et de vos positions restent au Labo. Les résultats des autres disparaîtront au prochain passage du robot.', 'Tout retirer', () => { S.settings.labQueue = []; save('Labo vidé'); }); break;
     case 'lab-fee': labFee = b.dataset.f; try { localStorage.setItem(LAB_FEE_KEY, labFee); } catch (e) {} render(); break;
     case 'earn-f': earnF = b.dataset.f; try { localStorage.setItem(EARN_F_KEY, earnF); } catch (e) {} render(); break;
+    case 'sect-sort': sectSort = b.dataset.k; render(); break;
     case 'lab-mode': labMode = b.dataset.m === 'all' ? 'all' : 'pos'; try { localStorage.setItem('carnet-positions:lab-mode', labMode); } catch (e) {} render(); break;
     case 'lab-sort': labSort = b.dataset.k; render(); break;
     case 'lab-po-pick': { const i = +b.dataset.i; labPoPick = labPoPick === i ? -1 : i; render(); break; }
