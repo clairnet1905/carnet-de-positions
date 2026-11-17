@@ -579,6 +579,53 @@ window.__appTests = async function () {
     return bad.length ? bad.join(' | ') : true;
   });
 
+  await t('VIX en séance, nouveaux résultats comparés, ligne Europe, radar au Labo, alléger cliquable', async () => {
+    const bad = [], keepR = Radar.robot, keepL = Radar.macroLive, keepRes = Lab.res, keepE = JSON.stringify({ map: Earn.map, hist: Earn.hist });
+    try {
+      // 1. VIX : CBOE plus récent que FRED
+      const now = new Date(Date.now() - 600000).toISOString().replace(/\.\d+Z$/, 'Z'), today = nyParts(Date.now()).date;
+      Radar.robot = Object.assign({}, keepR || {}, { macro: { at: 1, vix: ['2026-01-02', 19.3], hy: ['2026-01-02', 3.23], t10: ['2026-01-02', 5.15, 5.01] } });
+      Radar.macroLive = { at: Date.now(), vix: [now, 22.91, 19.3], tnx: [now, 5.121, 5.15] };
+      const M = macroNow(); if (!M || M.v !== 22.91 || !M.live || M.t !== 5.121 || M.hy !== 3.23) bad.push('macro : ' + JSON.stringify(M));
+      const ml = macroLine(); if (!/22,9/.test(ml) || !/CBOE, différé 15 min/.test(ml) || !/\+3,61 aujourd’hui/.test(ml) || !/FRED/.test(ml)) bad.push('ligne VIX : ' + ml.replace(/<[^>]+>/g, ' ').slice(0, 220));
+      Radar.macroLive = { at: 1, vix: ['2025-12-01T20:00:00Z', 30, 29] };
+      if (macroNow().v !== 19.3 || macroNow().live) bad.push('CBOE périmé gardé');
+      // 2. Résultats : nouveau trimestre en tête, comparé au précédent et à il y a 1 an
+      const d = addDays(todayISO(), -2);
+      Earn.map.NNN = [[d, 'amc', 1.19, 1.28, 37.1e9, 39.3e9, 3, 2027]];
+      Earn.hist.NNN = { at: addDays(d, -30), q: [['2026-07-31', 1.05, 1.01, 2, 2027], ['2026-04-30', 0.96, 0.93, 1, 2027], ['2026-01-31', 0.9, 0.88, 4, 2026], ['2025-10-31', 0.81, 0.75, 3, 2026]] };
+      if (!earnHot('NNN', todayISO())) bad.push('publication récente pas relue en priorité');
+      const ht = earnHistTable('NNN', Earn.map.NNN[0]).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+      if (!/T3 2027 · nouveau/.test(ht) || !/il y a 1 an/.test(ht) || !/\+22 % sur le trimestre précédent/.test(ht) || !/\+58 % sur 1 an/.test(ht)) bad.push('table résultats : ' + ht.replace(/\s+/g, ' ').slice(0, 260));
+      Earn.hist.NNN.q.unshift(['2026-10-31', 1.28, 1.19, 3, 2027]); Earn.hist.NNN.try = 0;
+      if (earnHot('NNN', todayISO())) bad.push('relu alors que le trimestre est là');
+      // 3. Ligne Europe à la place de « Saisie manuelle »
+      const D = days(5);
+      S.settings.manualTickers = ['EL', 'ABC']; S.settings.eodSym = { EL: 'EL.PA' };
+      S.lots = [lot({ ticker: 'EL', date: D[0] }), lot({ ticker: 'ABC', date: D[0] })]; S.prices.EL = [{ date: D[4], price: 182.35, src: 'eod' }];
+      const lb = (typeof liveBar === 'function' && quoteKey()) ? liveBar() : null;
+      if (lb != null && (!/Europe \(EODHD/.test(lb) || !/EL 182,35/.test(lb) || /Saisie manuelle : EL/.test(lb) || !/Saisie manuelle : ABC/.test(lb))) bad.push('ligne Europe : ' + lb.replace(/<[^>]+>/g, ' ').slice(0, 200));
+      if (!/Europe \(EODHD/.test(liveBar.toString())) bad.push('ligne Europe absente du code');
+      // 4. Radar au Labo, sens unique
+      S.settings.manualTickers = []; S.settings.labQueue = ['MAN'];
+      S.watch = [{ id: 'r1', ticker: 'RAD', period: 50, tf: 'D', sym: '' }, { id: 'r2', ticker: 'SPY', period: 200, tf: 'D', sym: '', idx: true }, { id: 'r3', ticker: 'EUX', period: 50, tf: 'D', sym: 'EUX.PA' }];
+      const q = labQueue(); if (!q.includes('RAD') || q.includes('SPY') || q.includes('EUX') || !q.includes('MAN')) bad.push('liste Labo : ' + q.join(','));
+      Lab.res = {}; tab = 'lab'; render();
+      if ($('.lq [data-act="lab-del"][data-t="RAD"]')) bad.push('action du radar retirable du Labo');
+      const del = $('.lq [data-act="lab-del"][data-t="MAN"]'); if (!del) bad.push('× absent'); else { del.click(); await wait(20); if ((S.settings.labQueue || []).length || S.watch.length !== 3) bad.push('retrait : ' + JSON.stringify(S.settings.labQueue)); }
+      S.watch = S.watch.filter(w => w.ticker !== 'RAD'); if (labQueue().includes('RAD')) bad.push('RAD reste après retrait du radar');
+      // 5. Alléger : cases cliquables
+      const row = [20, 15, 2.1, 30, 40, 55, 3, 0, 18, 14, 21, 15];
+      const unit = po => ({ first: '2006-01-03', from: '2008-01-02', to: '2026-11-06', split: '2020-06-01', bars: 5000, ic: { sma: LAB_P.map((p, i) => i === 3 ? row : null), bh: [9, 30, 8, 20, 100], po }, tv: { sma: LAB_P.map((p, i) => i === 3 ? row : null), bh: [9, 30, 8, 20, 100], po } });
+      Lab.res = { AAA: { at: Date.now(), D: unit({ i: 3, v: [[20, 15, 3.2, 5, 30], [12, 12, 1.6, 5, 30], [15, 13, 2.2, 5, 30]] }) }, CCC: { at: Date.now(), D: unit({ i: 3, v: [[10, 20, 2, 3, 30], [14, 12, 1.6, 5, 30], [11, 13, 2.2, 5, 30]] }) } };
+      S.settings.labQueue = ['AAA', 'CCC']; labPoPick = -1; labOpen.clear(); render();
+      const tile = $('[data-act="lab-po-pick"][data-i="1"]'); if (!tile) bad.push('case ½ non cliquable'); else { tile.click(); await wait(20);
+        const chips = [...document.querySelectorAll('[data-act="lab-po-go"]')].map(b => b.dataset.t); if (chips.join() !== 'CCC') bad.push('actions ½ : ' + chips.join());
+        const go = $('[data-act="lab-po-go"]'); if (go) { go.click(); await wait(20); if (!labOpen.has('CCC')) bad.push('fiche non ouverte'); } }
+    } finally { Radar.robot = keepR; Radar.macroLive = keepL; Lab.res = keepRes; const E = JSON.parse(keepE); Earn.map = E.map; Earn.hist = E.hist; labPoPick = -1; labOpen.clear(); tab = 'dash'; }
+    return bad.length ? bad.join(' | ') : true;
+  });
+
   reset(); tab = 'dash';
   return out;
 };
