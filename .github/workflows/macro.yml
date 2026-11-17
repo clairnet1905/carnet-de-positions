@@ -1,0 +1,32 @@
+name: VIX et taux 10 ans en séance
+
+on:
+  schedule:
+    # Toutes les 15 minutes de 13 h à 21 h 45 UTC, lundi à vendredi (couvre l'heure d'été et d'hiver de New York).
+    # Le script n'écrit que pendant la séance (9 h 25 – 16 h 45 à New York). GitHub peut retarder ou sauter un passage.
+    - cron: '*/15 13-21 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Écrire maintenant, même hors séance (test)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  macro:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: VIX et taux 10 ans (CBOE)
+        working-directory: robot
+        run: node macro.mjs
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
