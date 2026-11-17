@@ -186,7 +186,9 @@ for (const s in hist) view[s] = DF[s] && DF[s].fx.length ? Object.assign({}, his
 // Vos positions ouvertes (actions US) sont testées aussi, pour juger vos SMA actuelles.
 const manualL = new Set((S.settings.manualTickers || []).map(t => String(t).toUpperCase()));
 const posL = S.settings.labPositions === false ? [] : (S.lots || []).filter(l => !l.demo && l.qty - (l.events || []).filter(e => e.type === 'sell').reduce((a, e) => a + e.qty, 0) > 1e-9).map(l => String(l.ticker).toUpperCase()).filter(t => !manualL.has(t));
-const labQ = [...new Set([...(S.settings.labQueue || []).map(t => String(t).toUpperCase()), ...posL])];
+// Toutes les actions du radar (US, hors indices et secteurs) sont testées d'office, comme dans l'app (labQueue de app.js).
+const radarL = S.settings.labRadar === false ? [] : (S.watch || []).filter(w => !w.idx && !w.sym).map(w => String(w.ticker).toUpperCase()).filter(t => !manualL.has(t));
+const labQ = [...new Set([...(S.settings.labQueue || []).map(t => String(t).toUpperCase()), ...posL, ...radarL])];
 // Refait une fois : résultats sans test combiné (C), sans date de début des données (avant le journalier sur 80 ans) ou sans le test « alléger ou pas ».
 const labDue = t => { const x = L.res[t]; return !x || x.adj !== ADJ || (!x.err && (!('C' in x) || (x.D && !('first' in x.D)) || (x.D && !('po' in x.D.ic)) || (x.D && !('fi' in x.D.ic)))) || days(new Date(x.at).toISOString().slice(0, 10), ls) > (x.err ? 7 : LAB_REDO_DAYS); };
 const labTodo = labQ.filter(labDue).sort((a, b) => (L.res[a] ? 1 : 0) - (L.res[b] ? 1 : 0));
