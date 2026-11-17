@@ -359,7 +359,7 @@ Earn.map = Earn.map || {}; Earn.hist = Earn.hist || {};
 async function refreshEarnings() {
   const key = quoteKey(), today = todayISO();
   // Une fois par jour ; plus souvent (toutes les 3 h) tant qu'une publication récente attend ses chiffres.
-  const waiting = Object.values(Earn.map).some(l => l.some(e => e[0] >= addDays(today, -3) && e[0] <= today && e[3] == null));
+  const waiting = Object.values(Earn.map).some(l => l.some(e => e[0] >= addDays(today, -3) && e[0] <= today && e[3] == null)) || Object.keys(Earn.map).some(t => earnHot(t, today));
   if (!key || Earn.busy || (Earn.day === today && !(waiting && Date.now() - (Earn.at || 0) > 3 * 3600e3))) return;
   Earn.busy = true;
   const want = new Set([...S.lots.map(l => l.ticker), ...S.watch.map(w => w.ticker)]);
@@ -390,25 +390,35 @@ async function refreshEarnings() {
     if (ok) {
       for (const t in Earn.map) { Earn.map[t].sort((x, y) => x[0] < y[0] ? -1 : 1); if (!Earn.map[t].length) delete Earn.map[t]; }
       Earn.day = today; Earn.at = Date.now();
-      // Historique des surprises : actions qui publient dans les 14 jours (ou viennent de publier), au plus 8 appels.
-      let calls = 0;
-      for (const t of want) {
-        if (calls >= 8) break;
+      // Historique des résultats. D'abord les actions qui viennent de publier (10 jours) dont le trimestre publié manque encore :
+      // relues toutes les 3 h jusqu'à l'avoir (au plus 12 appels). Puis celles qui publient dans les 14 jours (au plus 8 appels).
+      const hot = new Set([...want].filter(t => earnHot(t, today)));
+      let calls = 0, hotCalls = 0;
+      for (const t of [...hot, ...[...want].filter(t => !hot.has(t))]) {
+        const isHot = hot.has(t);
+        if (isHot ? hotCalls >= 12 : calls >= 8) continue;
         const l = Earn.map[t] || [], soon = l.some(([d]) => d >= addDays(today, -14) && d <= addDays(today, 14)), h = Earn.hist[t];
         const last = l.filter(([d]) => d < today).map(([d]) => d).pop();
-        if (!soon || (h && Core.days(h.at, today) < 20 && !(last && h.at <= last))) continue;
-        calls++;
+        if (!isHot && (!soon || (h && Core.days(h.at, today) < 20 && !(last && h.at <= last)))) continue;
+        if (isHot) hotCalls++; else calls++;
         try {
-          const r = await fetch(`https://finnhub.io/api/v1/stock/earnings?symbol=${encodeURIComponent(t)}&limit=4&token=${encodeURIComponent(key)}`, { cache: 'no-store' });
+          const r = await fetch(`https://finnhub.io/api/v1/stock/earnings?symbol=${encodeURIComponent(t)}&limit=5&token=${encodeURIComponent(key)}`, { cache: 'no-store' });
           if (r.status === 401 || r.status === 429) break;
           const j = r.ok ? await r.json() : null;
-          if (Array.isArray(j)) Earn.hist[t] = { at: today, q: j.filter(x => isNum(x.actual)).slice(0, 4).map(x => [x.period, x.actual, isNum(x.estimate) ? x.estimate : null, x.quarter || 0, x.year || 0]) };
+          if (Array.isArray(j)) Earn.hist[t] = { at: today, try: Date.now(), q: j.filter(x => isNum(x.actual)).sort((x, y) => x.period < y.period ? 1 : -1).slice(0, 5).map(x => [x.period, x.actual, isNum(x.estimate) ? x.estimate : null, x.quarter || 0, x.year || 0]) };
+          else if (h) h.try = Date.now();
         } catch (e) { break; }
       }
       try { localStorage.setItem(EARN_KEY, JSON.stringify({ day: Earn.day, at: Earn.at, map: Earn.map, hist: Earn.hist })); } catch (e) {}
       if (tab !== 'calc' && tab !== 'set') render();
     }
   } catch (e) { /* hors ligne : on réessaiera */ } finally { Earn.busy = false; }
+}
+// Publication des 10 derniers jours dont le trimestre n'est pas encore dans l'historique (fin de trimestre dans les 100 jours avant la date) ; 3 h entre deux essais.
+const earnNew = (h, d) => !!h && h.q.some(r => r[0] <= d && r[0] >= addDays(d, -100));
+function earnHot(t, today) {
+  const e = (Earn.map[t] || []).filter(([d]) => d <= today && d >= addDays(today, -10)).pop(), h = Earn.hist[t];
+  return !!e && !earnNew(h, e[0]) && !(h && h.try && Date.now() - h.try < 3 * 3600e3);
 }
 const nextEarn = t => (Earn.map[t] || []).find(([d]) => d >= todayISO()) || null;
 const EARN_H = { bmo: 'avant l’ouverture', amc: 'après la clôture', dmh: 'pendant la séance' };
@@ -484,11 +494,28 @@ function earnDone(t, e, pos) {
   let body = '';
   if (isNum(ea) || isNum(ra)) body = `<div class="egrid">${isNum(ea) ? `<span class="k">BPA</span><span>${eps$(ea)} <span class="muted">/ ${eps$(ee)}</span></span>${surpTxt(se) || '<span></span>'}` : ''}${isNum(ra) ? `<span class="k">CA</span><span>${rev$(ra)} <span class="muted">/ ${rev$(re)}</span></span>${surpTxt(sr) || '<span></span>'}` : ''}</div>`;
   else body = '<p class="emeta">Publié, chiffres pas encore reçus (souvent le lendemain).</p>';
+  body += earnHistTable(t, e);
   const r = earnReact(t, d, h), cr = [];
   for (const w of S.watch.filter(w => w.ticker === t && !w.idx)) { const a = analyzeWatch(w); if (a && !a.short && a.lastCross && a.lastCross.date >= d) cr.push(`${a.lastCross.dir === 'down' ? 'passé sous' : 'passé au-dessus de'} sa SMA ${w.period} ${TF_SHORT[w.tf]}`); }
   const rl = r && !r.wait ? `Réaction du cours : ${surpTxt(r.pct)} à la clôture du ${fmtDate(r.date).replace(/ \d{4}$/, '')}` : r && r.wait ? 'Réaction du cours : à la prochaine clôture' : '';
   return `<div class="eitem${pos ? ' pos' : ''}"><div class="etile"><span>${dt.toLocaleDateString('fr-FR', { weekday: 'short' })}</span><b>${dt.getDate()}</b><span>${dt.toLocaleDateString('fr-FR', { month: 'short' })}</span></div>
     <div class="ebody"><div class="ehead"><span><strong>${esc(t)}</strong>${tag}</span>${verdict}</div>${body}${rl || cr.length ? `<p class="emeta">${[rl, ...cr].filter(Boolean).join(' · ')}</p>` : ''}</div></div>`;
+}
+// Nouveau trimestre en tête, comparé aux précédents (historique Finnhub, 4 à 5 trimestres) : BPA publié, attendu, écart,
+// et croissance du BPA sur le trimestre précédent et sur un an (même trimestre de l'exercice précédent).
+function earnHistTable(t, e) {
+  const [d, , ee, ea, , , q, y] = e, h = Earn.hist[t];
+  const past = h ? h.q.filter(r => !(r[0] <= d && r[0] >= addDays(d, -100)) && r[0] < d).slice(0, 4) : [];
+  if (!past.length) return '';
+  const lab = r => r[3] && r[4] ? `T${r[3]} ${r[4]}` : r[0] ? fmtDate(r[0]) : 'Ce trimestre';
+  const ago = q && y ? past.find(r => r[3] === q && r[4] === y - 1) : null;
+  const g = (a, b) => isNum(a) && isNum(b) && b !== 0 ? (a - b) / Math.abs(b) * 100 : null, gt = v => v == null ? '' : `${v >= 0 ? '+' : '−'}${fmtNum(Math.abs(v), 0)} %`;
+  const row = (r, cl, tag) => `<tr class="${cl}"><td>${lab(r)}${tag ? ` <small>· ${tag}</small>` : ''}</td><td class="n">${eps$(r[1])}</td><td class="n muted">${isNum(r[2]) ? eps$(r[2]) : '—'}</td><td class="n">${surpTxt(surp(r[1], r[2]))}</td></tr>`;
+  const cur = isNum(ea) ? ['', ea, ee, q, y] : null;
+  const head = cur ? row(cur, 'enew', 'nouveau') : '';
+  const qq = cur ? g(ea, past[0][1]) : null, yy = cur && ago ? g(ea, ago[1]) : null;
+  const sum = cur ? [qq != null ? `BPA ${gt(qq)} sur le trimestre précédent` : '', yy != null ? `${gt(yy)} sur 1 an` : ''].filter(Boolean).join(', ') : '';
+  return `<table class="ehist num"><thead><tr><th>Trimestre</th><th class="n">BPA publié</th><th class="n">attendu</th><th class="n">écart</th></tr></thead><tbody>${head}${past.map(r => row(r, r === ago ? 'eago' : '', r === ago ? 'il y a 1 an' : '')).join('')}</tbody></table>${sum ? `<p class="emeta">${sum}.</p>` : ''}`;
 }
 function earnRecent(f) {
   const today = todayISO(), openT = new Set(S.lots.filter(l => !Core.lotState(l).closed).map(l => l.ticker)), out = [];
@@ -681,8 +708,11 @@ function liveBar() {
   const n = Object.keys(Live.prices).length, open = marketOpen(Date.now());
   const txt = !Live.at ? 'Récupération des cours…'
     : `${open ? '<strong>Marché ouvert</strong> · cours en direct' : '<strong>Marché fermé</strong> · cours de clôture'} de ${n} action(s), mis à jour à ${hhmm(Live.at)}`;
-  const man = [...manualSet()].filter(t => S.lots.some(l => l.ticker === t && !Core.lotState(l).closed));
-  return `<div class="alert live ${open ? 'on' : ''}"><span>${txt}${man.length ? `<br><small>Saisie manuelle : ${man.map(esc).join(', ')}</small>` : ''}${Live.miss.length ? `<br><small>Non trouvé(s) sur Finnhub, à saisir à la main : ${Live.miss.map(esc).join(', ')}</small>` : ''}${Live.err ? `<br><small>${esc(Live.err)}</small>` : ''}</span><button class="btn sm" data-act="quotes-now" ${Live.busy ? 'disabled' : ''}>Actualiser</button></div>`;
+  // Actions hors Finnhub : celles avec un code EODHD arrivent seules (clôture européenne), les autres restent à saisir.
+  const eod = S.settings.eodSym || {}, offF = [...manualSet()].filter(t => S.lots.some(l => l.ticker === t && !Core.lotState(l).closed));
+  const man = offF.filter(t => !eod[t]), eu = offF.filter(t => eod[t]);
+  const euTxt = eu.map(t => { const p = (S.prices[t] || []).slice().sort((a, b) => a.date < b.date ? -1 : 1).pop(); return `${esc(t)}${p ? ` ${fmtNum(p.price, 2)} · ${fmtDate(p.date).replace(/ \d{4}$/, '')}` : ' en attente'}`; }).join(', ');
+  return `<div class="alert live ${open ? 'on' : ''}"><span>${txt}${eu.length ? `<br><small>Europe (EODHD, clôture vers 17 h 35) : ${euTxt}</small>` : ''}${man.length ? `<br><small>Saisie manuelle : ${man.map(esc).join(', ')}</small>` : ''}${Live.miss.length ? `<br><small>Non trouvé(s) sur Finnhub, à saisir à la main : ${Live.miss.map(esc).join(', ')}</small>` : ''}${Live.err ? `<br><small>${esc(Live.err)}</small>` : ''}</span><button class="btn sm" data-act="quotes-now" ${Live.busy ? 'disabled' : ''}>Actualiser</button></div>`;
 }
 function quotesPanel() {
   const k = quoteKey();
@@ -1416,10 +1446,15 @@ function setLab(L, ver) {
   Lab.ver = ver; Lab.res = (L && L.res) || {}; Lab.at = L && L.at;
   try { const t = JSON.stringify(Lab); if (t.length < 2.5e6) localStorage.setItem(LAB_KEY, t); } catch (e) {}
 }
+let labPoPick = -1;   // case « Alléger ou pas ? » touchée (0 sans, 1 ½, 2 ⅓)
 let labFee = (() => { try { return localStorage.getItem(LAB_FEE_KEY) || 'ic'; } catch (e) { return 'ic'; } })(), labSel = {}, labOpen = new Set(), labPick = {}, labChk = {};
 // Liste du Labo + vos positions ouvertes (actions US), testées aussi par le robot pour juger vos SMA actuelles.
 const labPosT = () => { if (S.settings.labPositions === false) return []; const man = manualSet(); return [...new Set(S.lots.filter(l => !l.demo && !Core.lotState(l).closed).map(l => String(l.ticker).toUpperCase()))].filter(t => !man.has(t)); };
-const labQueue = () => [...new Set([...(S.settings.labQueue || []).map(t => String(t).toUpperCase()), ...labPosT()])];
+// Toutes les actions du radar (US, hors indices et secteurs) entrent au Labo d'elles-mêmes ; retirées du radar, elles en sortent
+// (sauf si vous les aviez ajoutées au Labo à la main). Sens unique : le Labo n'ajoute jamais rien au radar.
+const labRadarL = () => { if (S.settings.labRadar === false) return []; const man = manualSet(); return [...new Set(S.watch.filter(w => !w.idx && !w.sym).map(w => String(w.ticker).toUpperCase()))].filter(t => !man.has(t)); };
+const labOwn = () => (S.settings.labQueue || []).map(t => String(t).toUpperCase());
+const labQueue = () => [...new Set([...labOwn(), ...labPosT(), ...labRadarL()])];
 const labRadarT = () => new Set(S.watch.map(w => String(w.ticker).toUpperCase()));
 // Une case : [cagr, dd, pf, trades, %gagnants, temps investi, trade moyen %, ouvert, cagr récent, dd récent, cagr 70 %, dd 70 %].
 const labScore = (c, dd) => c == null || dd == null ? null : dd > 0 ? c / dd : c > 0 ? 99 : 0;
@@ -1525,19 +1560,20 @@ function labCard(t) {
     }
     body = `${grid}${labAddBox(t, labAddPlan(t, r, U, best))}<p class="hint lleg"><i class="l4"></i>CAGR ÷ DD ≥ 0,5 <i class="l3"></i>≥ 0,35 <i class="l2"></i>≥ 0,2 <i class="l1"></i>faible <i class="l0"></i>perte · ★ meilleure de la ligne · <b class="lmine">○</b> votre SMA actuelle au radar · hachuré : trop peu de trades</p>${det}`;
   }
-  return `<article class="lcard${open ? ' open' : ''}"><button type="button" class="lhead" data-act="lab-open" data-t="${esc(t)}"><span class="tk">${esc(t)}</span>${inR ? `<span class="pill open">Au radar : ${mineL.map(w => TF_SHORT[w.tf] + ' ' + w.period + (labWeak(r, w) ? ' <b class="lweak" title="Jugée faible par le Labo">faible</b>' : '')).join(' · ')}</span>` : ''}<span class="lbs">${summary}</span></button>${body}</article>`;
+  return `<article class="lcard${open ? ' open' : ''}" data-lab="${esc(t)}"><button type="button" class="lhead" data-act="lab-open" data-t="${esc(t)}"><span class="tk">${esc(t)}</span>${inR ? `<span class="pill open">Au radar : ${mineL.map(w => TF_SHORT[w.tf] + ' ' + w.period + (labWeak(r, w) ? ' <b class="lweak" title="Jugée faible par le Labo">faible</b>' : '')).join(' · ')}</span>` : ''}<span class="lbs">${summary}</span></button>${body}</article>`;
 }
 function viewLab() {
-  const q = labQueue(), inR = labRadarT(), res = Lab.res || {};
+  const q = labQueue(), inR = labRadarT(), res = Lab.res || {}, own = new Set(labOwn());
   const todo = q;
   const done = todo.filter(t => res[t] && !res[t].err), errs = todo.filter(t => res[t] && res[t].err), wait = todo.filter(t => !res[t]);
   const repo = repoInfo();
   const chips = q.map(t => { const x = res[t], st = x && !x.err ? 'ok' : x && x.err ? 'err' : 'wait';
-    return `<span class="lq ${st}" title="${st === 'err' ? esc(x.err) : inR.has(t) ? 'Au radar' : ''}">${esc(t)}<button type="button" data-act="lab-del" data-t="${esc(t)}" aria-label="Retirer ${esc(t)}">×</button></span>`; }).join('');
+    const auto = !own.has(t);   // vient du radar ou d'une position : sort du Labo avec lui
+    return `<span class="lq ${st}" title="${st === 'err' ? esc(x.err) : auto ? 'Suit le radar ou vos positions' : inR.has(t) ? 'Au radar' : ''}">${esc(t)}${auto ? '' : `<button type="button" data-act="lab-del" data-t="${esc(t)}" aria-label="Retirer ${esc(t)}">×</button>`}</span>`; }).join('');
   const shown = done;
   return `<section class="card">
     <div class="sec-head"><h2>Labo SMA <small>· achat long seulement</small></h2><button class="btn sm" data-tab="radar">← Radar</button></div>
-    <p class="lead">Le robot teste ${LAB_P.length} SMA (${LAB_P.join(', ')}) en journalier, hebdo et mensuel, comme votre script TradingView : achat à la clôture au-dessus, sortie à la clôture en dessous, 100 % du capital sans levier. Vous pouvez y mettre aussi des actions du radar : le Labo n’ajoute ni ne change jamais rien au radar, seul le bouton « Ajouter au radar » le fait.</p>
+    <p class="lead">Le robot teste ${LAB_P.length} SMA (${LAB_P.join(', ')}) en journalier, hebdo et mensuel, comme votre script TradingView : achat à la clôture au-dessus, sortie à la clôture en dessous, 100 % du capital sans levier. Toutes les actions du radar et vos positions y sont testées d’office ; ajoutez ici d’autres actions à essayer. Le Labo n’ajoute ni ne change jamais rien au radar, seul le bouton « Ajouter au radar » le fait.</p>
     <div class="fields"><div class="fld wide"><label for="lab-in">Tickers à tester</label><textarea id="lab-in" rows="2" autocapitalize="characters" placeholder="AAPL, PLTR, AMD…"></textarea></div></div>
     <div class="row"><button class="btn primary" data-act="lab-go">Lancer</button>${q.length ? `<button class="btn sm" data-act="lab-clear">Tout retirer</button>` : ''}</div>
     ${q.length ? `<div class="lprog"><i style="width:${todo.length ? (done.length + errs.length) / todo.length * 100 : 100}%"></i></div>
@@ -1550,8 +1586,9 @@ function viewLab() {
     ${(() => { const weak = []; for (const t of shown) for (const w of S.watch.filter(x => x.ticker === t && !x.idx && labPosT().includes(t))) if (labWeak(res[t], w)) { const u = res[t][w.tf], bi = labBest(u[labFee].sma, w.tf), x = u[labFee].sma[LAB_P.indexOf(w.period)]; weak.push(`<b class="neg">${esc(t)} ${TF_SHORT[w.tf]} ${w.period}</b> <small>CAGR ${fmtNum(x[0], 1)} % · DD ${fmtNum(x[1], 0)} %${bi >= 0 && LAB_P[bi] !== w.period ? ` · meilleure : ${TF_SHORT[w.tf]} ${LAB_P[bi]}` : ''}</small>`); }
       const nPos = labPosT().filter(t => res[t] && !res[t].err).length;
       return nPos ? `<div class="lposum"><h3>Vos positions <small>${nPos} testée(s) sur ${labPosT().length}</small></h3>${weak.length ? `<p class="hint" style="margin:0 0 4px">SMA jugées faibles (à revoir) :</p>${weak.map(x => `<div>${x}</div>`).join('')}` : '<p class="hint" style="margin:0">Aucune de vos SMA de position n’est jugée faible.</p>'}</div>` : ''; })()}
-    ${(() => { const n = [0, 0, 0], g = [0, 0, 0]; let k = 0; for (const t of shown) { const r = res[t], m = labMainUnit(r), po = m ? r[m[0]][labFee].po : null, w = labPoWin(po); if (w >= 0) { n[w]++; k++; let b = 0; po.v.forEach((x, j) => { if (x[0] != null && x[0] > po.v[b][0]) b = j; }); g[b]++; } }
-      return k ? `<div class="lposum"><h3>Alléger ou pas ? <small>${k} action(s), meilleure SMA de chacune</small></h3><div class="lposg">${LAB_PO_L.map((l, i) => `<div><small>${l} meilleur</small><b class="${i === 0 ? 'up' : ''}">${n[i]}</b></div>`).join('')}</div>
+    ${(() => { const n = [0, 0, 0], g = [0, 0, 0], who = [[], [], []]; let k = 0; for (const t of shown) { const r = res[t], m = labMainUnit(r), po = m ? r[m[0]][labFee].po : null, w = labPoWin(po); if (w >= 0) { n[w]++; k++; who[w].push(t); let b = 0; po.v.forEach((x, j) => { if (x[0] != null && x[0] > po.v[b][0]) b = j; }); g[b]++; } }
+      return k ? `<div class="lposum"><h3>Alléger ou pas ? <small>${k} action(s), meilleure SMA de chacune</small></h3><div class="lposg">${LAB_PO_L.map((l, i) => `<button type="button" data-act="lab-po-pick" data-i="${i}" aria-pressed="${labPoPick === i}" ${n[i] ? '' : 'disabled'}><small>${l} meilleur</small><b class="${i === 0 ? 'up' : ''}">${n[i]}</b></button>`).join('')}</div>
+        ${labPoPick >= 0 && who[labPoPick].length ? `<p class="hint" style="margin:8px 0 4px">${LAB_PO_L[labPoPick]} meilleur pour :</p><div class="lpochips">${who[labPoPick].sort().map(t => `<button type="button" class="echip" data-act="lab-po-go" data-t="${esc(t)}">${esc(t)}</button>`).join('')}</div>` : `<p class="hint" style="margin:6px 0 0">Touchez une case pour voir les actions concernées.</p>`}
         <p class="hint">${n[0] >= n[1] + n[2] ? `Sur vos actions, ne pas alléger donne le meilleur CAGR ÷ drawdown dans ${n[0]} cas sur ${k}.` : `Sur vos actions, alléger fait mieux au CAGR ÷ drawdown dans ${n[1] + n[2]} cas sur ${k} (des reculs plus petits).`} Meilleur gain brut (CAGR) : <b>${g[0] >= g[1] + g[2] ? `ne pas alléger dans ${g[0]} cas sur ${k}` : `alléger dans ${g[1] + g[2]} cas sur ${k}`}</b>.${shown.length > k ? ` ${shown.length - k} action(s) en attente du prochain passage du robot.` : ''}</p></div>` : `<p class="hint">Alléger ou pas : la comparaison arrive au fil des passages du robot (environ 40 actions par passage).</p>`; })()}
     <div class="lcards">${shown.sort().map(labCard).join('')}</div>
     <p class="fine">Résultats passés, calculés sur les cours ${adjMode() === 'all' ? 'ajustés des dividendes' : 'non ajustés'} de Twelve Data (journalier : 20 ans au plus). Choisir la meilleure de 45 combinaisons surestime l’avenir : regardez la période récente et les SMA voisines.</p>
@@ -1562,7 +1599,7 @@ function labGo() {
   const inR = labRadarT(), q = labQueue(), add = [...new Set(raw)].filter(t => !q.includes(t));
   if (!add.length) { toast('Aucun nouveau ticker'); return; }
   const r = add.filter(t => inR.has(t)).length;
-  S.settings.labQueue = q.concat(add);
+  S.settings.labQueue = labOwn().concat(add);
   save(`${add.length} action(s) ajoutée(s) au Labo${r ? ` (dont ${r} du radar : vos SMA ne changent pas)` : ''}`);
 }
 // ----- Aides au trading : information seulement, rien n'est bloqué et le calculateur garde votre stop -----
@@ -1581,13 +1618,31 @@ function marketLight() {
     txt: { go: 'marché au-dessus de la plupart de vos SMA : contexte favorable aux achats long', mid: 'marché partagé : soyez sélectif', stop: 'marché sous la plupart de vos SMA : les achats long réussissent moins souvent' }[lvl] };
 }
 // Contexte FRED (robot) : VIX, stress du crédit (écart des obligations à haut rendement), taux à 10 ans.
+// Contexte du marché : VIX et taux 10 ans en séance (CBOE, robot macro.yml) s'ils sont plus récents que FRED ; stress crédit toujours FRED.
+function macroNow() {
+  const F = Radar.robot && Radar.robot.macro, L = Radar.macroLive;
+  const q = x => x && x[1] > 0 && Date.now() - Date.parse(x[0]) < 5 * 864e5 ? x : null;
+  const lv = L && q(L.vix), lt = L && q(L.tnx), lvD = lv && nyParts(Date.parse(lv[0])).date;
+  const liveV = lv && (!F || !F.vix || lvD >= F.vix[0]);
+  if (!liveV && !(F && F.vix)) return null;
+  const ltD = lt && nyParts(Date.parse(lt[0])).date, liveT = lt && (!F || !F.t10 || ltD >= F.t10[0]);
+  const o = { v: liveV ? lv[1] : F.vix[1], vPrev: liveV ? lv[2] : null, vDate: liveV ? lvD : F.vix[0], live: !!liveV,
+    t: liveT ? lt[1] : F && F.t10 ? F.t10[1] : null, t0: F && F.t10 ? F.t10[2] : null, tPrev: liveT ? lt[2] : null,
+    hy: F && F.hy ? F.hy[1] : null, hyDate: F && F.hy ? F.hy[0] : null, fredDate: F && F.vix ? F.vix[0] : null };
+  if (liveV) { const n = nyParts(Date.parse(lv[0])), D = nyDay(n.date); o.inSession = D.open && n.min >= 570 && n.min < D.close; o.hm = String(Math.floor(n.min / 60)).padStart(2, '0') + ':' + String(n.min % 60).padStart(2, '0'); }
+  return o;
+}
 function macroLine() {
-  const M = Radar.robot && Radar.robot.macro; if (!M || !M.vix) return '';
-  const v = M.vix[1], hy = M.hy && M.hy[1], t = M.t10 && M.t10[1], t0 = M.t10 && M.t10[2];
+  const M = macroNow(); if (!M) return '';
+  const v = M.v, hy = M.hy, t = M.t, t0 = M.t0;
   const vl = v >= 30 ? ['dn', 'peur forte'] : v >= 25 ? ['wa', 'nerveux'] : v >= 20 ? ['wa', 'vigilance'] : ['up', 'calme'];
   const hl = hy == null ? null : hy >= 5 ? ['dn', 'tendu'] : hy >= 4 ? ['wa', 'à surveiller'] : ['up', 'normal'];
   const txt = v >= 25 ? 'marché nerveux : les cassures de SMA échouent plus souvent, soyez sélectif' : v >= 20 ? 'volatilité en hausse : privilégiez les meilleurs signaux' : 'marché calme : les cassures tiennent plus souvent';
-  return `<div class="macro num"><div><small>VIX</small><b class="${vl[0]}">${fmtNum(v, 1)}</b><small>${vl[1]}</small></div>${hy != null ? `<div><small>Stress crédit</small><b class="${hl[0]}">${fmtNum(hy, 2)} %</b><small>${hl[1]}</small></div>` : ''}${t != null ? `<div><small>Taux 10 ans</small><b>${fmtNum(t, 2)} %</b><small>${t0 != null ? (t - t0 >= 0 ? '+' : '−') + fmtNum(Math.abs(t - t0), 2) + ' sur 1 mois' : ''}</small></div>` : ''}</div><p class="hint" style="margin:4px 0 0">${txt}. Source FRED, clôture du ${fmtDate(M.vix[0])}.</p>`;
+  const chg = (a, b, u) => a != null && b != null && Math.abs(a - b) >= 0.005 ? `${a - b >= 0 ? '+' : '−'}${fmtNum(Math.abs(a - b), 2)}${u} aujourd’hui` : '';
+  const vSub = [vl[1], chg(v, M.vPrev, '')].filter(Boolean).join(' · ');
+  const tSub = [chg(t, M.tPrev, ''), t0 != null ? (t - t0 >= 0 ? '+' : '−') + fmtNum(Math.abs(t - t0), 2) + ' sur 1 mois' : ''].filter(Boolean)[0] || '';
+  const src = M.live ? `VIX et taux 10 ans : CBOE, différé 15 min, ${M.inSession ? `${M.hm} à New York` : `clôture du ${fmtDate(M.vDate)}`}.${hy != null ? ` Stress crédit : FRED, ${fmtDate(M.hyDate)}.` : ''}` : `Source FRED, clôture du ${fmtDate(M.vDate)}.`;
+  return `<div class="macro num"><div><small>VIX</small><b class="${vl[0]}">${fmtNum(v, 1)}</b><small>${vSub}</small></div>${hy != null ? `<div><small>Stress crédit</small><b class="${hl[0]}">${fmtNum(hy, 2)} %</b><small>${hl[1]}</small></div>` : ''}${t != null ? `<div><small>Taux 10 ans</small><b>${fmtNum(t, 2)} %</b><small>${tSub}</small></div>` : ''}</div><p class="hint" style="margin:4px 0 0">${txt}. ${src}</p>`;
 }
 const feuLine = L => L ? `<div class=\"feu ${L.lvl}\"><i aria-hidden="true"></i><span><strong>${L.label}</strong> · ${L.up}/${L.n} de vos SMA au-dessus (${L.per.map(p => `${p.t} ${p.u}/${p.k}`).join(', ')}) : ${L.txt}.</span></div>` : '';
 // Feu du marché à une date passée, avec l'historique de SPY, QQQ et DIA (bougie en cours comprise pour S et M).
@@ -2908,7 +2963,7 @@ function updateCalc() {
   }
   const lev = r.params.leverage;
   box.innerHTML = `<div class="result">
-    <div class="sec-head"><h2>Quantité proposée</h2><small>${calcDraft.ticker ? esc(calcDraft.ticker.toUpperCase()) : 'Ticker non saisi'}${(L => L ? ` · <span class="feu-mini ${L.lvl}">${esc(L.label.toLowerCase())}</span>` : '')(typeof marketLight === 'function' ? marketLight() : null)}${Radar.robot && Radar.robot.macro && Radar.robot.macro.vix ? ` · VIX ${fmtNum(Radar.robot.macro.vix[1], 1)}` : ''}</small></div>
+    <div class="sec-head"><h2>Quantité proposée</h2><small>${calcDraft.ticker ? esc(calcDraft.ticker.toUpperCase()) : 'Ticker non saisi'}${(L => L ? ` · <span class="feu-mini ${L.lvl}">${esc(L.label.toLowerCase())}</span>` : '')(typeof marketLight === 'function' ? marketLight() : null)}${(M => M ? ` · VIX ${fmtNum(M.v, 1)}` : '')(macroNow())}</small></div>
     <div class="qty-big">${qty(r.q)} <small>action${r.q >= 2 ? 's' : ''}</small></div>
     ${r.reason ? `<p class="reason">${esc(r.reason)}</p>` : ''}
     ${(m => m && r.stopDistPct >= m.pct ? `<p class="okline">Stop correct : au-delà du mouvement moyen de ${esc(calcDraft.ticker.toUpperCase())} (${pct(m.pct)} par jour).</p>` : '')(calcDraft.ticker ? dailyMove(calcDraft.ticker) : null)}
@@ -4174,10 +4229,12 @@ document.addEventListener('click', e => {
       pi.value = ''; break;
     }
     case 'lab-go': labGo(); break;
-    case 'lab-del': S.settings.labQueue = labQueue().filter(t => t !== b.dataset.t); save(b.dataset.t + ' retiré du Labo'); break;
-    case 'lab-clear': confirmSheet('Vider le Labo', 'Retirer toutes les actions de la liste ? Leurs résultats disparaîtront au prochain passage du robot.', 'Tout retirer', () => { S.settings.labQueue = []; save('Labo vidé'); }); break;
+    case 'lab-del': S.settings.labQueue = labOwn().filter(t => t !== b.dataset.t); save(b.dataset.t + ' retiré du Labo'); break;
+    case 'lab-clear': confirmSheet('Vider le Labo', 'Retirer les actions ajoutées à la main ? Celles du radar et de vos positions restent au Labo. Les résultats des autres disparaîtront au prochain passage du robot.', 'Tout retirer', () => { S.settings.labQueue = []; save('Labo vidé'); }); break;
     case 'lab-fee': labFee = b.dataset.f; try { localStorage.setItem(LAB_FEE_KEY, labFee); } catch (e) {} render(); break;
     case 'earn-f': earnF = b.dataset.f; try { localStorage.setItem(EARN_F_KEY, earnF); } catch (e) {} render(); break;
+    case 'lab-po-pick': { const i = +b.dataset.i; labPoPick = labPoPick === i ? -1 : i; render(); break; }
+    case 'lab-po-go': { const t = b.dataset.t; labOpen.add(t); render(); const el = document.querySelector(`.lcard[data-lab="${CSS.escape(t)}"]`); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); break; }
     case 'lab-open': { const t = b.dataset.t; if (labOpen.has(t)) labOpen.delete(t); else labOpen.add(t); render(); break; }
     case 'lab-cell': labSel[b.dataset.t] = [b.dataset.tf, +b.dataset.i]; (labPick[b.dataset.t] = labPick[b.dataset.t] || {})[b.dataset.tf] = +b.dataset.i; render(); break;
     case 'lab-combo': { const t = b.dataset.t; labPick[t] = { D: +b.dataset.i, W: LAB_P.indexOf(+b.dataset.w), M: LAB_P.indexOf(+b.dataset.m) }; labChk[t] = { D: true, W: true, M: true }; render(); toast('Les 3 SMA sont cochées dans « Ajouter au radar » : vérifiez puis ajoutez'); break; }
