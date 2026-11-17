@@ -572,7 +572,7 @@ window.__appTests = async function () {
     Radar.hist.XLK = { bars: D.map((d, i) => [d, 100 + i * 0.5]), n: 120, full: 1, last: D[119], adj: adjMode() };
     sectMemo.clear(); const ss = sectStrength('Technologie');
     if (!ss || ss.etf !== 'XLK' || !(ss.rs3 > 0)) bad.push('force XLK : ' + JSON.stringify(ss && { rs3: ss.rs3, dist: ss.dist }));
-    tab = 'dash'; render(); if (!/Technologie/.test(($('.sect') || {}).textContent || '')) bad.push('carte secteurs');
+    tab = 'dash'; render(); if (!/Techno/.test(($('.sect') || {}).textContent || '')) bad.push('carte secteurs');
     S.lots = [lot({ ticker: 'WIN', date: D[0], price: 100, qty: 3, riskPlan: 10, leverage: 5 })]; S.prices.WIN = [{ date: D[119], price: 120 }];
     const bw = biggestWinner(); if (!bw || bw.t !== 'WIN' || Math.abs(bw.r - 6) > 0.01 || Math.abs(bw.mg - 72) > 0.01) bad.push('gros gagnant : ' + JSON.stringify(bw));
     S.watch.push({ id: 'wz', ticker: 'ZZZ', period: 5, tf: 'D', sym: '' }); Radar.hist.ZZZ = { bars: D.map((d, i) => [d, 50 + (i % 3)]), n: 120, full: 1, last: D[119], adj: adjMode() };
@@ -653,6 +653,34 @@ window.__appTests = async function () {
       const inp = $('#lab-q'); inp.value = 'goo'; inp.dispatchEvent(new Event('input', { bubbles: true }));
       const vis = [...document.querySelectorAll('.lcard[data-lab]')].filter(c => !c.hidden).map(c => c.dataset.lab); if (vis.join() !== 'GOOD') bad.push('recherche : ' + vis.join());
     } finally { Lab.res = keepRes; labMode = 'pos'; labSort = 'score'; labQ = ''; labOpen.clear(); tab = 'dash'; }
+    return bad.length ? bad.join(' | ') : true;
+  });
+
+  await t('Secteurs : jour, 1, 3, 6 mois, YTD et 1 an en %, cours en direct, tri par colonne', async () => {
+    const bad = [], keepLive = Live.prices;
+    try {
+      // 400 jours de bourse : SPY +0,1 par jour, XLK +0,2, XLE en baisse
+      const D = []; let x = addDays(todayISO(), -1); while (D.length < 400) { if (wdOf(x) >= 1 && wdOf(x) <= 5) D.unshift(x); x = addDays(x, -1); }
+      const H = f => ({ bars: D.map((d, i) => [d, f(i)]), n: 400, full: 1, last: D[399], adj: adjMode() });
+      S.watch = []; addSectors();
+      Radar.hist.SPY = H(i => 100 + i * 0.1); Radar.hist.XLK = H(i => 100 + i * 0.2); Radar.hist.XLE = H(i => 200 - i * 0.1);
+      Live.prices = {}; sectMemo.clear();
+      const P = etfPerf('XLK'), y1i = D.findIndex(d => d >= (() => { const z = new Date(D[399] + 'T12:00:00Z'); z.setUTCMonth(z.getUTCMonth() - 12); return addDays(z.toISOString().slice(0, 10), 1); })()) - 1;
+      const exp = (D.length - 1 - y1i) * 0.2 / (100 + y1i * 0.2) * 100;
+      if (!P || Math.abs(P.y1 - exp) > 0.01 || !(P.m6 > P.m3 && P.m3 > P.m1 && P.m1 > 0) || P.ytd == null || Math.abs(P.d - 0.2 / (100 + 398 * 0.2) * 100) > 1e-6) bad.push('perf XLK : ' + JSON.stringify(P));
+      if (!(etfPerf('XLE').m3 < 0)) bad.push('XLE en baisse');
+      Live.prices = { XLK: { date: todayISO(), price: 200, live: true, at: Date.now(), dp: 1 } };
+      const L = etfPerf('XLK'); if (L.date !== todayISO() || Math.abs(L.d - (200 / (100 + 399 * 0.2) - 1) * 100) > 1e-6 || !L.live) bad.push('cours en direct ignoré : ' + JSON.stringify(L));
+      Live.prices = {}; tab = 'dash'; sectSort = 'm3'; render();
+      const card = $('.sect'), tx = card ? card.textContent.replace(/\s+/g, ' ') : '';
+      if (!/S&P 500 ?SPY/.test(tx) || !/6 m/.test(tx) || !/YTD/.test(tx) || !/1 an/.test(tx) || !/en %/.test(tx)) bad.push('carte : ' + tx.slice(0, 200));
+      const names = () => [...card.ownerDocument.querySelectorAll('.sect tbody tr:not(.spx) td:first-child')].map(td => td.textContent.replace(/\s+/g, ' '));
+      if (!/^.*Techno/.test(names()[0] || '')) bad.push('tri 3 m : ' + names().join(' / '));
+      const xk = [...document.querySelectorAll('.sect tbody tr')].find(r => /XLK/.test(r.textContent)), xe = [...document.querySelectorAll('.sect tbody tr')].find(r => /XLE/.test(r.textContent));
+      if (!xk || !xk.querySelector('td.gain') || !xe || !xe.querySelector('td.loss')) bad.push('couleurs vs S&P');
+      $('[data-act="sect-sort"][data-k="d"]').click(); await wait(20); if (sectSort !== 'd') bad.push('tri jour');
+      const XL = S.watch.find(w => w.ticker === 'XLRE'); if (!XL || XL.period !== 60) bad.push('historique XLRE : ' + (XL && XL.period));
+    } finally { Live.prices = keepLive; sectSort = 'm3'; delete Radar.hist.XLE; tab = 'dash'; }
     return bad.length ? bad.join(' | ') : true;
   });
 
