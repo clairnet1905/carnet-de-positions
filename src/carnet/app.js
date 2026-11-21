@@ -40,6 +40,7 @@ function normalize(st) {
   out.seen = st.seen && typeof st.seen === 'object' && !Array.isArray(st.seen) ? st.seen : {};
   out.push = { vapid: (st.push && st.push.vapid) || '', subs: st.push && Array.isArray(st.push.subs) ? st.push.subs : [] };
   for (const l of out.lots) l.events = Array.isArray(l.events) ? l.events : [];
+  out.breadth = st.breadth && Array.isArray(st.breadth.rows) ? { v: 1, rows: st.breadth.rows.filter(r => Array.isArray(r) && /^\d{4}-\d\d-\d\d$/.test(r[0])) } : { v: 1, rows: [] };
   return out;
 }
 // Captures d'une position : celle de l'achat puis celles des ventes.
@@ -1145,7 +1146,7 @@ function viewRadar() {
   const ups = fresh.filter(x => !held.has(x.w.ticker) && x.lvl === 'up').sort(alertOrder), downs = fresh.filter(x => !held.has(x.w.ticker) && x.lvl === 'down').sort(alertOrder);
   const lazy = (k, sum, fn, cls) => { radarFns[k] = fn; const o = radarOpen.has(k); return `<details class="${cls || 'more'}" data-lazy="${k}" ${o ? 'open' : ''}><summary>${sum}</summary><div class="lazy">${o ? fn() : ''}</div></details>`; };
   const aRow = x => { const g = labGrade(x.w), mineT = held.has(x.w.ticker);
-    return `<div class="trow ${x.seen ? 'seen' : ''}"><span><b class="tk">${esc(x.w.ticker)}</b> <span class="pill ${x.lvl === 'up' ? 'win' : 'loss'}">${x.lvl === 'up' ? '↑' : '↓'} ${TF_SHORT[x.w.tf]} ${x.w.period} · ${dd(x.date)}</span>${g ? ` <small>Labo : ${esc(g[0].toLowerCase())}</small>` : ''}${earnPill(x.w.ticker)}${secNote(x)}</span>
+    return `<div class="trow ${x.seen ? 'seen' : ''}"><span><b class="tk">${esc(x.w.ticker)}</b> <span class="pill ${x.lvl === 'up' ? 'win' : 'loss'}">${x.lvl === 'up' ? '↑' : '↓'} ${TF_SHORT[x.w.tf]} ${x.w.period} · ${dd(x.date)}</span>${g ? ` <small>Labo : ${esc(g[0].toLowerCase())}</small>` : ''}${x.lvl === 'up' ? rsNote(x.w.ticker) : ''}${earnPill(x.w.ticker)}${secNote(x)}</span>
       <span class="acts"><button class="btn sm" data-act="chart" data-t="${esc(x.w.ticker)}" data-w="${x.w.id}">Graphique</button>${x.lvl === 'up' && !mineT && !x.seen ? `<button class="btn sm primary" data-act="radar-calc" data-id="${x.w.id}">Taille</button>` : ''}${x.seen ? `<button class="btn sm icon" data-act="radar-gone" data-k="${esc(x.key)}" aria-label="Supprimer cette alerte">✕</button>` : `<button class="btn sm" data-act="radar-seen" data-k="${esc(x.key)}">Vu</button>`}</span></div>`; };
   const mini = c => {
     const k = 'c:' + c.t, best = c.lines.slice().sort((x, y) => radarRank(x.a) - radarRank(y.a))[0], [pc, st] = radarStatus(best.a), ok = best.a && !best.a.short;
@@ -1850,12 +1851,13 @@ function tonightPicks() {
   for (const x of radarAlerts()) {
     if (x.seen || x.lvl !== 'up' || x.w.idx || held.has(x.w.ticker)) continue;
     const g = labGrade(x.w), e = nextEarn(x.w.ticker), eDays = e ? Core.days(today, e[0]) : null, sec = sectorOf(x.w.ticker), sp = sec ? share[sec] || 0 : null;
-    const ss = sec ? sectStrength(sec) : null;
-    const score = (g ? g[1] : 1) * 10 + (eDays != null && eDays <= 7 ? -8 : 0) + (sp != null && sp >= lim ? -6 : 0) + (x.date >= addDays(today, -3) ? 2 : 0) + (ss ? (ss.lvl === 'go' ? 4 : ss.lvl === 'stop' ? -4 : 0) : 0);
+    const ss = sec ? sectStrength(sec) : null, rs = rsOf(x.w.ticker);
+    const score = (rs ? (rs.rk >= 80 ? 3 : rs.rk <= 20 ? -3 : 0) : 0) + (g ? g[1] : 1) * 10 + (eDays != null && eDays <= 7 ? -8 : 0) + (sp != null && sp >= lim ? -6 : 0) + (x.date >= addDays(today, -3) ? 2 : 0) + (ss ? (ss.lvl === 'go' ? 4 : ss.lvl === 'stop' ? -4 : 0) : 0);
     const notes = [g ? 'Labo : ' + g[0].toLowerCase() : 'Labo : pas testée'];
     if (eDays != null && eDays <= 7) notes.push(`résultats dans ${eDays} j`); else if (e) notes.push('pas de résultats sous 7 j');
     if (sec && sp != null) notes.push(`${sec} ${fmtNum(sp, 0)} %${sp >= lim ? ' (au-dessus de votre seuil)' : ''}`);
     if (ss && ss.lvl) notes.push(ss.lvl === 'go' ? 'secteur fort' : ss.lvl === 'stop' ? 'secteur faible' : 'secteur neutre');
+    if (rs) notes.push(rsTxt(rs));
     const cur = best.get(x.w.ticker);
     if (!cur || score > cur.score) best.set(x.w.ticker, { x, score, notes });
   }
@@ -2079,7 +2081,7 @@ function sheetStopRaises() {
 
 // Bilan par catégorie : espérance en R (gain net ÷ risque prévu) des positions clôturées.
 let edgeDim = 'motif';
-const EDGE_DIMS = [['motif', 'Motif'], ['sect', 'Secteur'], ['hold', 'Durée'], ['earn', 'Résultats'], ['mkt', 'Marché'], ['plan', 'Plan']];
+const EDGE_DIMS = [['motif', 'Motif'], ['sect', 'Secteur'], ['hold', 'Durée'], ['earn', 'Résultats'], ['mkt', 'Marché'], ['larg', 'Largeur'], ['vix', 'VIX'], ['force', 'Force'], ['plan', 'Plan']];
 function edgeKey(dim, c) {
   const l = c.lot;
   if (dim === 'motif') return l.motifSet ? MOTIFS[l.motif] || 'Non renseigné' : 'Non classé';
@@ -2087,6 +2089,10 @@ function edgeKey(dim, c) {
   if (dim === 'hold') { const d = Core.days(l.date, c.date); return d <= 5 ? '5 jours ou moins' : d <= 20 ? '6 à 20 jours' : 'Plus de 20 jours'; }
   if (dim === 'earn') return !Earn.map[l.ticker] ? 'Calendrier inconnu' : Earn.map[l.ticker].some(([e]) => e >= l.date && e <= c.date) ? 'Résultats pendant la position' : 'Sans résultats';
   if (dim === 'mkt') return lightAt(l.date) ? lightAt(l.date) + ' à l’achat' : 'Historique indices manquant';
+  // Contexte à l'achat : photo gardée avec la position, sinon retrouvé dans l'historique (largeur mémorisée, VIX FRED, cours du radar).
+  if (dim === 'larg') { const v = ctxOf(l).br; return v == null ? 'Largeur inconnue (avant l’historique)' : v >= 70 ? 'Largeur J forte (70 % et plus)' : v >= 30 ? 'Largeur J neutre (30 à 70 %)' : 'Largeur J faible (moins de 30 %)'; }
+  if (dim === 'vix') { const v = ctxOf(l).vix; return v == null ? 'VIX inconnu' : v >= 25 ? 'VIX nerveux (25 et plus)' : v >= 20 ? 'VIX en vigilance (20 à 25)' : 'VIX calme (moins de 20)'; }
+  if (dim === 'force') { const v = ctxOf(l).rs; return v == null ? 'Historique insuffisant' : v >= 5 ? 'Plus forte que le S&P (3 mois)' : v <= -5 ? 'Plus faible que le S&P (3 mois)' : 'Comme le S&P (± 5 % sur 3 mois)'; }
   return l.planOk === true ? 'Plan respecté' : l.planOk === false ? 'Plan non respecté' : 'Non renseigné';
 }
 // ----- Qualité des sorties (MAE / MFE) : clôtures journalières de l'historique du radar pendant chaque trade clôturé -----
@@ -2172,7 +2178,7 @@ function exitCard() {
 function edgeCard() {
   const all = Core.tradeStats(S, planR).closed.filter(c => c.R != null);
   if (all.length < 3) return '';
-  if (edgeDim === 'mkt' && S.watch.length && !Radar.loaded) loadRadarCache().then(() => { if (tab === 'dash') render(); });
+  if (['mkt', 'larg', 'force'].includes(edgeDim) && S.watch.length && !Radar.loaded) loadRadarCache().then(() => { if (tab === 'dash') render(); });
   const g = {};
   for (const c of all) { const k = edgeKey(edgeDim, c); (g[k] = g[k] || []).push(c); }
   const rows = Object.entries(g).map(([k, cs]) => ({ k, n: cs.length, win: cs.filter(c => c.net > 0.0049).length / cs.length * 100, avg: cs.reduce((a, c) => a + c.R, 0) / cs.length, tot: cs.reduce((a, c) => a + c.R, 0) }))
@@ -2586,6 +2592,170 @@ function sectEtfCard() {
       ${rows.map(o => `<tr><td><i class="sd ${o.lvl}"></i>${esc(SHORT[o.name] || o.name)}<small>${o.etf} · ${o.nosma ? 'Labo' : o.k ? `${o.up}/${o.k}` : '—'}</small></td>${SECT_PER.map(([k]) => cell(o, k)).join('')}</tr>`).join('')}</tbody></table>
       <p class="hint" style="margin:6px 0 0">Variation du secteur en %. Vert : mieux que le S&amp;P 500 sur la même période, rouge : moins bien. Touchez un en-tête pour trier. « 2/3 » : vos SMA sous le cours ; point vert : la majorité de ses SMA sous le cours et plus fort que le marché sur 3 mois.${marketOpen(Date.now()) ? ' Pendant la séance, cours mis à jour environ toutes les 10 minutes.' : ''}</p>` : '<p class="hint">Historique des ETF en attente : il arrive au prochain passage du robot.</p>'}</section>`;
 }
+// ----- Largeur du radar : part de vos SMA d'actions (hors indices et secteurs) dont le cours est au-dessus, en J / S / M -----
+// Même règle que le radar : une bougie S ou M en cours compte avec le cours du jour (somme des n − 1 dernières bougies terminées + cours).
+// Calculée sur l'historique du radar puis mémorisée chaque jour dans S.breadth (synchronisé) : l'historique s'allonge avec le temps.
+const BR_TF = [['D', 'Journalières'], ['W', 'Hebdo'], ['M', 'Mensuelles']];
+const brLines = () => S.watch.filter(w => !w.idx && !w.nosma);
+// [[date, au-dessus ?], …] pour une SMA, à chaque séance où elle est calculable.
+function brLineStates(w) {
+  const h = histFixed(symOf(w), Radar.hist[symOf(w)]); if (!h || !h.bars || !h.bars.length) return null;
+  const n = w.period, pre = [0], out = []; let k0 = null, last = null;
+  for (const b of h.bars) {
+    const d = b[0], c = b[1], k = w.tf === 'D' ? d : periodKey(w.tf, d);
+    if (k0 !== null && k !== k0) pre.push(pre[pre.length - 1] + last);
+    k0 = k; last = c;
+    const m = pre.length - 1;   // bougies terminées avant celle-ci
+    if (m >= n) out.push([d, c > (pre[m] - pre[m - n + 1] + c) / n]);
+  }
+  return out;
+}
+// Lignes [date, J au-dessus, J total, S…, S…, M…, M…, indices…, indices…]. Une date ne compte pour une unité que si 80 % de ses SMA
+// y sont calculables (sinon le pourcentage ne voudrait rien dire).
+const brMemo = { key: '', rows: [], all: null, allKey: '' };
+function brComputed() {
+  const lines = S.watch.filter(w => !w.nosma && !w.sect);
+  const key = adjMode() + '|' + lines.map(w => { const h = Radar.hist[symOf(w)]; return w.id + w.tf + w.period + ':' + (h && h.bars ? h.last + '/' + h.bars.length : '-'); }).join(',');
+  if (brMemo.key === key) return brMemo.rows;
+  const G = ['D', 'W', 'M', 'I'], acc = new Map(), cnt = { D: 0, W: 0, M: 0, I: 0 };
+  for (const w of lines) {
+    const g = w.idx ? 'I' : w.tf, st = brLineStates(w); if (!st || !st.length) continue; cnt[g]++;
+    const j = G.indexOf(g) * 2;
+    for (const [d, up] of st) { let r = acc.get(d); if (!r) acc.set(d, r = [0, 0, 0, 0, 0, 0, 0, 0]); r[j + 1]++; if (up) r[j]++; }
+  }
+  const rows = [];
+  for (const d of [...acc.keys()].sort()) {
+    const r = acc.get(d), o = [d]; let any = false;
+    G.forEach((g, i) => { const ok = cnt[g] > 0 && r[i * 2 + 1] >= 0.8 * cnt[g]; o.push(ok ? r[i * 2] : null, ok ? r[i * 2 + 1] : null); if (ok && g !== 'I') any = true; });
+    if (any) rows.push(o);
+  }
+  Object.assign(brMemo, { key, rows, all: null }); return rows;
+}
+// Historique complet : jours mémorisés + jours recalculés (les recalculés priment).
+function brAll() {
+  const comp = brComputed(), st = (S.breadth && S.breadth.rows) || [], k = brMemo.key + '|' + st.length + '|' + (st.length ? st[st.length - 1][0] : '');
+  if (brMemo.all && brMemo.allKey === k) return brMemo.all;
+  const m = new Map(st.map(r => [r[0], r]));
+  for (const r of comp) m.set(r[0], r);
+  brMemo.all = [...m.values()].sort((a, b) => a[0] < b[0] ? -1 : 1); brMemo.allKey = k;
+  return brMemo.all;
+}
+// Mémorise les séances terminées : jours nouveaux, et les 7 derniers jours s'ils ont été corrigés. Appelé hors affichage.
+function brSync() {
+  if (!Radar.loaded || !brLines().length) return false;
+  const comp = brComputed(); if (!comp.length) return false;
+  const old = (S.breadth && S.breadth.rows) || [], m = new Map(old.map(r => [r[0], r])), ls = lastSession(Date.now()), fix = addDays(ls, -7);
+  let ch = false;
+  for (const r of comp) { if (r[0] > ls) continue; const o = m.get(r[0]); if (!o || (r[0] >= fix && JSON.stringify(o) !== JSON.stringify(r))) { m.set(r[0], r); ch = true; } }
+  if (!ch) return false;
+  S.breadth = { v: 1, rows: [...m.values()].sort((a, b) => a[0] < b[0] ? -1 : 1).slice(-3000) };
+  save(); return true;
+}
+const brPct = (u, n) => u == null || !n ? null : u / n * 100;
+// Largeur à une date (dernière séance connue, 6 jours au plus avant) : J, S, M et indices (feu) en %.
+function brAt(d) {
+  let r = null; for (const x of brAll()) { if (x[0] > d) break; r = x; }
+  if (!r || Core.days(r[0], d) > 6) return null;
+  return { date: r[0], D: brPct(r[1], r[2]), W: brPct(r[3], r[4]), M: brPct(r[5], r[6]), I: brPct(r[7], r[8]) };
+}
+// Maintenant (cours en direct compris, comme le radar).
+function brNow() {
+  const r = { D: [0, 0], W: [0, 0], M: [0, 0] };
+  for (const w of brLines()) { const a = analyzeWatch(w); if (!a || a.short || !r[w.tf]) continue; r[w.tf][1]++; if (a.p > a.smaNow) r[w.tf][0]++; }
+  return r;
+}
+const BR_ZONE = p => p < 30 ? ['dn', 'faible'] : p < 70 ? ['wa', 'neutre'] : p < 85 ? ['up', 'fort'] : ['up', 'étiré'];
+function brSpark(pts, z) {
+  if (pts.length < 2) return '';
+  const X = i => (i / (pts.length - 1) * 100).toFixed(1), Y = v => (29 - v * 0.28).toFixed(1);
+  return `<svg class="brsp ${z}" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true"><line x1="0" x2="100" y1="${Y(30)}" y2="${Y(30)}"/><line x1="0" x2="100" y1="${Y(70)}" y2="${Y(70)}"/><polyline points="${pts.map((v, i) => X(i) + ',' + Y(v)).join(' ')}"/></svg>`;
+}
+// Série d'une unité : J une valeur par séance, S la dernière de chaque semaine, M la dernière de chaque mois.
+function brSeries(rows, tf) {
+  const j = { D: 1, W: 3, M: 5 }[tf], m = new Map();
+  for (const r of rows) if (r[j] != null) m.set(tf === 'D' ? r[0] : periodKey(tf, r[0]), [r[0], brPct(r[j], r[j + 1])]);
+  return [...m.values()].slice(-{ D: 60, W: 26, M: 24 }[tf]);
+}
+function breadthCard() {
+  const lines = brLines(); if (!lines.length || !Radar.loaded) return '';
+  const now = brNow(), rows = brAll(), nT = new Set(lines.map(w => w.ticker)).size;
+  const live = marketOpen(Date.now()) && lines.some(w => Live.prices[w.ticker] && Live.prices[w.ticker].live);
+  const back = { D: [10, '10 séances'], W: [4, '4 semaines'], M: [3, '3 mois'] };
+  let thrust = '';
+  const tiles = BR_TF.map(([tf, lab]) => {
+    const [u, n] = now[tf]; if (!n) return '';
+    const p = u / n * 100, z = BR_ZONE(p), s = brSeries(rows, tf), pts = s.map(x => x[1]);
+    if (pts.length && s[s.length - 1][0] < lastSession(Date.now()) && live) pts.push(p);   // séance en cours au bout de la courbe
+    const [k, kl] = back[tf], ref = s.length > k ? s[s.length - 1 - k][1] : null;
+    const tr = ref == null ? 'historique en cours de constitution' : Math.abs(p - ref) < 3 ? `stable sur ${kl}` : `de ${Math.round(ref)} % à ${Math.round(p)} % en ${kl}`;
+    if (tf === 'D' && s.length >= 10) {
+      const prev = s.slice(-10).map(x => x[1]), lo = Math.min(...prev), hi = Math.max(...prev);
+      if (lo < 30 && p >= 60) thrust = `<p class="bral ok">Rebond large : la part de vos SMA journalières au-dessus est passée de ${Math.round(lo)} % à ${Math.round(p)} % en moins de 10 séances. Souvent le début d’une vraie hausse.</p>`;
+      else if (hi > 70 && p <= 40) thrust = `<p class="bral warn">Repli large : la part de vos SMA journalières au-dessus est tombée de ${Math.round(hi)} % à ${Math.round(p)} % en moins de 10 séances. Soyez sélectif.</p>`;
+    }
+    return `<div class="brt"><small>${lab}</small><b class="${z[0]}">${Math.round(p)} %</b><small>${u} / ${n} SMA · ${z[1]}</small><div class="brbar"><i class="${z[0]}" style="width:${p.toFixed(1)}%"></i></div>${brSpark(pts, z[0])}<small class="brtr">${tr}</small></div>`;
+  }).join('');
+  if (!tiles) return `<section class="card"><div class="sec-head"><h2>Largeur du radar</h2></div><p class="hint">Historique du radar en attente : il arrive au prochain passage du robot.</p></section>`;
+  const first = rows.length ? rows[0][0] : null, lastD = rows.length ? rows[rows.length - 1][0] : null;
+  return `<section class="card brd"><div class="sec-head"><h2>Largeur du radar</h2><small class="muted">${nT} actions · ${live ? 'en direct' : lastD ? 'clôture du ' + fmtDate(lastD).replace(/ \d{4}$/, '') : ''}</small></div>
+    <div class="brg">${tiles}</div>${thrust}
+    <p class="hint" style="margin:8px 0 0">Part de vos SMA d’actions dont le cours est au-dessus (indices et secteurs à part). Repères : moins de 30 % faible, les cassures échouent souvent · 30 à 70 % neutre · plus de 70 % fort · plus de 85 % étiré, entrées tardives plus risquées. Information seulement : rien n’est bloqué, le calculateur garde votre stop.${first ? ` Historique mémorisé depuis le ${fmtDate(first)} : il s’allonge chaque jour.` : ''}</p></section>`;
+}
+
+// ----- Force de l'action face au S&P 500 : variation sur 3 mois de l'action rapportée à celle de SPY, et rang parmi les actions du radar -----
+// Les cassures des actions déjà plus fortes que le marché tiennent mieux (effet momentum) : le rang entre dans le classement des signaux.
+function perfAt(bars, d, months) {
+  let i = -1; for (let k = bars.length - 1; k >= 0; k--) if (bars[k][0] <= d) { i = k; break; }
+  if (i < 1 || Core.days(bars[i][0], d) > 6) return null;
+  const z = new Date(bars[i][0] + 'T12:00:00Z'); z.setUTCMonth(z.getUTCMonth() - months);
+  const from = addDays(z.toISOString().slice(0, 10), 1);
+  let j = -1; for (let k = i; k >= 0; k--) if (bars[k][0] < from) { j = k; break; }
+  return j >= 0 && bars[j][1] > 0 ? bars[i][1] / bars[j][1] - 1 : null;
+}
+// Écart de performance sur 3 mois avec le S&P 500, en % (1,2 ÷ 1,05 − 1 = +14 %), à une date passée.
+function rsAt(t, d) {
+  const b = tickerBars(String(t).toUpperCase()), sp = Radar.hist.SPY && Radar.hist.SPY.bars; if (!b || !sp) return null;
+  const a = perfAt(b, d, 3), s = perfAt(sp, d, 3);
+  return a == null || s == null ? null : ((1 + a) / (1 + s) - 1) * 100;
+}
+const rsMemo = { key: '', m: new Map() };
+// Aujourd'hui (cours en direct compris) : { rel, rk } par action ; rang en % des actions du radar moins fortes (10 actions au moins).
+function rsTable() {
+  const T = [...new Set(S.watch.filter(w => !w.idx && !w.sym).map(w => String(w.ticker).toUpperCase()))];
+  const sig = t => { const h = Radar.hist[t], L = Live.prices[t]; return t + ':' + (h && h.bars ? h.last + '/' + h.bars.length : '') + (L ? '@' + L.price : ''); };
+  const key = T.map(sig).join(',') + '|' + sig('SPY');
+  if (rsMemo.key === key) return rsMemo.m;
+  const Q = etfPerf('SPY'), rel = new Map(), m = new Map();
+  if (Q && Q.m3 != null) for (const t of T) { const P = etfPerf(t); if (P && P.m3 != null) rel.set(t, ((1 + P.m3 / 100) / (1 + Q.m3 / 100) - 1) * 100); }
+  const vals = [...rel.values()];
+  if (vals.length >= 10) for (const [t, v] of rel) m.set(t, { rel: v, rk: vals.filter(x => x < v).length / (vals.length - 1) * 100 });
+  Object.assign(rsMemo, { key, m }); return m;
+}
+const rsOf = t => rsTable().get(String(t).toUpperCase()) || null;
+const rsTxt = x => x.rk >= 50 ? `plus forte que ${Math.round(x.rk)} % du radar` : `plus faible que ${Math.round(100 - x.rk)} % du radar`;
+const rsVs = x => `3 m ${x.rel >= 0 ? '+' : '−'}${fmtNum(Math.abs(x.rel), 0)} % vs S&amp;P`;
+function rsNote(t) { const x = rsOf(t); return x ? ` <small class="rsn ${x.rk >= 80 ? 'pos' : x.rk <= 20 ? 'neg' : ''}">${rsTxt(x)} · ${rsVs(x)}</small>` : ''; }
+
+// ----- Photo du contexte à l'achat (gardée avec la position, lot.ctx) : largeur J/S/M, feu des indices, VIX, secteur, force -----
+// VIX, secteur et rang ne sont photographiés que pour un achat récent (3 jours) ; sinon l'app les retrouve dans l'historique quand c'est possible.
+function vixAt(d) {
+  const H = Radar.robot && Radar.robot.macro && Radar.robot.macro.vixH; if (!H || !H.length) return null;
+  let v = null; for (const x of H) { if (x[0] > d) break; v = x; }
+  return v && Core.days(v[0], d) <= 6 ? v[1] : null;
+}
+function buyCtx(t, d) {
+  const T = String(t).toUpperCase(), recent = d >= addDays(todayISO(), -3), b = brAt(d), o = { d };
+  if (b) { o.br = [b.D, b.W, b.M].map(v => v == null ? null : Math.round(v)); if (b.I != null) o.feu = b.I >= 70 ? 'go' : b.I <= 30 ? 'stop' : 'mid'; }
+  const M = recent ? macroNow() : null, vx = M && M.v ? M.v : vixAt(d); if (vx) o.vix = Math.round(vx * 10) / 10;
+  const sec = sectorOf(T), ss = recent && sec ? sectStrength(sec) : null; if (ss && ss.lvl) o.sect = ss.lvl;
+  const rs = rsAt(T, d); if (rs != null) o.rs = Math.round(rs * 10) / 10;
+  const rk = recent ? rsOf(T) : null; if (rk) o.rk = Math.round(rk.rk);
+  return o;
+}
+function ctxOf(l) {
+  const c = l.ctx || {}, b = c.br ? null : brAt(l.date);
+  return { br: c.br ? c.br[0] : b ? b.D : null, vix: isNum(c.vix) ? c.vix : vixAt(l.date), rs: isNum(c.rs) ? c.rs : rsAt(l.ticker, l.date) };
+}
 function marketCard() {
   if (!Radar.loaded && S.watch.length) loadRadarCache().then(() => { if (tab === 'dash') render(); });
   const tiles = IDX.map(([t, name]) => {
@@ -2672,6 +2842,7 @@ function viewDash(part) {
   ${liveBar()}
   ${riskCard()}
   ${marketCard()}
+  ${breadthCard()}
   ${sectEtfCard()}
   ${ref.stale ? `<div class="banner warn"><span>Valorisation datée de ${ref.age} jours (${fmtDate(ref.date)}). Mettez à jour les cours ou saisissez la valeur du courtier.</span><button class="btn sm" data-act="prices">Mettre à jour</button></div>` : ''}
   <p class="hint" style="text-align:center">Performance, diversification et statistiques : onglet <button class="lnk" data-tab="ana">Analyse</button>.</p>`;
@@ -3454,7 +3625,8 @@ function sheetBuy() {
       const risk = q * (p - st) + fe + estExitFee;
       S.lots.push({ id, ticker: t, date, price: p, qty: q, leverage: lv, entryFee: fe, estExitFee, stopInitial: st, stopCurrent: st,
         refCapital: ref.value, refDate: ref.date, riskInitial: risk, riskInitialPct: risk / ref.value * 100, riskPlan: ref.value * S.settings.riskPct / 100,
-        motif: F(form, 'motif'), motifSet: !!F(form, 'motif'), note: F(form, 'note').trim(), imgId, planOk: null, planComment: '', events: [], smas: smaPicked(form) });
+        motif: F(form, 'motif'), motifSet: !!F(form, 'motif'), note: F(form, 'note').trim(), imgId, planOk: null, planComment: '', events: [], smas: smaPicked(form),
+        ctx: (() => { try { return buyCtx(t, date); } catch (e) { return null; } })() });
       const smaN = smaToRadar(form, t, smaPicked(form)); if (smaN) refreshRadar();
       const lp = Core.lastPrice(S.prices, t);
       if (!lp || lp.date <= date) addPrice(t, date, p);
