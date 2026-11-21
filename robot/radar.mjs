@@ -454,16 +454,17 @@ if (byHand || Date.now() - divAt > 3 * 3600e3) {
 // ----- Contexte du marché (FRED, Réserve fédérale de Saint-Louis) : VIX, stress du crédit, taux à 10 ans. 3 requêtes par passage. -----
 let macro = R.macro || null;
 if (FRED_KEY) {
-  const fred = async id => {
-    const r = await fetch(`https://api.stlouisfed.org/fred/series/observations?series_id=${id}&api_key=${encodeURIComponent(FRED_KEY)}&file_type=json&sort_order=desc&limit=40`, { signal: AbortSignal.timeout(20000) });
+  const fred = async (id, lim = 40) => {
+    const r = await fetch(`https://api.stlouisfed.org/fred/series/observations?series_id=${id}&api_key=${encodeURIComponent(FRED_KEY)}&file_type=json&sort_order=desc&limit=${lim}`, { signal: AbortSignal.timeout(20000) });
     if (!r.ok) throw new Error(id + ' HTTP ' + r.status);
     return ((await r.json()).observations || []).filter(o => o.value !== '.' && isFinite(+o.value)).map(o => [o.date, +o.value]);
   };
   try {
-    const [v, h, t] = await Promise.all(['VIXCLS', 'BAMLH0A0HYM2', 'DGS10'].map(fred));
+    // VIX : environ 4 ans (une seule requête) pour retrouver le VIX du jour de vos achats passés (Analyse › Ce qui marche pour vous).
+    const [v, h, t] = await Promise.all([fred('VIXCLS', 1100), fred('BAMLH0A0HYM2'), fred('DGS10')]);
     const ago = (a, n) => a.find(x => days(x[0], a[0][0]) >= n);
     if (v.length) {
-      macro = { at: Date.now(), vix: v[0], hy: h[0] || null, t10: t.length ? [t[0][0], t[0][1], (ago(t, 28) || [])[1] ?? null] : null };
+      macro = { at: Date.now(), vix: v[0], vixH: v.slice().reverse().map(([d, x]) => [d, Math.round(x * 100) / 100]), hy: h[0] || null, t10: t.length ? [t[0][0], t[0][1], (ago(t, 28) || [])[1] ?? null] : null };
       log(`FRED : VIX ${v[0][1]} (${v[0][0]})${h[0] ? ` · stress crédit ${h[0][1]} %` : ''}${t[0] ? ` · taux 10 ans ${t[0][1]} %` : ''}`);
     }
   } catch (e) { log('FRED : ' + e.message); }
