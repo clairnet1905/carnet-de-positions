@@ -700,6 +700,59 @@ window.__appTests = async function () {
     } finally { Lab.res = keepRes; S.settings.labQueue = keepQ; labMode = 'pos'; labOpen.clear(); tab = 'dash'; }
   });
 
+  await t('Largeur du radar (J / S / M), mémorisée jour après jour et fusionnée entre appareils', async () => {
+    const bad = [], keepLive = Live.prices, keepLoaded = Radar.loaded, D = days(160);
+    try {
+      const H = f => ({ bars: D.map((d, i) => [d, f(i)]), n: 160, full: 1, last: D[159], adj: adjMode() });
+      Radar.hist.UPA = H(i => 100 + i); Radar.hist.DNB = H(i => 300 - i); Radar.hist.UPC = H(i => 50 + i * 0.5); Radar.hist.SPY = H(i => 100 + i * 0.1);
+      S.watch = [{ id: 'a', ticker: 'UPA', period: 5, tf: 'D', sym: '' }, { id: 'b', ticker: 'DNB', period: 5, tf: 'D', sym: '' }, { id: 'c', ticker: 'UPC', period: 4, tf: 'W', sym: '' },
+        { id: 'd', ticker: 'DNB', period: 3, tf: 'M', sym: '' }, { id: 'i', ticker: 'SPY', period: 5, tf: 'D', sym: '', idx: true }];
+      S.breadth = { v: 1, rows: [] }; Live.prices = {}; Radar.loaded = true;
+      const N = brNow(); if (N.D.join() !== '1,2' || N.W.join() !== '1,1' || N.M.join() !== '0,1') bad.push('maintenant : ' + JSON.stringify(N));
+      const rows = brComputed(), L = rows[rows.length - 1];
+      if (!L || L[0] !== D[159] || L[1] !== 1 || L[2] !== 2 || L[3] !== 1 || L[5] !== 0 || L[7] !== 1 || L[8] !== 1) bad.push('dernière ligne : ' + JSON.stringify(L));
+      if (rows.length < 100) bad.push('historique court : ' + rows.length);
+      const b = brAt(D[150]); if (!b || b.D !== 50 || b.I !== 100) bad.push('à une date : ' + JSON.stringify(b));
+      tab = 'dash'; render();
+      const card = $('.brd'), tx = card ? card.textContent.replace(/\s+/g, ' ') : '';
+      if (!/Largeur du radar/.test(tx) || !/Journalières ?50 %/.test(tx) || !/Hebdo ?100 %/.test(tx) || !/Mensuelles ?0 %/.test(tx) || !card.querySelector('svg.brsp polyline')) bad.push('carte : ' + tx.slice(0, 200));
+      if (!brSync() || S.breadth.rows.length !== rows.filter(r => r[0] <= lastSession(Date.now())).length) bad.push('mémorisation : ' + S.breadth.rows.length);
+      if (brSync()) bad.push('mémorisé deux fois');
+      // Les jours mémorisés restent quand l'historique du radar ne les couvre plus
+      const old = ['2020-01-02', 3, 4, null, null, null, null, null, null]; S.breadth.rows.unshift(old); brMemo.allKey = '';
+      if (!brAt('2020-01-03') || brAt('2020-01-03').D !== 75) bad.push('jour ancien perdu');
+      const A = normalize({ updatedAt: 2, breadth: { rows: [['2026-01-02', 1, 2, null, null, null, null, null, null]] } }), B = normalize({ updatedAt: 1, breadth: { rows: [['2026-01-05', 2, 2, null, null, null, null, null, null], ['2026-01-02', 0, 2, null, null, null, null, null, null]] } });
+      const mg = mergeState(null, A, B).breadth.rows; if (mg.length !== 2 || mg[0][1] !== 1) bad.push('fusion : ' + JSON.stringify(mg));
+    } finally { Live.prices = keepLive; Radar.loaded = keepLoaded; S.breadth = { v: 1, rows: [] }; brMemo.key = ''; tab = 'dash'; }
+    return bad.length ? bad.join(' | ') : true;
+  });
+
+  await t('Force de l’action face au S&P 500 (rang du radar) et photo du contexte à l’achat', async () => {
+    const bad = [], keepLive = Live.prices, keepR = Radar.robot, D = days(160);
+    try {
+      const H = f => ({ bars: D.map((d, i) => [d, f(i)]), n: 160, full: 1, last: D[159], adj: adjMode() });
+      Radar.hist.SPY = H(i => 100 + i * 0.1); S.watch = [];
+      for (let k = 0; k < 12; k++) { const t = 'R' + String.fromCharCode(65 + k); Radar.hist[t] = H(i => 100 + i * 0.05 * k); S.watch.push({ id: 'w' + k, ticker: t, period: 5, tf: 'D', sym: '' }); }
+      // RL (la plus forte) : repasse au-dessus de sa SMA avant-hier → signal d'achat
+      Radar.hist.RL = H(i => i === 157 ? 50 : 100 + i * 0.6); Live.prices = {}; rsMemo.key = '';
+      const T = rsTable(); if (T.size !== 12 || T.get('RL').rk !== 100 || T.get('RA').rk !== 0) bad.push('rangs : ' + JSON.stringify([...T].slice(0, 3)));
+      if (!/plus forte que 100 % du radar/.test(rsNote('RL')) || !/vs S&amp;P/.test(rsNote('RL')) || !/plus faible que 100 % du radar/.test(rsNote('RA'))) bad.push('note : ' + rsNote('RL'));
+      const pk = tonightPicks(), rl = pk.top.find(p => p.x.w.ticker === 'RL');
+      if (!rl || !rl.notes.some(n => /plus forte que 100 %/.test(n))) bad.push('classement : ' + JSON.stringify(pk.top.map(p => [p.x.w.ticker, p.score, p.notes])));
+      const ra = rsAt('RL', D[159]); if (!(ra > 10)) bad.push('force à une date : ' + ra);
+      // Photo à l'achat, puis catégories de « Ce qui marche pour vous »
+      Radar.robot = Object.assign({}, keepR || {}, { macro: { at: 1, vix: [D[159], 18.4], vixH: D.map(d => [d, 18.4]) } }); S.breadth = { v: 1, rows: [] }; brMemo.key = '';
+      const c = buyCtx('RL', D[100]); if (!c.br || c.vix !== 18.4 || !(c.rs > 5)) bad.push('photo : ' + JSON.stringify(c));
+      const lotX = lot({ ticker: 'RL', date: D[100] }); lotX.ctx = { br: [80, 60, 50], vix: 27, rs: -9 };
+      const k = dim => edgeKey(dim, { lot: lotX, date: D[120] });
+      if (!/forte/.test(k('larg')) || !/nerveux/.test(k('vix')) || !/Plus faible/.test(k('force'))) bad.push('catégories : ' + ['larg', 'vix', 'force'].map(k).join(' / '));
+      const lotY = lot({ ticker: 'RL', date: D[100] }); if (!/calme/.test(edgeKey('vix', { lot: lotY, date: D[120] }))) bad.push('VIX retrouvé : ' + edgeKey('vix', { lot: lotY, date: D[120] }));
+      if (!/ctx: \(\(\) =>/.test(sheetBuy.toString())) bad.push('photo absente à l’achat');
+      if (!EDGE_DIMS.some(d => d[0] === 'larg') || !EDGE_DIMS.some(d => d[0] === 'force')) bad.push('boutons Analyse');
+    } finally { Live.prices = keepLive; Radar.robot = keepR; rsMemo.key = ''; brMemo.key = ''; S.breadth = { v: 1, rows: [] }; }
+    return bad.length ? bad.join(' | ') : true;
+  });
+
   reset(); tab = 'dash';
   return out;
 };
