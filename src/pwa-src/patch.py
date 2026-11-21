@@ -166,7 +166,7 @@ cut('// ---------- Démarrage ----------', '\x00' if False else '})();\n', '''//
   // Cours automatiques : à l'ouverture, au retour sur l'app, puis toutes les 2 minutes pendant la séance.
   refreshQuotes();
   // Historique du radar : d'abord celui du robot (Gist), puis Twelve Data seulement pour ce qui manque.
-  const radarUp = throttle => { if (Store.cfg) pullMacro(!throttle).catch(() => {}); return (Store.cfg ? pullSharedRadar(throttle).catch(() => {}) : Promise.resolve()).then(() => refreshRadar()); };
+  const radarUp = throttle => { if (Store.cfg) pullMacro(!throttle).catch(() => {}); return (Store.cfg ? pullSharedRadar(throttle).catch(() => {}) : Promise.resolve()).then(() => refreshRadar()).then(() => { try { brSync(); } catch (e) {} }); };
   loadRadarCache().then(() => { render(); radarUp(false); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { badgeN = -1; badgeSoon(); if (Date.now() - Live.at > 60000) refreshQuotes(); radarUp(true); } });
   setInterval(() => { if (document.visibilityState === 'visible' && tab !== 'calc' && marketOpen(Date.now())) refreshQuotes(false, Date.now() - (Live.fullAt || 0) < 600000); }, 120000);

@@ -133,6 +133,9 @@ function mergeState(base, loc, rem) {
   out.settings = {};
   for (const k of new Set([...Object.keys(rem.settings), ...Object.keys(loc.settings)])) out.settings[k] = pick(base ? base.settings[k] : undefined, loc.settings[k], rem.settings[k]);
   out.push = { vapid: pick(base ? base.push.vapid : undefined, loc.push.vapid, rem.push.vapid), subs: list(base && base.push.subs, loc.push.subs, rem.push.subs, id) };
+  // Largeur du radar mémorisée jour après jour : union des deux appareils, par date (celle de cet appareil en cas de doublon).
+  const bm = new Map([...((rem.breadth && rem.breadth.rows) || []), ...((loc.breadth && loc.breadth.rows) || [])].map(r => [r[0], r]));
+  out.breadth = { v: 1, rows: [...bm.values()].sort((a, b) => a[0] < b[0] ? -1 : 1) };
   out.seen = Object.assign({}, rem.seen);
   for (const k in loc.seen) if (!out.seen[k] || loc.seen[k] > out.seen[k]) out.seen[k] = loc.seen[k];
   out.updatedAt = Math.max(loc.updatedAt, rem.updatedAt) + 1;
